@@ -1,11 +1,13 @@
 # Tarantool
 
 [![Build Status][travis-badge]][travis-url]
-[![Code Coverage][coverage-badge]][coverage-url]
 [![Telegram][telegram-badge]][telegram-url]
 [![Slack][slack-badge]][slack-url]
 [![Gitter][gitter-badge]][gitter-url]
 [![Google Groups][groups-badge]][groups-url]
+
+[![Latest Source .tar.gz][bintray-src-badge]][bintray-src-url]
+
 
 https://tarantool.io/en/
 
@@ -64,3 +66,5 @@ Thank you for your interest in Tarantool!
 [slack-url]: http://slack.tarantool.org/
 [gitter-badge]: https://badges.gitter.im/Join%20Chat.svg
 [gitter-url]: https://gitter.im/tarantool/tarantool
+[bintray-src-badge]: https://api.bintray.com/packages/picodata/source/tarantool/images/download.svg
+[bintray-src-url]: https://bintray.com/picodata/source/tarantool/_latestVersion
