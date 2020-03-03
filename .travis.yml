@@ -68,6 +68,7 @@ script:
 
 after_success:
   - ls -l build/
+  - apt-get install -y expect
   - cp extra/deploy/sftp.sh .
   - sh sftp.sh  
 
