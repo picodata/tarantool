@@ -68,7 +68,7 @@ script:
 
 after_success:
   - ls -l build/
-  - pip install pysftp
+  - pip3 install --user pysftp
 
 #notifications:
 #  email:
