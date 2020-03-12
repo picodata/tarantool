@@ -57,9 +57,6 @@ def main():
     src_dir = 'build/'
     dst_dir = '/'.join([env_os, env_dist])
 
-    print('creating directory %s' % (dst_dir))
-    sftp.mkdir(dst_dir)
-
     if is_deb(env_os):        
         upload_deb(sftp, src_dir, dst_dir)
     elif is_rpm(env_os):
