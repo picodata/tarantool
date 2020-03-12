@@ -55,7 +55,7 @@ def main():
     sftp = paramiko.SFTPClient.from_transport(t)
 
     src_dir = 'build/'
-    dst_dir = '/'.join([env_os, env_dist, version])
+    dst_dir = '/'.join([env_os, env_dist])
 
     print('creating directory %s' % (dst_dir))
     sftp.mkdir(dst_dir)
