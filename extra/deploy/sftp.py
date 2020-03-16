@@ -15,8 +15,9 @@ def get_version():
     version = exec_capture_stdout(git_version_cmd)
     version_array = version.split('-')
     version_1 = version_array[0]
-    version_array_1 = version_1.split('.', 2)
-    return version_array_1[0] 
+    version_array_1 = version_1.split('.')
+    version_2 = '.'.join([version_array_1[0], version_array_1[1]])
+    return version_2
 
 def is_deb(os):
     return (os == 'debian' or os == 'ubuntu')
