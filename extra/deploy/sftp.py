@@ -12,7 +12,11 @@ def exec_capture_stdout(cmd):
 
 git_version_cmd = 'git describe --long --always'
 def get_version():
-    return exec_capture_stdout(git_version_cmd)
+    version = exec_capture_stdout(git_version_cmd)
+    version_array = version.split('-')
+    version_1 = version_array[0]
+    version_array_1 = version_1.split('.', 2)
+    return version_array_1[0] 
 
 def is_deb(os):
     return (os == 'debian' or os == 'ubuntu')
@@ -30,11 +34,20 @@ def upload_deb(sftp, src_dir, dst_dir):
             sftp.put(src_file, dst_file)
 
 def upload_rpm(sftp, src_dir, dst_dir):
+    dist_dir_x86_64 = '/'.join([dst_dir, 'x86_64'])
+    dist_dir_sprms  = '/'.join([dst_dir, 'SRPMS'])
+    
     for f in os.listdir(src_dir):
+        src_file = os.path.join(src_dir, f)
+        dst_file = ''
+
         _, ext = os.path.splitext(f)
-        if (ext == '.rpm' or ext == '.src.rpm'):
-            src_file = os.path.join(src_dir, f)
-            dst_file = os.path.join(dst_dir, f)
+        if ext == '.rpm':
+            dst_file = os.path.join(dist_dir_x86_64, f)
+        elif ext == '.src.rpm':
+            dst_file = os.path.join(dist_dir_sprms, f)
+ 
+        if dst_file != '':
             print('uploading %s to %s' % (src_file, dst_file))
             sftp.put(src_file, dst_file)
 
@@ -55,8 +68,8 @@ def main():
     sftp = paramiko.SFTPClient.from_transport(t)
 
     src_dir = 'build/'
-    dst_dir = '/'.join([env_os, env_dist])
-
+    dst_dir = '/'.join([version, env_os, env_dist])
+ 
     if is_deb(env_os):        
         upload_deb(sftp, src_dir, dst_dir)
     elif is_rpm(env_os):
