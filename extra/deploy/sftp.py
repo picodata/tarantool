@@ -42,15 +42,10 @@ def upload_rpm(sftp, src_dir, dst_dir):
         src_file = os.path.join(src_dir, f)
         dst_file = ''
 
-        split = f.split(os.path.extsep, 1)
-        if len(split) < 2:
-            continue
-
-        ext = split[1]
-        if ext == '.rpm':
-            dst_file = os.path.join(dist_dir_x86_64, f)
-        elif ext == '.src.rpm':
+        if f.endswith('.src.rpm'):
             dst_file = os.path.join(dist_dir_sprms, f)
+        elif f.endswith('.rpm'):
+            dst_file = os.path.join(dist_dir_x86_64, f)
  
         if dst_file != '':
             print('uploading %s to %s' % (src_file, dst_file))
