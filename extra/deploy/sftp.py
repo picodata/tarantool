@@ -1,16 +1,20 @@
-#!/usr/bin/env python   
+#!/usr/bin/env python
 
 import os
 import subprocess
 
 import paramiko
 
+
 def exec_capture_stdout(cmd):
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     (stdout, stderr) = proc.communicate()
     return stdout.strip().decode('utf-8')
 
+
 git_version_cmd = 'git describe --long --always'
+
+
 def get_version():
     version = exec_capture_stdout(git_version_cmd)
     version_array = version.split('-')
@@ -19,25 +23,33 @@ def get_version():
     version_2 = '.'.join([version_array_1[0], version_array_1[1]])
     return version_2
 
+
 def is_deb(os):
     return (os == 'debian' or os == 'ubuntu')
+
 
 def is_rpm(os):
     return (os == 'el' or os == 'fedora')
 
+
+def is_orig_tar_xz(name):
+    return (name[-11:] == 'orig.tar.xz')
+
+
 def upload_deb(sftp, src_dir, dst_dir):
     for f in os.listdir(src_dir):
         _, ext = os.path.splitext(f)
-        if (ext == '.deb' or ext == '.dsc'):
+        if (ext == '.deb' or ext == '.dsc' or is_orig_tar_xz(f)):
             src_file = os.path.join(src_dir, f)
             dst_file = os.path.join(dst_dir, f)
             print('uploading %s to %s' % (src_file, dst_file))
             sftp.put(src_file, dst_file)
 
+
 def upload_rpm(sftp, src_dir, dst_dir):
     dist_dir_x86_64 = '/'.join([dst_dir, 'x86_64'])
-    dist_dir_sprms  = '/'.join([dst_dir, 'SRPMS'])
-    
+    dist_dir_sprms = '/'.join([dst_dir, 'SRPMS'])
+
     for f in os.listdir(src_dir):
         src_file = os.path.join(src_dir, f)
         dst_file = ''
@@ -46,10 +58,11 @@ def upload_rpm(sftp, src_dir, dst_dir):
             dst_file = os.path.join(dist_dir_sprms, f)
         elif f.endswith('.rpm'):
             dst_file = os.path.join(dist_dir_x86_64, f)
- 
+
         if dst_file != '':
             print('uploading %s to %s' % (src_file, dst_file))
             sftp.put(src_file, dst_file)
+
 
 def main():
     env_sftp_host = os.environ.get('SFTP_HOST')
@@ -69,13 +82,14 @@ def main():
 
     src_dir = 'build/'
     dst_dir = '/'.join([version, env_os, env_dist])
- 
-    if is_deb(env_os):        
+
+    if is_deb(env_os):
         upload_deb(sftp, src_dir, dst_dir)
     elif is_rpm(env_os):
         upload_rpm(sftp, src_dir, dst_dir)
     else:
         print("unknown package type")
+
 
 if __name__ == "__main__":
     main()
