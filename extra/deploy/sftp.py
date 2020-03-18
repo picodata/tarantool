@@ -32,18 +32,12 @@ def is_rpm(os):
     return (os == 'el' or os == 'fedora')
 
 
-def is_orig_tar_xz(name):
-    return (name[-11:] == 'orig.tar.xz')
-
-
 def upload_deb(sftp, src_dir, dst_dir):
     for f in os.listdir(src_dir):
-        _, ext = os.path.splitext(f)
-        if (ext == '.deb' or ext == '.dsc' or is_orig_tar_xz(f)):
-            src_file = os.path.join(src_dir, f)
-            dst_file = os.path.join(dst_dir, f)
-            print('uploading %s to %s' % (src_file, dst_file))
-            sftp.put(src_file, dst_file)
+        src_file = os.path.join(src_dir, f)
+        dst_file = os.path.join(dst_dir, f)
+        print('uploading %s to %s' % (src_file, dst_file))
+        sftp.put(src_file, dst_file)
 
 
 def upload_rpm(sftp, src_dir, dst_dir):
