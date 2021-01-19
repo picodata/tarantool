@@ -375,6 +375,73 @@ generic_session_fd(struct session *session);
 int64_t
 generic_session_sync(struct session *session);
 
+/**
+ * Get the unique identifier (ID) for the current session.
+ *
+ * \retval session ID
+ */
+API_EXPORT int
+box_session_id();
+
+/**
+ * Check if session exists.
+ *
+ * \param sid session ID
+ * \retval true if sessions exists, false otherwise
+ */
+API_EXPORT bool
+box_session_exists(uint64_t sid);
+
+/**
+ * Get host address and port of the session peer (if it exists).
+ *
+ * \param sid session ID
+ * \retval peer's host and port on success, emtpy string on error.
+ */
+API_EXPORT const char *
+box_session_peer(uint64_t sid);
+
+/**
+ * Get value of sync integer constant used in binary protocol.
+ *
+ * \retval sync integer constant
+ */
+API_EXPORT int
+box_session_sync();
+
+/**
+ * Get user's name for current session.
+ *
+ * \retval session user on success, emtpy string on error.
+ */
+API_EXPORT const char *
+box_session_user();
+
+/**
+ * Get session type: "binary", "console",
+ * "replication", "background"
+ *
+ * \retval session type
+ */
+API_EXPORT const char *
+box_session_type();
+
+/**
+ * Get the user ID of the current user.
+ *
+ * \retval user ID
+ */
+API_EXPORT int
+box_session_uid();
+
+/**
+ * Get the effective user ID of the current user.
+ *
+ * \retval effective user ID
+ */
+API_EXPORT int
+box_session_euid();
+
 #if defined(__cplusplus)
 } /* extern "C" */
 
