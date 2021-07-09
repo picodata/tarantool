@@ -1,0 +1,59 @@
+# This file is a template, and might need editing before it works on your project.
+# To contribute improvements to CI/CD templates, please follow the Development guide at:
+# https://docs.gitlab.com/ee/development/cicd/templates.html
+# This specific template is located at:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Getting-Started.gitlab-ci.yml
+
+# This is a sample GitLab CI/CD configuration file that should run without any modifications.
+# It demonstrates a basic 3 stage CI/CD pipeline. Instead of real tests or scripts,
+# it uses echo commands to simulate the pipeline execution.
+#
+# A pipeline is composed of independent jobs that run scripts, grouped into stages.
+# Stages run in sequential order, but jobs within stages run in parallel.
+#
+# For more information, see: https://docs.gitlab.com/ee/ci/yaml/README.html#stages
+image: docker:19.03.12
+
+services:
+  - name: docker:19.03.12-dind
+
+variables:
+    USER: 'tarantool'
+
+stages:          # List of stages for jobs, and their order of execution
+  - build
+  - deploy
+
+build-package-centos-7:
+    stage: build
+    only: 
+      - merge_requests
+      - web
+    before_script:
+      - apk update && apk upgrade && apk add git
+      - git clone https://github.com/packpack/packpack.git packpack
+      - git fetch --unshallow
+      - git checkout tags/$TAG || true
+      - git describe --long
+      - git submodule update --init --recursive
+      - sed -i "s/(id -u)/(id -u) -o/g" packpack/packpack
+    script:
+      - OS=centos DIST=7 packpack/packpack
+    artifacts:
+      paths:
+        - build/tarantool*.rpm
+
+deploy-job:
+  stage: deploy
+  only: 
+    - merge_requests
+    - web
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "${SSH_PRIVATE_KEY}" | ssh-add -
+  script:
+    - echo "Deploying application..."
+    - scp -o stricthostkeychecking=no -P 33022 build/tarantool*rpm gitlab@159.69.8.164:/var/www/packrepo/tarantool-picodata/el/7/x86_64/
+    - ssh -o stricthostkeychecking=no -p 33022 gitlab@159.69.8.164 "cd /var/www/packrepo/tarantool-picodata/el/7/ && createrepo --update x86_64"
+    - echo "Application successfully deployed."
+
