@@ -1,0 +1,111 @@
+image: docker:19.03.12
+
+services:
+  - name: docker:19.03.12-dind
+
+variables:
+    # set larger git depth, so git describe works properly
+    GIT_DEPTH: 0
+    USER: 'tarantool'
+
+stages:
+  - test
+  - build
+  - deploy
+  - docker
+
+luacheck:
+    stage: test
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+    script:
+      - make -f .travis.mk test_debian_docker_luacheck
+
+test:
+    stage: test
+    retry: 2
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+    script:
+      - make -f .travis.mk test_linux
+
+checkpatch:
+    stage: test
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+      - git clone git@github.com:tarantool/checkpatch.git
+    script:
+      - checkpatch/checkpatch.pl --color=always --git HEAD~1..HEAD
+
+# run long tests and coverage on release build
+coverage:
+    stage: build
+    only:
+      - web
+      - tags
+    retry: 2
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+    script:
+      - make -f .travis.mk coverage
+
+build-package-centos-7:
+    stage: build
+    only:
+      - web
+      - tags
+    before_script:
+      - git clone https://github.com/packpack/packpack.git packpack
+      - git fetch --unshallow
+      - git checkout tags/$TAG || true
+      - git describe --long
+      - git submodule update --init --recursive
+      - pushd rpm
+      - wget https://download.picodata.io/tarantool-picodata/el/7/x86_64/libicu-69.1-3.el7.x86_64.rpm
+      - wget https://download.picodata.io/tarantool-picodata/el/7/x86_64/libicu-devel-69.1-3.el7.x86_64.rpm
+      - popd
+      - wget https://binary.picodata.io/repository/raw-private/tarantool/packpack.patch
+      - patch -p0 -i packpack.patch
+      - sed -i "s/(id -u)/(id -u) -o/g" packpack/packpack
+    script:
+      - OS=centos DIST=7 packpack/packpack
+    artifacts:
+      paths:
+        - build/tarantool*.rpm
+
+deploy-job:
+  stage: deploy
+  only:
+    - web
+    - tags
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_PROD_SSH_KEY" | base64 -d | ssh-add -
+  script:
+    - echo "Deploying application..."
+    - scp -o stricthostkeychecking=no build/tarantool*rpm ansible@94.26.239.246:/data/nginx/www/packrepo/tarantool-picodata/el/7/x86_64/
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "cd /data/nginx/www/packrepo/tarantool-picodata/el/7/ && createrepo --update x86_64"
+    - echo "Application successfully deployed."
+
+docker:
+  stage: docker
+  only:
+    - web
+    - tags
+  variables:
+    DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
+    DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
+  tags:
+    - shell
+  before_script:
+    - mkdir -p $CI_PROJECT_DIR/.docker
+    - echo $DOCKER_AUTH_RW > $CI_PROJECT_DIR/.docker/config.json
+    - TAG=$(git describe | awk -F- '{print $1}')
+    - echo $TAG
+  script:
+    - docker build docker/ -t $DOCKER_REGISTRY_PUB/tarantool:$TAG
+    - docker --config $CI_PROJECT_DIR/.docker/ push $DOCKER_REGISTRY_PUB/tarantool:$TAG
