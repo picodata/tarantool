@@ -1,0 +1,185 @@
+variables:
+    # set larger git depth, so git describe works properly
+    GIT_DEPTH: 0
+    USER: 'tarantool'
+
+stages:
+  - test
+  - build
+  - build_centos
+  - build_ubuntu
+  - build_debian
+  - sign
+  - deploy
+  - docker
+
+luacheck:
+    stage: test
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+    script:
+      - make -f .travis.mk test_debian_docker_luacheck
+
+test:
+    stage: test
+    retry: 2
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+    script:
+      - make -f .travis.mk test_linux
+
+checkpatch:
+    stage: test
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+      - git clone git@github.com:tarantool/checkpatch.git
+    script:
+      - checkpatch/checkpatch.pl --color=always --git HEAD~1..HEAD
+
+# run long tests and coverage on release build
+coverage:
+    stage: build
+    only:
+      - web
+      - tags
+    retry: 2
+    tags: [shell_p_t]
+    before_script:
+      - git submodule update --init --recursive
+    script:
+      - make -f .travis.mk coverage
+
+build-package-centos:
+  tags:
+    - shell_p_t
+  stage: build_centos
+  only:
+    - web
+    - tags
+  before_script:
+    - git clone https://github.com/packpack/packpack.git packpack
+    - git describe --long
+    - git submodule update --init --recursive
+    - sed -i "s/(id -u)/(id -u) -o/g" packpack/packpack
+  script:
+    - OS=centos DIST=7 packpack/packpack
+    - OS=centos DIST=8 packpack/packpack
+  artifacts:
+    paths:
+      - build/tarantool*.rpm
+
+build-package-ubuntu:
+  tags:
+    - shell_p_t
+  stage: build_ubuntu
+  only:
+    - web
+    - tags
+  before_script:
+    - git clone https://github.com/packpack/packpack.git packpack
+    - git describe --long
+    - git submodule update --init --recursive
+  script:
+    - OS=ubuntu DIST=focal BUILDDIR=$PWD/build_${DIST}/ RELEASE=${DIST} packpack/packpack
+    - OS=ubuntu DIST=jammy BUILDDIR=$PWD/build_${DIST}/ RELEASE=${DIST} packpack/packpack
+  artifacts:
+    paths:
+      - build_focal/*.deb
+      - build_jammy/*.deb
+
+build-package-debian:
+  tags:
+    - shell_p_t
+  stage: build_debian
+  only:
+    - web
+    - tags
+  before_script:
+    - git clone https://github.com/packpack/packpack.git packpack
+    - git describe --long
+    - git submodule update --init --recursive
+  script:
+    - OS=debian DIST=bullseye BUILDDIR=$PWD/build_${DIST}/ RELEASE=${DIST} packpack/packpack
+  artifacts:
+    paths:
+      - build_bullseye/*.deb
+
+sign-rpm-packages:
+  variables:
+    DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RO
+  stage: sign
+  tags:
+    - shell_p_t
+  only:
+    - web
+    - tags
+  before_script:
+    - mkdir -p $CI_PROJECT_DIR/.docker
+    - echo $DOCKER_AUTH_RW > $CI_PROJECT_DIR/.docker/config.json
+    - echo "$GPG_KEY_KDY" | base64 -d > build/kdy.asc
+  script:
+    - docker run --rm -e KEY_FILE=kdy.asc -v $PWD/build:/build docker-picodata.binary.picodata.io/rpmsign:centos7
+  artifacts:
+    paths:
+      - build/tarantool*.rpm
+
+deploy-job:
+  stage: deploy
+  tags:
+    - shell_p_t
+  only:
+    - web
+    - tags
+  before_script:
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_PROD_SSH_KEY" | base64 -d | ssh-add -
+  script:
+    - echo "Deploying application..."
+    - echo
+    - echo "Deploying rpm-packets..."
+    # CentOS7
+    - scp -o stricthostkeychecking=no build/tarantool*.el7.*rpm ansible@94.26.239.246:/data/nginx/www/packrepo/tarantool-picodata/el/7/x86_64/
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "cd /data/nginx/www/packrepo/tarantool-picodata/el/7/ && createrepo --update x86_64 && gpg --no-tty --yes -u kdy@picodata.io --detach-sign --armor x86_64/repodata/repomd.xml"
+    # CentOS8
+    - scp -o stricthostkeychecking=no build/tarantool*.el8.*rpm ansible@94.26.239.246:/data/nginx/www/packrepo/tarantool-picodata/el/8/x86_64/
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "cd /data/nginx/www/packrepo/tarantool-picodata/el/8/ && createrepo --update x86_64 && gpg --no-tty --yes -u kdy@picodata.io --detach-sign --armor x86_64/repodata/repomd.xml"
+    - echo "rpm-packets successfully deployed."
+    - echo
+    # Ubuntu focal
+    - echo "Deploying deb-packets..."
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "mkdir -p ~/.deb/tnt-focal"
+    - scp -o stricthostkeychecking=no build_focal/tarantool*deb ansible@94.26.239.246:.deb/tnt-focal/
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "reprepro -b /data/nginx/www/packrepo/tarantool-picodata/ubuntu/ -C main includedeb focal ~/.deb/tnt-focal/tarantool*deb; rm -rf ~/.deb/tnt-focal"
+    # Ubuntu jammy
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "mkdir -p ~/.deb/tnt-jammy"
+    - scp -o stricthostkeychecking=no build_jammy/tarantool*deb ansible@94.26.239.246:.deb/tnt-jammy/
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "reprepro -b /data/nginx/www/packrepo/tarantool-picodata/ubuntu/ -C main includedeb jammy ~/.deb/tnt-jammy/tarantool*deb; rm -rf ~/.deb/tnt-jammy"
+    # Debian bullseye
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "mkdir -p ~/.deb/tnt-bullseye"
+    - scp -o stricthostkeychecking=no build_bullseye/tarantool*deb ansible@94.26.239.246:.deb/tnt-bullseye/
+    - ssh -o stricthostkeychecking=no ansible@94.26.239.246 "reprepro -b /data/nginx/www/packrepo/tarantool-picodata/debian/ -C main includedeb bullseye ~/.deb/tnt-bullseye/tarantool*deb; rm -rf ~/.deb/tnt-bullseye"
+    - echo "deb-packets successfully deployed."
+    - echo
+    - echo "Application successfully deployed."
+
+docker:
+  stage: docker
+  only:
+    - web
+    - tags
+  variables:
+    DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
+    DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
+  tags:
+    - shell_p_t
+  before_script:
+    - mkdir -p $CI_PROJECT_DIR/.docker
+    - echo $DOCKER_AUTH_RW > $CI_PROJECT_DIR/.docker/config.json
+    - TAG=$(git describe | awk -F- '{print $1}')
+    - echo $TAG
+  script:
+    - docker build docker/ -t $DOCKER_REGISTRY_PUB/tarantool:$TAG
+    - docker --config $CI_PROJECT_DIR/.docker/ push $DOCKER_REGISTRY_PUB/tarantool:$TAG
