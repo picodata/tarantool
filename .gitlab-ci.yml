@@ -54,6 +54,8 @@ coverage:
       - make -f .travis.mk coverage
 
 build-package-centos-7:
+    tags:
+      - "dind"
     stage: build
     only:
       - web
