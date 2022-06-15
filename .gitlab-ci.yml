@@ -57,9 +57,9 @@ build-package-centos-7:
   tags:
     - shell
   stage: build
-  only:
-    - web
-    - tags
+  # only:
+  #   - web
+  #   - tags
   before_script:
     - git clone https://github.com/packpack/packpack.git packpack
     - git fetch --unshallow
@@ -83,9 +83,9 @@ deploy-job:
   stage: deploy
   tags:
     - shell
-  only:
-    - web
-    - tags
+  # only:
+  #   - web
+  #   - tags
   before_script:
     - eval $(ssh-agent -s)
     - echo "$DEPLOY_PROD_SSH_KEY" | base64 -d | ssh-add -
@@ -97,9 +97,9 @@ deploy-job:
 
 docker:
   stage: docker
-  only:
-    - web
-    - tags
+  # only:
+  #   - web
+  #   - tags
   variables:
     DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
