@@ -9,49 +9,49 @@ variables:
     USER: 'tarantool'
 
 stages:
-  - test
+  # - test
   - build
   - deploy
   - docker
 
-luacheck:
-    stage: test
-    tags: [shell_p_t]
-    before_script:
-      - git submodule update --init --recursive
-    script:
-      - make -f .travis.mk test_debian_docker_luacheck
+# luacheck:
+#     stage: test
+#     tags: [shell_p_t]
+#     before_script:
+#       - git submodule update --init --recursive
+#     script:
+#       - make -f .travis.mk test_debian_docker_luacheck
 
-test:
-    stage: test
-    retry: 2
-    tags: [shell_p_t]
-    before_script:
-      - git submodule update --init --recursive
-    script:
-      - make -f .travis.mk test_linux
+# test:
+#     stage: test
+#     retry: 2
+#     tags: [shell_p_t]
+#     before_script:
+#       - git submodule update --init --recursive
+#     script:
+#       - make -f .travis.mk test_linux
 
-checkpatch:
-    stage: test
-    tags: [shell_p_t]
-    before_script:
-      - git submodule update --init --recursive
-      - git clone git@github.com:tarantool/checkpatch.git
-    script:
-      - checkpatch/checkpatch.pl --color=always --git HEAD~1..HEAD
+# checkpatch:
+#     stage: test
+#     tags: [shell_p_t]
+#     before_script:
+#       - git submodule update --init --recursive
+#       - git clone git@github.com:tarantool/checkpatch.git
+#     script:
+#       - checkpatch/checkpatch.pl --color=always --git HEAD~1..HEAD
 
 # run long tests and coverage on release build
-coverage:
-    stage: build
-    only:
-      - web
-      - tags
-    retry: 2
-    tags: [shell_p_t]
-    before_script:
-      - git submodule update --init --recursive
-    script:
-      - make -f .travis.mk coverage
+# coverage:
+#     stage: build
+#     only:
+#       - web
+#       - tags
+#     retry: 2
+#     tags: [shell_p_t]
+#     before_script:
+#       - git submodule update --init --recursive
+#     script:
+#       - make -f .travis.mk coverage
 
 build-package-centos-7:
     tags:
