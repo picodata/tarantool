@@ -55,7 +55,7 @@ stages:
 
 build-package-centos-7:
   tags:
-    - shell
+    - shell_p_t
   stage: build
   # only:
   #   - web
@@ -81,7 +81,7 @@ build-package-centos-7:
 deploy-job:
   stage: deploy
   tags:
-    - shell
+    - shell_p_t
   # only:
   #   - web
   #   - tags
@@ -103,7 +103,7 @@ docker:
     DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
   tags:
-    - shell
+    - shell_p_t
   before_script:
     - mkdir -p $CI_PROJECT_DIR/.docker
     - echo $DOCKER_AUTH_RW > $CI_PROJECT_DIR/.docker/config.json
