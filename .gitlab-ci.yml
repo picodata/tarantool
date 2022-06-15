@@ -54,33 +54,35 @@ stages:
 #       - make -f .travis.mk coverage
 
 build-package-centos-7:
-    tags:
-      - "dind"
-    stage: build
-    only:
-      - web
-      - tags
-    before_script:
-      - git clone https://github.com/packpack/packpack.git packpack
-      - git fetch --unshallow
-      - git checkout tags/$TAG || true
-      - git describe --long
-      - git submodule update --init --recursive
-      - pushd rpm
-      - wget https://download.picodata.io/tarantool-picodata/el/7/x86_64/libicu-69.1-3.el7.x86_64.rpm
-      - wget https://download.picodata.io/tarantool-picodata/el/7/x86_64/libicu-devel-69.1-3.el7.x86_64.rpm
-      - popd
-      - wget https://binary.picodata.io/repository/raw-private/tarantool/packpack.patch
-      - patch -p0 -i packpack.patch
-      - sed -i "s/(id -u)/(id -u) -o/g" packpack/packpack
-    script:
-      - OS=centos DIST=7 packpack/packpack
-    artifacts:
-      paths:
-        - build/tarantool*.rpm
+  tags:
+    - shell
+  stage: build
+  only:
+    - web
+    - tags
+  before_script:
+    - git clone https://github.com/packpack/packpack.git packpack
+    - git fetch --unshallow
+    - git checkout tags/$TAG || true
+    - git describe --long
+    - git submodule update --init --recursive
+    - pushd rpm
+    - wget https://download.picodata.io/tarantool-picodata/el/7/x86_64/libicu-69.1-3.el7.x86_64.rpm
+    - wget https://download.picodata.io/tarantool-picodata/el/7/x86_64/libicu-devel-69.1-3.el7.x86_64.rpm
+    - popd
+    - wget https://binary.picodata.io/repository/raw-private/tarantool/packpack.patch
+    - patch -p0 -i packpack.patch
+    - sed -i "s/(id -u)/(id -u) -o/g" packpack/packpack
+  script:
+    - OS=centos DIST=7 packpack/packpack
+  artifacts:
+    paths:
+      - build/tarantool*.rpm
 
 deploy-job:
   stage: deploy
+  tags:
+    - shell
   only:
     - web
     - tags
