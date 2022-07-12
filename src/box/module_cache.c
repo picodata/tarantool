@@ -211,9 +211,6 @@ int
 module_func_call(struct module_func *mf, struct port *args,
 		 struct port *ret)
 {
-	struct region *region = &fiber()->gc;
-	size_t region_svp = region_used(region);
-
 	uint32_t data_sz;
 	const char *data = port_get_msgpack(args, &data_sz);
 	if (data == NULL)
@@ -239,8 +236,6 @@ module_func_call(struct module_func *mf, struct port *args,
 	module_ref(m);
 	int rc = mf->func(&ctx, data, data + data_sz);
 	module_unref(m);
-
-	region_truncate(region, region_svp);
 
 	if (rc != 0) {
 		if (diag_last_error(&fiber()->diag) == NULL)
