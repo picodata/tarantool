@@ -191,6 +191,7 @@ applier_thread_writer_f(va_list ap)
 {
 	struct applier *applier = va_arg(ap, struct applier *);
 	while (!fiber_is_cancelled()) {
+		FiberGCChecker gc_check;
 		/*
 		 * Tarantool >= 1.7.7 sends periodic heartbeat
 		 * messages so we don't need to send ACKs every
@@ -206,6 +207,7 @@ applier_thread_writer_f(va_list ap)
 		try {
 			applier->thread.has_acks_to_send = false;
 			struct xrow_header xrow;
+			RegionGuard region_guard(&fiber()->gc);
 			xrow_encode_vclock(&xrow, &applier->thread.ack_vclock);
 			xrow.tm = applier->thread.txn_last_tm;
 			coio_write_xrow(&applier->io, &xrow);
@@ -239,7 +241,6 @@ applier_thread_writer_f(va_list ap)
 			 */
 			e->log();
 		}
-		fiber_gc();
 	}
 	return 0;
 }
@@ -247,7 +248,6 @@ applier_thread_writer_f(va_list ap)
 static int
 apply_snapshot_row(struct xrow_header *row)
 {
-	int rc;
 	struct request request;
 	if (xrow_decode_dml(row, &request, dml_request_key_map(row->type)) != 0)
 		return -1;
@@ -270,14 +270,11 @@ apply_snapshot_row(struct xrow_header *row)
 		goto rollback_stmt;
 	if (txn_commit_stmt(txn, &request))
 		goto rollback;
-	rc = txn_commit(txn);
-	fiber_gc();
-	return rc;
+	return txn_commit(txn);
 rollback_stmt:
 	txn_rollback_stmt(txn);
 rollback:
 	txn_abort(txn);
-	fiber_gc();
 	return -1;
 }
 
@@ -423,11 +420,14 @@ applier_connect(struct applier *applier)
 		tnt_raise(ClientError, ER_CONNECTION_TO_SELF);
 
 	/* Perform authentication if user provided at least login */
-	if (!uri->login)
-		goto done;
+	if (!uri->login) {
+		applier_set_state(applier, APPLIER_READY);
+		return;
+	}
 
 	/* Authenticate */
 	applier_set_state(applier, APPLIER_AUTH);
+	RegionGuard region_guard(&fiber()->gc);
 	xrow_encode_auth_xc(&row, greeting.salt, greeting.salt_len, uri->login,
 			    strlen(uri->login),
 			    uri->password != NULL ? uri->password : "",
@@ -440,7 +440,6 @@ applier_connect(struct applier *applier)
 
 	/* auth succeeded */
 	say_info("authenticated");
-done:
 	applier_set_state(applier, APPLIER_READY);
 }
 
@@ -661,6 +660,7 @@ applier_wait_register(struct applier *applier, uint64_t row_count)
 
 	while (true) {
 		struct stailq rows;
+		RegionGuard region_guard(&fiber()->gc);
 		row_count += applier_read_tx(applier, &rows, &ctx,
 					     TIMEOUT_INFINITY);
 		while (row_count >= next_log_cnt) {
@@ -693,6 +693,7 @@ applier_register(struct applier *applier, bool was_anon)
 	struct xrow_header row;
 
 	memset(&row, 0, sizeof(row));
+	RegionGuard region_guard(&fiber()->gc);
 	/*
 	 * Send this instance's current vclock together
 	 * with REGISTER request.
@@ -724,7 +725,7 @@ applier_join(struct applier *applier)
 	struct iostream *io = &applier->io;
 	struct xrow_header row;
 	uint64_t row_count;
-
+	RegionGuard region_guard(&fiber()->gc);
 	xrow_encode_join_xc(&row, &INSTANCE_UUID);
 	coio_write_xrow(io, &row);
 
@@ -1170,7 +1171,6 @@ apply_final_join_tx(uint32_t replica_id, struct stailq *rows)
 	} else {
 		rc = apply_plain_tx(replica_id, rows, false, false);
 	}
-	fiber_gc();
 	return rc;
 }
 
@@ -1224,10 +1224,6 @@ applier_synchro_filter_tx(struct stailq *rows)
 	stailq_foreach_entry(item, rows, next) {
 		row = &item->row;
 		row->type = IPROTO_NOP;
-		/*
-		 * Row body is saved to fiber's region and will be freed
-		 * on next fiber_gc() call.
-		 */
 		row->bodycnt = 0;
 		memset(&item->req.dml, 0, sizeof(item->req.dml));
 		item->req.dml.header = row;
@@ -1320,7 +1316,6 @@ applier_apply_tx(struct applier *applier, struct stailq *rows)
 		      last_row->lsn);
 finish:
 	latch_unlock(latch);
-	fiber_gc();
 	return rc;
 }
 
@@ -1658,6 +1653,7 @@ applier_thread_reader_f(va_list ap)
 	};
 
 	while (!fiber_is_cancelled()) {
+		FiberGCChecker gc_check;
 		double timeout = applier->version_id < version_id(1, 7, 7) ?
 				 TIMEOUT_INFINITY :
 				 replication_disconnect_timeout();
@@ -1973,6 +1969,7 @@ applier_subscribe(struct applier *applier)
 	 * instance as soon as local WAL starts accepting writes.
 	 */
 	uint32_t id_filter = box_is_orphan() ? 0 : 1 << instance_id;
+	RegionGuard region_guard(&fiber()->gc);
 	xrow_encode_subscribe_xc(&row, &REPLICASET_UUID, &INSTANCE_UUID,
 				 &vclock, replication_anon, id_filter);
 	coio_write_xrow(io, &row);
@@ -2102,7 +2099,6 @@ applier_disconnect(struct applier *applier, enum applier_state state)
 		iostream_close(&applier->io);
 	/* Clear all unparsed input. */
 	ibuf_reinit(&applier->ibuf);
-	fiber_gc();
 }
 
 static int
@@ -2128,6 +2124,7 @@ applier_f(va_list ap)
 
 	/* Re-connect loop */
 	while (!fiber_is_cancelled()) {
+		FiberGCChecker gc_check;
 		try {
 			applier_connect(applier);
 			if (tt_uuid_is_nil(&REPLICASET_UUID)) {
