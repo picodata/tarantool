@@ -126,6 +126,8 @@ strnindex(const char *const *haystack, const char *needle, uint32_t len,
 #define xrealloc(ptr, size)	xalloc_impl((size), realloc, (ptr), (size))
 #define xstrdup(s)		xalloc_impl(strlen((s)) + 1, strdup, (s))
 #define xstrndup(s, n)		xalloc_impl((n) + 1, strndup, (s), (n))
+#define xregion_alloc_object(region, T, size) \
+		xalloc_impl(size, region_alloc_object, region, T, size)
 
 /** \cond public */
 

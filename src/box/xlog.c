@@ -1333,6 +1333,7 @@ xlog_write_row(struct xlog *log, const struct xrow_header *packet)
 	/** encode row into iovec */
 	struct iovec iov[XROW_IOVMAX];
 	/** don't write sync to the disk */
+	size_t region_svp = region_used(&fiber()->gc);
 	int iovcnt = xrow_header_encode(packet, 0, iov, 0);
 	if (iovcnt < 0) {
 		obuf_rollback_to_svp(&log->obuf, &svp);
@@ -1346,6 +1347,7 @@ xlog_write_row(struct xlog *log, const struct xrow_header *packet)
 			diag_set(ClientError, ER_INJECTION,
 				 "xlog write injection");
 			obuf_rollback_to_svp(&log->obuf, &svp);
+			region_truncate(&fiber()->gc, region_svp);
 			return -1;
 		};
 		if (obuf_dup(&log->obuf, iov[i].iov_base, iov[i].iov_len) <
@@ -1353,9 +1355,11 @@ xlog_write_row(struct xlog *log, const struct xrow_header *packet)
 			diag_set(OutOfMemory, XLOG_FIXHEADER_SIZE,
 				  "runtime arena", "xlog tx output buffer");
 			obuf_rollback_to_svp(&log->obuf, &svp);
+			region_truncate(&fiber()->gc, region_svp);
 			return -1;
 		}
 	}
+	region_truncate(&fiber()->gc, region_svp);
 	assert(iovcnt <= XROW_IOVMAX);
 	log->tx_rows++;
 
