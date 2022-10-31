@@ -127,6 +127,8 @@ strnindex(const char *const *haystack, const char *needle, uint32_t len,
 #define xstrdup(s)		xalloc_impl(strlen((s)) + 1, strdup, (s))
 #define xstrndup(s, n)		xalloc_impl((n) + 1, strndup, (s), (n))
 #define xregion_alloc(p, size)	xalloc_impl((size), region_alloc, (p), (size))
+#define xregion_alloc_object(region, T, size) \
+		xalloc_impl(size, region_alloc_object, region, T, size)
 #define xregion_alloc_array(p, T, count, size)				\
 	xalloc_impl(sizeof(T) * (count), region_alloc_array, (p), T,	\
 		    (count), (size))
@@ -395,17 +397,6 @@ strnindex(const char *const *haystack, const char *needle, uint32_t len,
 #  define PACKED
 #endif
 
-/**
- * NO_SANITIZE_ADDRESS attribute disables AddressSanitizer for a given function.
- * The attribute may not be supported by old compilers, but they do not support
- * ASAN as well, so it's safe to define the attribute only if ASAN is enabled.
- */
-#if __has_feature(address_sanitizer)
-#  define NO_SANITIZE_ADDRESS __attribute__((no_sanitize_address))
-#else
-#  define NO_SANITIZE_ADDRESS
-#endif
-
 /** Function Attributes }}} */
 
 /** {{{ Statement Attributes */
@@ -461,6 +452,14 @@ gcov_flush(void)
 	__gcov_flush();
 }
 #endif
+
+/**
+ * Async-signal-safe implementation of printf(), to
+ * be able to write messages into the error log
+ * inside a signal handler.
+ */
+ssize_t
+fdprintf(int fd, const char *format, ...) __attribute__((format(printf, 2, 3)));
 
 const char *
 find_path(const char *argv0);
@@ -677,27 +676,6 @@ getenv_safe(const char *name, char *buf, size_t buf_size);
 
 #if !defined(__cplusplus) && !defined(static_assert)
 # define static_assert _Static_assert
-#endif
-
-#ifndef NDEBUG
-/**
- * Execute a CPU instruction that results in the SIGILL signal.
- */
-static inline void
-illegal_instruction(void)
-{
-	#ifdef __x86_64__
-		__asm__("ud2");
-	#elif __aarch64__
-		/*
-		 * GNU Assembler older than 2.35 doesn't support the "udf #0"
-		 * mnemonic, thus use the machine code of that instruction.
-		 */
-		__asm__(".inst 0x00000000");
-	#else
-		#error unsupported architecture
-	#endif
-}
 #endif
 
 #if defined(__cplusplus)
