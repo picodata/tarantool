@@ -1273,9 +1273,7 @@ box_txn_commit(void)
 		diag_set(ClientError, ER_COMMIT_IN_SUB_STMT);
 		return -1;
 	}
-	int rc = txn_commit(txn);
-	fiber_gc();
-	return rc;
+	return txn_commit(txn);
 }
 
 int
@@ -1291,7 +1289,6 @@ box_txn_rollback(void)
 	assert(txn->signature == TXN_SIGNATURE_UNKNOWN);
 	txn->signature = TXN_SIGNATURE_ROLLBACK;
 	txn_rollback(txn); /* doesn't throw */
-	fiber_gc();
 	return 0;
 }
 
@@ -1473,7 +1470,6 @@ txn_on_stop(struct trigger *trigger, void *event)
 	assert(txn->signature == TXN_SIGNATURE_UNKNOWN);
 	txn->signature = TXN_SIGNATURE_ROLLBACK;
 	txn_rollback(txn);
-	fiber_gc();
 	return 0;
 }
 
