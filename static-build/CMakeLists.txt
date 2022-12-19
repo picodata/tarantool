@@ -11,18 +11,6 @@ include(CheckLibraryExists)
 include(CheckCSourceCompiles)
 include(FindPackageMessage)
 include(ExternalProject)
-set(LIBICU_VERSION release-71-1/icu4c-71_1)
-set(LIBICU_HASH e06ffc96f59762bd3c929b217445aaec)
-set(LIBICONV_VERSION 1.17)
-set(LIBICONV_HASH d718cd5a59438be666d1575855be72c3)
-set(OPENSSL_VERSION 1.1.1q)
-set(OPENSSL_HASH c685d239b6a6e1bd78be45624c092f51)
-set(ZLIB_VERSION 1.2.12)
-set(ZLIB_HASH 5fc414a9726be31427b440b434d05f78)
-set(NCURSES_VERSION 6.3-20220716)
-set(NCURSES_HASH 2b7a0e31ebbd8144680f985d61f5bbd5)
-set(READLINE_VERSION 8.0)
-set(READLINE_HASH 7e6c1f16aee3244a69aba6e438295ca3)
 set(BACKUP_STORAGE https://distrib.hb.bizmrg.com)
 
 include(../cmake/os.cmake)
@@ -67,8 +55,7 @@ set(DEPENDENCY_CXXFLAGS "${DEPENDENCY_CXXFLAGS} ${PREFIX_MAP_FLAGS}")
 # https://github.com/openssl/openssl/issues/18720
 #
 ExternalProject_Add(openssl
-    URL ${BACKUP_STORAGE}/openssl/openssl-${OPENSSL_VERSION}.tar.gz
-    URL_MD5 ${OPENSSL_HASH}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/openssl-1.1.1q
     CONFIGURE_COMMAND <SOURCE_DIR>/config
         CC=${CMAKE_C_COMPILER}
         CXX=${CMAKE_CXX_COMPILER}
@@ -80,16 +67,13 @@ ExternalProject_Add(openssl
         --libdir=lib
         no-shared
     INSTALL_COMMAND ${CMAKE_MAKE_PROGRAM} install_sw
-    PATCH_COMMAND patch -d <SOURCE_DIR> -p1 <
-        "${CMAKE_CURRENT_SOURCE_DIR}/openssl-111q-gh-18720.patch"
 )
 
 #
 # ICU
 #
 ExternalProject_Add(icu
-    URL https://github.com/unicode-org/icu/releases/download/${LIBICU_VERSION}-src.tgz
-    URL_MD5 ${LIBICU_HASH}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/icu4c-62_1
     # By default libicu is built by using clang/clang++ compiler (if it
     # exists). Here is a link for detecting compilers at libicu configure
     # script: https://github.com/unicode-org/icu/blob/7c7b8bd5702310b972f888299169bc3cc88bf0a6/icu4c/source/configure.ac#L135
@@ -116,8 +100,7 @@ ExternalProject_Add(icu
 # ZLIB
 #
 ExternalProject_Add(zlib
-    URL ${BACKUP_STORAGE}/zlib/zlib-${ZLIB_VERSION}.tar.gz
-    URL_MD5 ${ZLIB_HASH}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/zlib-1.2.12
     CONFIGURE_COMMAND env
         CC=${CMAKE_C_COMPILER}
         CFLAGS=${DEPENDENCY_CFLAGS}
@@ -132,8 +115,7 @@ ExternalProject_Add(zlib
 # Ncurses
 #
 ExternalProject_Add(ncurses
-    URL ${BACKUP_STORAGE}/ncurses/ncurses-${NCURSES_VERSION}.tgz
-    URL_MD5 ${NCURSES_HASH}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/ncurses-6.3-20220716
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         CC=${CMAKE_C_COMPILER}
         CXX=${CMAKE_CXX_COMPILER}
@@ -169,8 +151,7 @@ ExternalProject_Add(ncurses
 # Patched to fix file descriptor leak with zero-length history file.
 #
 ExternalProject_Add(readline
-    URL https://ftp.gnu.org/gnu/readline/readline-${READLINE_VERSION}.tar.gz
-    URL_MD5 ${READLINE_HASH}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/readline-8.0
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         CC=${CMAKE_C_COMPILER}
         CFLAGS=${DEPENDENCY_CFLAGS}
@@ -179,8 +160,6 @@ ExternalProject_Add(readline
 
         --prefix=<INSTALL_DIR>
         --disable-shared
-    PATCH_COMMAND patch -d <SOURCE_DIR> -p0 <
-        "${CMAKE_CURRENT_SOURCE_DIR}/readline80-001.patch"
 )
 
 #
@@ -188,8 +167,7 @@ ExternalProject_Add(readline
 #
 if (APPLE)
     ExternalProject_Add(iconv
-        URL https://ftp.gnu.org/pub/gnu/libiconv/libiconv-${LIBICONV_VERSION}.tar.gz
-        URL_MD5 ${LIBICONV_HASH}
+        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/libiconv-1.17
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             CC=${CMAKE_C_COMPILER}
             CFLAGS=${DEPENDENCY_CFLAGS}
