@@ -1,4 +1,4 @@
-set(ICU_VERSION release-71-1/icu4c-71_1)
+set(ICU_VERSION 71_1)
 set(ICU_HASH e06ffc96f59762bd3c929b217445aaec)
 set(ICU_PATCHES_DIR ${PROJECT_SOURCE_DIR}/patches)
 set(ICU_INSTALL_DIR ${BUNDLED_LIBS_INSTALL_DIR}/icu-prefix)
@@ -19,11 +19,9 @@ endif()
 
 ExternalProject_Add(bundled-icu-project
     PREFIX ${ICU_INSTALL_DIR}
-    SOURCE_DIR ${ICU_INSTALL_DIR}/src/icu
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/icu4c-${ICU_VERSION}
     BINARY_DIR ${ICU_INSTALL_DIR}/src/icu-build
     STAMP_DIR ${ICU_INSTALL_DIR}/src/icu-stamp
-    URL https://github.com/unicode-org/icu/releases/download/${ICU_VERSION}-src.tgz
-    URL_MD5 ${ICU_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/source/configure
         CC=${CMAKE_C_COMPILER}
         CXX=${CMAKE_CXX_COMPILER}

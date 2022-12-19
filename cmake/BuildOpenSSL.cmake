@@ -16,11 +16,9 @@ endif()
 
 ExternalProject_Add(bundled-openssl-project
     PREFIX ${OPENSSL_INSTALL_DIR}
-    SOURCE_DIR ${OPENSSL_INSTALL_DIR}/src/openssl
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/openssl-${OPENSSL_VERSION}
     BINARY_DIR ${OPENSSL_INSTALL_DIR}/src/openssl-build
     STAMP_DIR ${OPENSSL_INSTALL_DIR}/src/openssl-stamp
-    URL ${BACKUP_STORAGE}/openssl/openssl-${OPENSSL_VERSION}.tar.gz
-    URL_MD5 ${OPENSSL_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/config
         CC=${CMAKE_C_COMPILER}
         CXX=${CMAKE_CXX_COMPILER}
