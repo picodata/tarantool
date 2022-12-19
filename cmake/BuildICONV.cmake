@@ -14,11 +14,9 @@ endif()
 
 ExternalProject_Add(bundled-iconv-project
     PREFIX ${ICONV_INSTALL_DIR}
-    SOURCE_DIR ${ICONV_INSTALL_DIR}/src/iconv
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/libiconv-${ICONV_VERSION}
     BINARY_DIR ${ICONV_INSTALL_DIR}/src/iconv-build
     STAMP_DIR ${ICONV_INSTALL_DIR}/src/iconv-stamp
-    URL URL ${BACKUP_STORAGE}/libiconv/libiconv-${ICONV_VERSION}.tar.gz
-    URL_MD5 ${ICONV_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         CC=${CMAKE_C_COMPILER}
         CFLAGS=${ICONV_CFLAGS}

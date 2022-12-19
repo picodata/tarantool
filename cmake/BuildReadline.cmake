@@ -29,11 +29,9 @@ endif()
 
 ExternalProject_Add(bundled-ncurses-project
     PREFIX ${NCURSES_INSTALL_DIR}
-    SOURCE_DIR ${NCURSES_INSTALL_DIR}/src/ncurses
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/ncurses-${NCURSES_VERSION}
     BINARY_DIR ${NCURSES_INSTALL_DIR}/src/ncurses-build
     STAMP_DIR ${NCURSES_INSTALL_DIR}/src/ncurses-stamp
-    URL ${BACKUP_STORAGE}/ncurses/ncurses-${NCURSES_VERSION}.tgz
-    URL_MD5 ${NCURSES_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         CC=${CMAKE_C_COMPILER}
         CXX=${CMAKE_CXX_COMPILER}
@@ -61,6 +59,7 @@ ExternalProject_Add(bundled-ncurses-project
         --disable-db-install
         --without-progs
         --without-manpages
+        --without-tests
     BUILD_BYPRODUCTS ${NCURSES_LIBRARY} ${NCURSES_TINFO_LIBRARY}
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
@@ -77,11 +76,9 @@ add_dependencies(bundled-ncurses-tinfo bundled-ncurses-project)
 
 ExternalProject_Add(bundled-readline-project
     PREFIX ${READLINE_INSTALL_DIR}
-    SOURCE_DIR ${READLINE_INSTALL_DIR}/src/readline
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/readline-${READLINE_VERSION}
     BINARY_DIR ${READLINE_INSTALL_DIR}/src/readline-build
     STAMP_DIR ${READLINE_INSTALL_DIR}/src/readline-stamp
-    URL ${BACKUP_STORAGE}/readline/readline-${READLINE_VERSION}.tar.gz
-    URL_MD5 ${READLINE_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         CC=${CMAKE_C_COMPILER}
         CFLAGS=${READLINE_CFLAGS}

@@ -19,11 +19,9 @@ endif()
 
 ExternalProject_Add(bundled-icu-project
     PREFIX ${ICU_INSTALL_DIR}
-    SOURCE_DIR ${ICU_INSTALL_DIR}/src/icu
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/icu4c-${ICU_VERSION}
     BINARY_DIR ${ICU_INSTALL_DIR}/src/icu-build
     STAMP_DIR ${ICU_INSTALL_DIR}/src/icu-stamp
-    URL ${BACKUP_STORAGE}/icu/icu4c-${ICU_VERSION}-src.tgz
-    URL_MD5 ${ICU_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/source/configure
         CC=${CMAKE_C_COMPILER}
         CXX=${CMAKE_CXX_COMPILER}
