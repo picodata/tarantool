@@ -381,8 +381,31 @@ error:
 }
 
 struct module *
+module_current_exe()
+{
+	struct module *m = cache_find(NULL, 0);
+	if (m != NULL)
+		return m;
+
+	size_t size = sizeof(struct module) + 1;
+	m = malloc(size);
+	if (m == NULL) {
+		diag_set(OutOfMemory, size, "malloc", "module");
+		return NULL;
+	}
+	memset(m, 0, size);
+	m->handle = dlopen(0, RTLD_NOW);
+	module_ref(m);
+	cache_put(m);
+	return m;
+}
+
+struct module *
 module_load_force(const char *package, size_t package_len)
 {
+	if (package_len == 0)
+		return module_current_exe();
+
 	char path[PATH_MAX];
 	size_t size = sizeof(path);
 
@@ -406,6 +429,9 @@ module_load_force(const char *package, size_t package_len)
 struct module *
 module_load(const char *package, size_t package_len)
 {
+	if (package_len == 0)
+		return module_current_exe();
+
 	char path[PATH_MAX];
 
 	if (find_package(package, package_len, path, sizeof(path)) != 0)
