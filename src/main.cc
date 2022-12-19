@@ -87,7 +87,7 @@
 #include "ssl_cert_paths_discover.h"
 #include "core/errinj.h"
 
-static pid_t master_pid = getpid();
+static pid_t master_pid = -1;
 static struct pidfh *pid_file_handle;
 static char *script = NULL;
 static char *pid_file = NULL;
@@ -638,6 +638,10 @@ extern "C"
 int
 tarantool_main(int argc, char **argv, void (*cb)(void *), void *cb_data)
 {
+	// Picodata forks the process and only the child runs tarantool_main.
+	// Therefore master_pid must be set here instead of the static memory,
+	// so that the resources are cleaned up at the end
+	master_pid = getpid();
 	/* set locale to make iswXXXX function work */
 	if (setlocale(LC_CTYPE, "C.UTF-8") == NULL &&
 	    setlocale(LC_CTYPE, "en_US.UTF-8") == NULL &&
