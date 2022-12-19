@@ -1058,7 +1058,14 @@ run_script_f(va_list ap)
 	 * never really dead. It never returns from its function.
 	 */
 	struct diag *diag = va_arg(ap, struct diag *);
+	void (*cb)(void *) = va_arg(ap, void (*)(void *));
+	void *cb_data = va_arg(ap, void *);
 	bool is_option_e_ran = false;
+
+	if (cb) {
+		cb(cb_data);
+		lua_settop(L, 0);
+	}
 
 	/*
 	 * Return control to tarantool_lua_run_script.
@@ -1203,7 +1210,8 @@ error:
 
 int
 tarantool_lua_run_script(char *path, uint32_t opt_mask,
-			 int optc, const char **optv, int argc, char **argv)
+			 int optc, const char **optv, int argc, char **argv,
+			 void (*cb)(void *), void *cb_data)
 {
 	const char *title = path ? basename(path) : "interactive";
 	/*
@@ -1227,7 +1235,8 @@ tarantool_lua_run_script(char *path, uint32_t opt_mask,
 	struct diag script_diag;
 	diag_create(&script_diag);
 	fiber_start(script_fiber, tarantool_L, path, opt_mask,
-		    optc, optv, argc, argv, &script_diag);
+		    optc, optv, argc, argv, &script_diag,
+		    cb, cb_data);
 
 	/*
 	 * Run an auxiliary event loop to re-schedule run_script fiber.

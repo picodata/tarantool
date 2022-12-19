@@ -372,7 +372,7 @@ add_custom_command(
             ${exports_file} ${CMAKE_SYSTEM_NAME}
 )
 
-add_executable(
+add_library(
     tarantool main.cc
     ${LIBUTIL_FREEBSD_SRC}/flopen.c
     ${LIBUTIL_FREEBSD_SRC}/pidfile.c)
