@@ -59,6 +59,9 @@ ExternalProject_Add(bundled-ncurses-project
         --disable-db-install
         --without-progs
         --without-manpages
+        --without-manpage-renames
+        --without-ada
+        --without-tests
     BUILD_BYPRODUCTS ${NCURSES_LIBRARY} ${NCURSES_TINFO_LIBRARY}
 )
 
