@@ -638,8 +638,9 @@ print_help(const char *program)
 	puts("to see online documentation, submit bugs or contribute a patch.");
 }
 
+extern "C"
 int
-main(int argc, char **argv)
+tarantool_main(int argc, char **argv, void (*cb)(void *), void *cb_data)
 {
 	/* set locale to make iswXXXX function work */
 	if (setlocale(LC_CTYPE, "C.UTF-8") == NULL &&
@@ -836,7 +837,8 @@ main(int argc, char **argv)
 		 * initialized.
 		 */
 		if (tarantool_lua_run_script(script, opt_mask, optc, optv,
-					     main_argc, main_argv) != 0)
+					     main_argc, main_argv,
+					     cb, cb_data) != 0)
 			diag_raise();
 		/*
 		 * Start event loop after executing Lua script if signal_cb()
