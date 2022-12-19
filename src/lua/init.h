@@ -81,7 +81,8 @@ tarantool_lua_free();
 int
 tarantool_lua_run_script(char *path, uint32_t opt_mask,
 			 int optc, const char **optv,
-			 int argc, char **argv);
+			 int argc, char **argv,
+			 void (*cb)(void *), void *cb_data);
 
 extern char *history;
 
