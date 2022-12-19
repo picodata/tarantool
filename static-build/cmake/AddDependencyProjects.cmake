@@ -167,6 +167,9 @@ ExternalProject_Add(ncurses
         --disable-db-install
         --without-progs
         --without-manpages
+        --without-manpage-renames
+        --without-ada
+        --without-tests
 )
 set(TARANTOOL_DEPENDS ncurses ${TARANTOOL_DEPENDS})
 
