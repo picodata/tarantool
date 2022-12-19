@@ -14,11 +14,9 @@ endif()
 
 ExternalProject_Add(bundled-zlib-project
     PREFIX ${ZLIB_INSTALL_DIR}
-    SOURCE_DIR ${ZLIB_INSTALL_DIR}/src/zlib
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/zlib-${ZLIB_VERSION}
     BINARY_DIR ${ZLIB_INSTALL_DIR}/src/zlib-build
     STAMP_DIR ${ZLIB_INSTALL_DIR}/src/zlib-stamp
-    URL ${BACKUP_STORAGE}/zlib/zlib-${ZLIB_VERSION}.tar.gz
-    URL_MD5 ${ZLIB_HASH}
     CONFIGURE_COMMAND env
         CC=${CMAKE_C_COMPILER}
         CFLAGS=${ZLIB_CFLAGS}

@@ -33,11 +33,9 @@ endif()
 
 ExternalProject_Add(bundled-zzip-project
     PREFIX ${ZZIP_INSTALL_DIR}
-    SOURCE_DIR ${ZZIP_INSTALL_DIR}/src/zzip
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/zziplib-${ZZIP_VERSION}
     BINARY_DIR ${ZZIP_INSTALL_DIR}/src/zzip-build
     STAMP_DIR ${ZZIP_INSTALL_DIR}/src/zzip-stamp
-    URL ${BACKUP_STORAGE}/zziplib/zziplib-${ZZIP_VERSION}.tar.gz
-    URL_MD5 ${ZZIP_HASH}
     CMAKE_ARGS ${ZZIP_CMAKE_FLAGS}
     BUILD_BYPRODUCTS ${ZZIP_LIBRARY}
 )
