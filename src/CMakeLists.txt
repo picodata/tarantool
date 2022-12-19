@@ -393,7 +393,7 @@ add_custom_command(
             ${EXPORT_LIST}
 )
 
-add_executable(
+add_library(
     tarantool main.cc
     ${LIBUTIL_FREEBSD_SRC}/flopen.c
     ${LIBUTIL_FREEBSD_SRC}/pidfile.c)
