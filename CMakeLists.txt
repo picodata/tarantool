@@ -771,13 +771,21 @@ include (cmake/rpm.cmake)
 
 add_subdirectory(src)
 add_subdirectory(extra)
-add_subdirectory(test)
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    message(AUTHOR_WARNING "Benchmarks are available only in release build")
-else ()
-    add_subdirectory(perf)
-endif ()
-add_subdirectory(doc)
+
+option(BUILD_TESTING "Enable building tests and perftests" ON)
+if (BUILD_TESTING)
+    add_subdirectory(test)
+    if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(AUTHOR_WARNING "Benchmarks are available only in release build")
+    else ()
+        add_subdirectory(perf)
+    endif ()
+endif()
+
+option(BUILD_DOC "Enable building documentation (man pages)" ON)
+if (BUILD_DOC)
+    add_subdirectory(doc)
+endif()
 
 option(WITH_NOTIFY_SOCKET "Enable notifications on NOTIFY_SOCKET" ON)
 
