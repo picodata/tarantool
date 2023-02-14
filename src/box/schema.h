@@ -43,13 +43,14 @@ extern "C" {
 
 struct func;
 
-extern uint32_t schema_version;
+/** Schema version (incremented by DDL commands)*/
+extern uint64_t schema_version;
 extern uint32_t dd_version_id;
 
 /** Triggers invoked after schema initialization. */
 extern struct rlist on_schema_init;
 
-uint32_t
+uint64_t
 box_schema_version(void);
 
 /**
