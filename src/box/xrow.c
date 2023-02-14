@@ -369,7 +369,7 @@ struct PACKED iproto_header_bin {
 	uint8_t m_sync;                         /* MP_UINT64 */
 	uint64_t v_sync;                        /* sync */
 	uint8_t k_schema_version;               /* IPROTO_SCHEMA_VERSION */
-	uint8_t m_schema_version;               /* MP_UINT32 */
+	uint8_t m_schema_version;               /* MP_UINT64 */
 	uint64_t v_schema_version;              /* schema_version */
 };
 
@@ -722,7 +722,7 @@ iproto_reply_select(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
 /** Reply select with IPROTO_DATA and IPROTO_POSITION. */
 int
 iproto_reply_select_with_position(struct obuf *buf, struct obuf_svp *svp,
-				  uint64_t sync, uint32_t schema_version,
+				  uint64_t sync, uint64_t schema_version,
 				  uint32_t count, const char *packed_pos,
 				  const char *packed_pos_end)
 {
