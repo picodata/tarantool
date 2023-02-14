@@ -51,7 +51,7 @@ enum {
 	XROW_HEADER_LEN_MAX = 52,
 	XROW_BODY_LEN_MAX = 256,
 	XROW_SYNCHRO_BODY_LEN_MAX = 32,
-	IPROTO_HEADER_LEN = 28,
+	IPROTO_HEADER_LEN = 32,
 	/** 7 = sizeof(iproto_body_bin). */
 	IPROTO_SELECT_HEADER_LEN = IPROTO_HEADER_LEN + 7,
 };
@@ -112,7 +112,8 @@ struct xrow_header {
 	};
 
 	int bodycnt;
-	uint32_t schema_version;
+	/* See `IPROTO_SCHEMA_VERSION`. */
+	uint64_t schema_version;
 	struct iovec body[XROW_BODY_IOVMAX];
 };
 
@@ -650,7 +651,7 @@ xrow_encode_type(struct xrow_header *row, uint16_t type);
  */
 void
 iproto_header_encode(char *data, uint16_t type, uint64_t sync,
-		     uint32_t schema_version, uint32_t body_length);
+		     uint64_t schema_version, uint32_t body_length);
 
 struct obuf;
 struct obuf_svp;
@@ -682,7 +683,7 @@ iproto_prepare_select(struct obuf *buf, struct obuf_svp *svp)
  */
 void
 iproto_reply_select(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
-		    uint32_t schema_version, uint32_t count);
+		    uint64_t schema_version, uint32_t count);
 
 /**
  * Encode iproto header with IPROTO_OK response code.
@@ -694,7 +695,7 @@ iproto_reply_select(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
  * @retval -1 Memory error.
  */
 int
-iproto_reply_ok(struct obuf *out, uint64_t sync, uint32_t schema_version);
+iproto_reply_ok(struct obuf *out, uint64_t sync, uint64_t schema_version);
 
 /**
  * Encode iproto header with IPROTO_OK response code and protocol features
@@ -707,7 +708,7 @@ iproto_reply_ok(struct obuf *out, uint64_t sync, uint32_t schema_version);
  * @retval -1 Memory error.
  */
 int
-iproto_reply_id(struct obuf *out, uint64_t sync, uint32_t schema_version);
+iproto_reply_id(struct obuf *out, uint64_t sync, uint64_t schema_version);
 
 /**
  * Encode iproto header with IPROTO_OK response code and vclock
@@ -722,7 +723,7 @@ iproto_reply_id(struct obuf *out, uint64_t sync, uint32_t schema_version);
  */
 int
 iproto_reply_vclock(struct obuf *out, const struct vclock *vclock,
-		    uint64_t sync, uint32_t schema_version);
+		    uint64_t sync, uint64_t schema_version);
 
 /**
  * Encode a reply to an IPROTO_VOTE request.
@@ -736,7 +737,7 @@ iproto_reply_vclock(struct obuf *out, const struct vclock *vclock,
  */
 int
 iproto_reply_vote(struct obuf *out, const struct ballot *ballot,
-		  uint64_t sync, uint32_t schema_version);
+		  uint64_t sync, uint64_t schema_version);
 
 /**
  * Write an error packet int output buffer. Doesn't throw if out
@@ -744,7 +745,7 @@ iproto_reply_vote(struct obuf *out, const struct ballot *ballot,
  */
 int
 iproto_reply_error(struct obuf *out, const struct error *e, uint64_t sync,
-		   uint32_t schema_version);
+		   uint64_t schema_version);
 
 /** EXECUTE/PREPARE request. */
 struct sql_request {
@@ -776,7 +777,7 @@ xrow_decode_sql(const struct xrow_header *row, struct sql_request *request);
  */
 void
 iproto_reply_sql(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
-		 uint32_t schema_version);
+		 uint64_t schema_version);
 
 /**
  * Write an IPROTO_CHUNK header from a specified position in a
@@ -788,7 +789,7 @@ iproto_reply_sql(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
  */
 void
 iproto_reply_chunk(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
-		   uint32_t schema_version);
+		   uint64_t schema_version);
 
 /**
  * Encode IPROTO_EVENT packet.
@@ -810,7 +811,7 @@ iproto_send_event(struct obuf *out, uint64_t sync,
 /** Write error directly to a socket. */
 void
 iproto_do_write_error(struct iostream *io, const struct error *e,
-		      uint32_t schema_version, uint64_t sync);
+		      uint64_t schema_version, uint64_t sync);
 
 enum {
 	/* Maximal length of protocol name in handshake */
@@ -1138,7 +1139,7 @@ xrow_decode_subscribe_response_xc(const struct xrow_header *row,
 
 /** @copydoc iproto_reply_ok. */
 static inline void
-iproto_reply_ok_xc(struct obuf *out, uint64_t sync, uint32_t schema_version)
+iproto_reply_ok_xc(struct obuf *out, uint64_t sync, uint64_t schema_version)
 {
 	if (iproto_reply_ok(out, sync, schema_version) != 0)
 		diag_raise();
@@ -1146,7 +1147,7 @@ iproto_reply_ok_xc(struct obuf *out, uint64_t sync, uint32_t schema_version)
 
 /** @copydoc iproto_reply_id. */
 static inline void
-iproto_reply_id_xc(struct obuf *out, uint64_t sync, uint32_t schema_version)
+iproto_reply_id_xc(struct obuf *out, uint64_t sync, uint64_t schema_version)
 {
 	if (iproto_reply_id(out, sync, schema_version) != 0)
 		diag_raise();
@@ -1155,7 +1156,7 @@ iproto_reply_id_xc(struct obuf *out, uint64_t sync, uint32_t schema_version)
 /** @copydoc iproto_reply_vclock. */
 static inline void
 iproto_reply_vclock_xc(struct obuf *out, const struct vclock *vclock,
-		       uint64_t sync, uint32_t schema_version)
+		       uint64_t sync, uint64_t schema_version)
 {
 	if (iproto_reply_vclock(out, vclock, sync, schema_version) != 0)
 		diag_raise();
@@ -1164,7 +1165,7 @@ iproto_reply_vclock_xc(struct obuf *out, const struct vclock *vclock,
 /** @copydoc iproto_reply_vote. */
 static inline void
 iproto_reply_vote_xc(struct obuf *out, const struct ballot *ballot,
-		       uint64_t sync, uint32_t schema_version)
+		       uint64_t sync, uint64_t schema_version)
 {
 	if (iproto_reply_vote(out, ballot, sync, schema_version) != 0)
 		diag_raise();
