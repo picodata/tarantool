@@ -369,8 +369,8 @@ struct PACKED iproto_header_bin {
 	uint8_t m_sync;                         /* MP_UINT64 */
 	uint64_t v_sync;                        /* sync */
 	uint8_t k_schema_version;               /* IPROTO_SCHEMA_VERSION */
-	uint8_t m_schema_version;               /* MP_UINT32 */
-	uint32_t v_schema_version;              /* schema_version */
+	uint8_t m_schema_version;               /* MP_UINT64 */
+	uint64_t v_schema_version;              /* schema_version */
 };
 
 static_assert(sizeof(struct iproto_header_bin) == IPROTO_HEADER_LEN,
@@ -378,7 +378,7 @@ static_assert(sizeof(struct iproto_header_bin) == IPROTO_HEADER_LEN,
 
 void
 iproto_header_encode(char *out, uint16_t type, uint64_t sync,
-		     uint32_t schema_version, uint32_t body_length)
+		     uint64_t schema_version, uint32_t body_length)
 {
 	struct iproto_header_bin header;
 	header.m_len = 0xce;
@@ -392,8 +392,8 @@ iproto_header_encode(char *out, uint16_t type, uint64_t sync,
 	header.m_sync = 0xcf;
 	header.v_sync = mp_bswap_u64(sync);
 	header.k_schema_version = IPROTO_SCHEMA_VERSION;
-	header.m_schema_version = 0xce;
-	header.v_schema_version = mp_bswap_u32(schema_version);
+	header.m_schema_version = 0xcf;
+	header.v_schema_version = mp_bswap_u64(schema_version);
 	memcpy(out, &header, sizeof(header));
 }
 
@@ -419,7 +419,7 @@ iproto_encode_error(uint32_t error)
 }
 
 int
-iproto_reply_ok(struct obuf *out, uint64_t sync, uint32_t schema_version)
+iproto_reply_ok(struct obuf *out, uint64_t sync, uint64_t schema_version)
 {
 	char *buf = (char *)obuf_alloc(out, IPROTO_HEADER_LEN + 1);
 	if (buf == NULL) {
@@ -433,7 +433,7 @@ iproto_reply_ok(struct obuf *out, uint64_t sync, uint32_t schema_version)
 }
 
 int
-iproto_reply_id(struct obuf *out, uint64_t sync, uint32_t schema_version)
+iproto_reply_id(struct obuf *out, uint64_t sync, uint64_t schema_version)
 {
 	unsigned version = IPROTO_CURRENT_VERSION;
 	struct iproto_features *features = &IPROTO_CURRENT_FEATURES;
@@ -484,7 +484,7 @@ iproto_reply_id(struct obuf *out, uint64_t sync, uint32_t schema_version)
 
 int
 iproto_reply_vclock(struct obuf *out, const struct vclock *vclock,
-		    uint64_t sync, uint32_t schema_version)
+		    uint64_t sync, uint64_t schema_version)
 {
 	size_t max_size = IPROTO_HEADER_LEN + mp_sizeof_map(1) +
 		mp_sizeof_uint(UINT32_MAX) + mp_sizeof_vclock_ignore0(vclock);
@@ -514,7 +514,7 @@ iproto_reply_vclock(struct obuf *out, const struct vclock *vclock,
 
 int
 iproto_reply_vote(struct obuf *out, const struct ballot *ballot,
-		  uint64_t sync, uint32_t schema_version)
+		  uint64_t sync, uint64_t schema_version)
 {
 	size_t max_size = IPROTO_HEADER_LEN + mp_sizeof_map(1) +
 		mp_sizeof_uint(UINT32_MAX) + mp_sizeof_map(6) +
@@ -586,7 +586,7 @@ mpstream_iproto_encode_error(struct mpstream *stream, const struct error *error)
 
 int
 iproto_reply_error(struct obuf *out, const struct error *e, uint64_t sync,
-		   uint32_t schema_version)
+		   uint64_t schema_version)
 {
 	char *header = (char *)obuf_alloc(out, IPROTO_HEADER_LEN);
 	if (header == NULL)
@@ -611,7 +611,7 @@ iproto_reply_error(struct obuf *out, const struct error *e, uint64_t sync,
 
 void
 iproto_do_write_error(struct iostream *io, const struct error *e,
-		      uint32_t schema_version, uint64_t sync)
+		      uint64_t schema_version, uint64_t sync)
 {
 	bool is_error = false;
 	struct mpstream stream;
@@ -666,7 +666,7 @@ iproto_prepare_header(struct obuf *buf, struct obuf_svp *svp, size_t size)
 
 void
 iproto_reply_select(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
-		    uint32_t schema_version, uint32_t count)
+		    uint64_t schema_version, uint32_t count)
 {
 	char *pos = (char *) obuf_svp_to_ptr(buf, svp);
 	iproto_header_encode(pos, IPROTO_OK, sync, schema_version,
@@ -732,7 +732,7 @@ xrow_decode_sql(const struct xrow_header *row, struct sql_request *request)
 
 void
 iproto_reply_sql(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
-		 uint32_t schema_version)
+		 uint64_t schema_version)
 {
 	char *pos = (char *) obuf_svp_to_ptr(buf, svp);
 	iproto_header_encode(pos, IPROTO_OK, sync, schema_version,
@@ -741,7 +741,7 @@ iproto_reply_sql(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
 
 void
 iproto_reply_chunk(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
-		   uint32_t schema_version)
+		   uint64_t schema_version)
 {
 	char *pos = (char *) obuf_svp_to_ptr(buf, svp);
 	iproto_header_encode(pos, IPROTO_CHUNK, sync, schema_version,
