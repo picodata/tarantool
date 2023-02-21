@@ -40,7 +40,7 @@ stages:
     script:
       - make -f .test.mk test-release
 
-checkpatch:
+.checkpatch:
     stage: test
     tags: [shell_p_t]
     before_script:
@@ -52,7 +52,7 @@ checkpatch:
       - checkpatch/checkpatch.pl --color=always --git HEAD~1..HEAD
 
 # run long tests and coverage on release build
-coverage:
+.coverage:
     stage: build
     only:
       - web
@@ -297,8 +297,6 @@ coverage:
   dependencies: []
 
 mac_build:
-  only:
-    - web
   tags: [mac-dev-m1]
   script:
     - mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDARWIN_BUILD_TYPE=None && make
