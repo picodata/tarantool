@@ -15,8 +15,9 @@ stages:
   - deploy
   - test_rpm
   - docker
+  - mac_build
 
-luacheck:
+.luacheck:
     stage: test
     tags: [docker]
     image: docker-public.binary.picodata.io/tarantool-testing:latest
@@ -27,7 +28,7 @@ luacheck:
     script:
       - make -f .test.mk luacheck
 
-test:
+.test:
     stage: test
     retry: 2
     tags: [docker]
@@ -92,7 +93,7 @@ coverage:
   timeout: 2h
   dependencies: []
 
-build-package-centos:
+.build-package-centos:
   stage: build_rpm
   extends: .pack
   script:
@@ -102,7 +103,7 @@ build-package-centos:
     paths:
       - build_rpm/tarantool*.rpm
 
-build-package-altlinux:
+.build-package-altlinux:
   stage: build_altlinux
   extends: .pack
   script:
@@ -113,7 +114,7 @@ build-package-altlinux:
     paths:
       - build_rpm/tarantool*.rpm
 
-build-package-ubuntu:
+.build-package-ubuntu:
   stage: build_ubuntu
   extends: .pack
   script:
@@ -124,7 +125,7 @@ build-package-ubuntu:
       - build_focal/*.deb
       - build_jammy/*.deb
 
-build-package-debian:
+.build-package-debian:
   stage: build_debian
   extends: .pack
   script:
@@ -133,7 +134,7 @@ build-package-debian:
     paths:
       - build_bullseye/*.deb
 
-build-package-redos:
+.build-package-redos:
   stage: build_redos
   extends: .pack
   script:
@@ -142,7 +143,7 @@ build-package-redos:
     paths:
       - build_redos/tarantool*.rpm
 
-sign-rpm-packages:
+.sign-rpm-packages:
   variables:
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RO
   stage: sign
@@ -168,7 +169,7 @@ sign-rpm-packages:
     - build-package-altlinux
     - build-package-redos
 
-deploy-job:
+.deploy-job:
   stage: deploy
   tags:
     - shell_p_t
@@ -230,7 +231,7 @@ deploy-job:
     - build-package-ubuntu
     - sign-rpm-packages
 
-check_el7:
+.check_el7:
   stage: test_rpm
   only:
     - web
@@ -245,7 +246,7 @@ check_el7:
   needs:
     - deploy-job
 
-check_el8:
+.check_el8:
   stage: test_rpm
   only:
     - web
@@ -260,7 +261,7 @@ check_el8:
   needs:
     - deploy-job
 
-check_redos:
+.check_redos:
   stage: test_rpm
   only:
     - web
@@ -275,7 +276,7 @@ check_redos:
   needs:
     - deploy-job
 
-docker:
+.docker:
   stage: docker
   only:
     - web
@@ -294,3 +295,14 @@ docker:
     - docker build docker/ -t $DOCKER_REGISTRY_PUB/tarantool:$TAG
     - docker --config $CI_PROJECT_DIR/.docker/ push $DOCKER_REGISTRY_PUB/tarantool:$TAG
   dependencies: []
+
+mac_build:
+  only:
+    - web
+  tags: [mac-dev-m1]
+  script:
+    - mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDARWIN_BUILD_TYPE=None && make
+    - ls -l src/
+  artifacts:
+    paths:
+      - build/src/tarantool
