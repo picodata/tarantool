@@ -299,6 +299,7 @@ stages:
 mac_build:
   tags: [mac-dev-m1]
   script:
+    - export PATH=/opt/homebrew/bin:$PATH
     - mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDARWIN_BUILD_TYPE=None && make
     - ls -l src/
   artifacts:
