@@ -304,7 +304,4 @@ mac_build:
     - mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDARWIN_BUILD_TYPE=None && make
     - cd src
     - tar -xzf tarantool-$VER-m1-macosx.tar.gz tarantool
-    - curl -v -H "Authorization: Basic $RAW_AUTH_RW" --upload-file picodata-app-1.0.0.tar.gz $RAW_REGISTRY/tarantool/osx/tarantool-$VER-m1-macosx.tar.gz
-  artifacts:
-    paths:
-      - build/src/tarantool
+    - curl -v -H "Authorization: Basic $RAW_AUTH_RW" --upload-file tarantool-$VER-m1-macosx.tar.gz $RAW_REGISTRY/tarantool/osx/tarantool-$VER-m1-macosx.tar.gz
