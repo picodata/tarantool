@@ -298,10 +298,13 @@ stages:
 
 mac_build:
   tags: [mac-dev-m1]
+  variables:
+    VER: $(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
   script:
-    - export PATH=/opt/homebrew/bin:$PATH
     - mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDARWIN_BUILD_TYPE=None && make
-    - ls -l src/
+    - cd src
+    - tar -xzf tarantool-$VER-m1-macosx.tar.gz tarantool
+    - curl -v -H "Authorization: Basic $RAW_AUTH_RW" --upload-file picodata-app-1.0.0.tar.gz $RAW_REGISTRY/tarantool/osx/tarantool-$VER-m1-macosx.tar.gz
   artifacts:
     paths:
       - build/src/tarantool
