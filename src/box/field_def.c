@@ -169,6 +169,14 @@ field_type1_contains_type2(enum field_type type1, enum field_type type2)
 }
 
 /**
+ * Callback to parse a value with 'default' key in msgpack field definition.
+ * See function definition below.
+ */
+static int
+field_def_parse_default_value(const char **data, void *opts,
+			      struct region *region);
+
+/**
  * Callback to parse a value with 'constraint' key in msgpack field definition.
  * See function definition below.
  */
@@ -195,6 +203,7 @@ static const struct opt_def field_def_reg[] = {
 	OPT_DEF("sql_default", OPT_STRPTR, struct field_def, sql_default_value),
 	OPT_DEF_ENUM("compression", compression_type, struct field_def,
 		     compression_type, NULL),
+	OPT_DEF_CUSTOM("default", field_def_parse_default_value),
 	OPT_DEF_CUSTOM("constraint", field_def_parse_constraint),
 	OPT_DEF_CUSTOM("foreign_key", field_def_parse_foreign_key),
 	OPT_END,
@@ -207,6 +216,8 @@ const struct field_def field_def_default = {
 	.nullable_action = ON_CONFLICT_ACTION_DEFAULT,
 	.coll_id = COLL_NONE,
 	.sql_default_value = NULL,
+	.default_value = NULL,
+	.default_value_size = 0,
 	.constraint_count = 0,
 	.constraint_def = NULL,
 };
@@ -226,6 +237,30 @@ field_type_by_name(const char *name, size_t len)
 	else if (len == 1 && name[0] == '*')
 		return FIELD_TYPE_ANY;
 	return field_type_MAX;
+}
+
+/**
+ * Parse default field value from msgpack.
+ * Used as callback to parse a value with 'default' key in field definition.
+ * Move @a data msgpack pointer to the end of msgpack value.
+ * By convention @a opts must point to corresponding struct field_def.
+ * Allocate a temporary copy of a default value on @a region and set pointer to
+ * it as field_def->default_value, also setting field_def->default_value_size.
+ */
+static int
+field_def_parse_default_value(const char **data, void *opts,
+			      struct region *region)
+{
+	struct field_def *def = (struct field_def *)opts;
+	const char *default_value = *data;
+	mp_next(data);
+	const char *default_value_end = *data;
+	size_t size = default_value_end - default_value;
+
+	def->default_value = xregion_alloc(region, size);
+	def->default_value_size = size;
+	memcpy(def->default_value, default_value, size);
+	return 0;
 }
 
 /**
@@ -399,6 +434,7 @@ field_def_array_dup(const struct field_def *fields, uint32_t field_count)
 			grp_alloc_reserve_str0(&all,
 					       fields[i].sql_default_value);
 		}
+		grp_alloc_reserve_data(&all, fields[i].default_value_size);
 	}
 	grp_alloc_use(&all, xmalloc(grp_alloc_size(&all)));
 	struct field_def *copy = grp_alloc_create_data(
@@ -409,6 +445,12 @@ field_def_array_dup(const struct field_def *fields, uint32_t field_count)
 		if (fields[i].sql_default_value != NULL) {
 			copy[i].sql_default_value = grp_alloc_create_str0(
 				&all, fields[i].sql_default_value);
+		}
+		if (fields[i].default_value != NULL) {
+			size_t size = fields[i].default_value_size;
+			char *buf = grp_alloc_create_data(&all, size);
+			memcpy(buf, fields[i].default_value, size);
+			copy[i].default_value = buf;
 		}
 		copy[i].constraint_def = tuple_constraint_def_array_dup(
 			fields[i].constraint_def, fields[i].constraint_count);
