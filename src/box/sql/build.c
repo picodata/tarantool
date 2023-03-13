@@ -482,8 +482,8 @@ sqlAddDefaultValue(Parse * pParse, ExprSpan * pSpan)
 				&def->fields[def->field_count - 1];
 			struct region *region = &pParse->region;
 			size_t len = pSpan->zEnd - pSpan->zStart + 1;
-			field->default_value = xregion_alloc(region, len);
-			strlcpy(field->default_value, pSpan->zStart, len);
+			field->sql_default_value = xregion_alloc(region, len);
+			strlcpy(field->sql_default_value, pSpan->zStart, len);
 		}
 	}
 	sql_expr_delete(pSpan->pExpr);
