@@ -286,7 +286,8 @@ _ = box.space.test:replace{1001, 1, string.rep('x', 1000)}
 box.space.test:create_index('sk', {parts = {2, 'unsigned', 3, 'string'}})
 #fio.listdir(fio.pathjoin(box.cfg.vinyl_dir, box.space.test.id, 1)) > 0
 box.snapshot()
-#fio.listdir(fio.pathjoin(box.cfg.vinyl_dir, box.space.test.id, 1)) == 0
+res, err = fio.listdir(fio.pathjoin(box.cfg.vinyl_dir, box.space.test.id, 1))
+res == nil
 box.space.test:drop()
 
 test_run:cmd("switch default")

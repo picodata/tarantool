@@ -260,7 +260,10 @@ fio = require('fio')
 s = box.space.test
 ---
 ...
-#fio.listdir(fio.pathjoin(box.cfg.vinyl_dir, s.id, 1)) == 0
+res, err = fio.listdir(fio.pathjoin(box.cfg.vinyl_dir, s.id, 1))
+---
+...
+res == nil
 ---
 - true
 ...
