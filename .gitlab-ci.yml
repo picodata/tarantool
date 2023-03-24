@@ -104,7 +104,6 @@ build-package-altlinux:
   stage: pack
   extends: .pack
   script:
-    - env
     - git clone https://github.com/packpack/packpack.git packpack
     - DOCKER_REPO=docker-picodata.binary.picodata.io/packpack/alt DOCKER_IMAGE=p9 BUILDDIR=$PWD/build_rpm/ packpack/packpack
     - DOCKER_REPO=docker-picodata.binary.picodata.io/packpack/alt DOCKER_IMAGE=p10 BUILDDIR=$PWD/build_rpm/ packpack/packpack
