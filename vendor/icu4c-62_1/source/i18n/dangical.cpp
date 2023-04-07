@@ -127,7 +127,7 @@ static void U_CALLCONV initDangiCalZoneAstroCalc(void) {
     ucln_i18n_registerCleanup(UCLN_I18N_DANGI_CALENDAR, calendar_dangi_cleanup);
 }
 
-const TimeZone* DangiCalendar::getDangiCalZoneAstroCalc(void) const {
+const TimeZone* DangiCalendar::getDangiCalZoneAstroCalc(void) {
     umtx_initOnce(gDangiCalendarInitOnce, &initDangiCalZoneAstroCalc);
     return gDangiCalendarZoneAstroCalc;
 }

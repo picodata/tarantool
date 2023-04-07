@@ -74,7 +74,7 @@ class DangiCalendar : public ChineseCalendar {
 
  private:
 
-  const TimeZone* getDangiCalZoneAstroCalc(void) const;
+  static const TimeZone* getDangiCalZoneAstroCalc(void);
 
   // UObject stuff
  public: 
