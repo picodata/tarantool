@@ -1201,7 +1201,7 @@ int n_ssl3_mac(SSL *ssl, SSL3_RECORD *rec, unsigned char *md, int sending)
     }
 
     t = EVP_MD_CTX_size(hash);
-    if (t < 0)
+    if (t <= 0)
         return 0;
     md_size = t;
     npad = (48 / md_size) * md_size;

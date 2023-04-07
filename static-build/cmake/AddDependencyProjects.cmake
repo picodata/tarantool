@@ -49,8 +49,6 @@ set(DEPENDENCY_LDFLAGS "${DEPENDENCY_LDFLAGS} ${HARDENING_LDFLAGS}")
 set(DEPENDENCY_CFLAGS "${DEPENDENCY_CFLAGS} ${PREFIX_MAP_FLAGS}")
 set(DEPENDENCY_CXXFLAGS "${DEPENDENCY_CXXFLAGS} ${PREFIX_MAP_FLAGS}")
 
-set(PATCHES_DIR "${CMAKE_CURRENT_LIST_DIR}/../patches")
-
 # Install all libraries required by tarantool at current build dir
 
 #
@@ -72,10 +70,6 @@ ExternalProject_Add(openssl
         --libdir=lib
         no-shared
     INSTALL_COMMAND ${CMAKE_MAKE_PROGRAM} install_sw
-    PATCH_COMMAND patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/openssl-111q-gh-18720.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/openssl-tarantool-security-27.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/openssl-tarantool-security-54.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/openssl-tarantool-security-90.patch"
 )
 set(TARANTOOL_DEPENDS openssl ${TARANTOOL_DEPENDS})
 
@@ -112,10 +106,6 @@ ExternalProject_Add(icu
         ${CMAKE_COMMAND} -E touch <BINARY_DIR>/uconfig.h &&
         cat <BINARY_DIR>/uconfig.h.prepend <INSTALL_DIR>/include/unicode/uconfig.h >> <BINARY_DIR>/uconfig.h &&
         ${CMAKE_COMMAND} -E copy_if_different <BINARY_DIR>/uconfig.h <INSTALL_DIR>/include/unicode/uconfig.h
-    PATCH_COMMAND patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/icu-tarantool-security-45.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/icu-tarantool-security-59.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/icu-tarantool-security-61.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/icu-tarantool-security-96.patch"
 )
 set(TARANTOOL_DEPENDS icu ${TARANTOOL_DEPENDS})
 
@@ -188,8 +178,6 @@ ExternalProject_Add(readline
 
         --prefix=<INSTALL_DIR>
         --disable-shared
-    PATCH_COMMAND patch -d <SOURCE_DIR> -p0 -i "${PATCHES_DIR}/readline80-001.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${PATCHES_DIR}/readline-tarantool-security-95.patch"
 )
 set(TARANTOOL_DEPENDS readline ${TARANTOOL_DEPENDS})
 
