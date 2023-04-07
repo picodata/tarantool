@@ -164,7 +164,9 @@ unum_clone(const UNumberFormat *fmt,
     } else {
         const RuleBasedNumberFormat* rbnf = dynamic_cast<const RuleBasedNumberFormat*>(nf);
         U_ASSERT(rbnf != NULL);
-        res = rbnf->clone();
+        if (rbnf != NULL) {
+            res = rbnf->clone();
+        }
     }
 
     if(res == 0) {
