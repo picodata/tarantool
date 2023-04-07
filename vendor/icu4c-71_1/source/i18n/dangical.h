@@ -74,7 +74,7 @@ class DangiCalendar : public ChineseCalendar {
 
  private:
 
-  const TimeZone* getDangiCalZoneAstroCalc(UErrorCode &status) const;
+  static const TimeZone* getDangiCalZoneAstroCalc(UErrorCode &status);
 
   // UObject stuff
  public: 
