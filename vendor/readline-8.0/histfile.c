@@ -491,6 +491,7 @@ history_truncate_file (const char *fname, int lines)
   tempname = 0;
   file = filename ? open (filename, O_RDONLY|O_BINARY, 0666) : -1;
   rv = exists = 0;
+  orig_lines = lines;
 
   /* Don't try to truncate non-regular files. */
   if (file == -1 || fstat (file, &finfo) == -1)
@@ -546,7 +547,6 @@ history_truncate_file (const char *fname, int lines)
       goto truncate_exit;
     }
 
-  orig_lines = lines;
   /* Count backwards from the end of buffer until we have passed
      LINES lines.  bp1 is set funny initially.  But since bp[1] can't
      be a comment character (since it's off the end) and *bp can't be

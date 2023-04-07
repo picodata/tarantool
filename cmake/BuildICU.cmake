@@ -42,10 +42,6 @@ ExternalProject_Add(bundled-icu-project
         ${CMAKE_COMMAND} -E touch <BINARY_DIR>/uconfig.h &&
         cat <BINARY_DIR>/uconfig.h.prepend <INSTALL_DIR>/include/unicode/uconfig.h >> <BINARY_DIR>/uconfig.h &&
         ${CMAKE_COMMAND} -E copy_if_different <BINARY_DIR>/uconfig.h <INSTALL_DIR>/include/unicode/uconfig.h
-    PATCH_COMMAND patch -d <SOURCE_DIR> -p1 -i "${ICU_PATCHES_DIR}/icu-tarantool-security-45.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${ICU_PATCHES_DIR}/icu-tarantool-security-59.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${ICU_PATCHES_DIR}/icu-tarantool-security-61.patch"
-    COMMAND       patch -d <SOURCE_DIR> -p1 -i "${ICU_PATCHES_DIR}/icu-tarantool-security-96.patch"
     BUILD_BYPRODUCTS ${ICU_I18N_LIBRARY} ${ICU_UC_LIBRARY} ${ICU_DATA_LIBRARY}
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
