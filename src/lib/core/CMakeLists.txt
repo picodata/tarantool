@@ -48,6 +48,7 @@ set(core_sources
     md5.c
     cryptohash.c
     crypt.c
+    tt_sort.c
 )
 
 if (ENABLE_BACKTRACE)
