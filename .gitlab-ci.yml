@@ -150,6 +150,58 @@ build-package-astralinux:
     paths:
       - build_astra/*.deb
 
+build-package-macos-arm:
+  stage: pack
+  tags:
+    - mac-dev-m1
+  only:
+    - web
+    - tags
+  variables:
+    PKGNAME: 'tarantool-picodata'
+    BUILDDIR: 'build_mac_arm'
+  before_script:
+    - git describe --long
+    - git submodule update --init --recursive
+    - git submodule foreach --recursive 'git clean -xffd'
+    - mkdir $BUILDDIR
+  script: |
+    VER=$(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
+    MAJOR=$(echo $VER | cut -f 1-2 -d '.')
+    echo $VER > VERSION
+    pushd $BUILDDIR
+    cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDARWIN_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=$PWD/$PKGNAME@$MAJOR/$VER -DENABLE_DIST=ON
+    make
+    make install
+    cp ../AUTHORS ../README.md ../LICENSE ../TODO $PKGNAME@$MAJOR/$VER/
+    pushd $PKGNAME@$MAJOR/$VER
+    mkdir .bottle
+    mv etc var .bottle/
+    rm -rf lib
+    popd
+    tar -caf $PKGNAME@$MAJOR-$VER.arm64_ventura.bottle.tar.gz $PKGNAME@$MAJOR
+    shasum -a 256  $PKGNAME@$MAJOR-$VER.arm64_ventura.bottle.tar.gz
+
+    popd
+    echo "-------------------------------------------------------------------"
+    echo "Prepare tarball with sources"
+    echo "-------------------------------------------------------------------"
+    mkdir $BUILDDIR/$PKGNAME-$VER
+    rsync -r -l \
+      --exclude=.git --exclude='.gitignore' --exclude='.gitmodules' \
+      --exclude=FreeBSD --exclude=debian --exclude=rpm --exclude=rump \
+      --exclude=apk --exclude=$BUILDDIR \
+      * $BUILDDIR/$PKGNAME-$VER/
+    pushd $BUILDDIR
+    tar --uid=0 --gid=0 -caPf $PKGNAME-$VER.tar.gz $PKGNAME-$VER
+    shasum -a 256  $PKGNAME-$VER.tar.gz
+    popd
+  timeout: 1h
+  dependencies: []
+  artifacts:
+    paths:
+      - $BUILDDIR/*.tar.gz
+
 .sign:
   tags:
     - shell_p_t
@@ -262,6 +314,24 @@ deploy-job:
     - build-package-ubuntu
     - sign-rpm-packages
     - sign-astralinux-packages
+
+deploy-macos:
+  stage: deploy
+  tags:
+    - mac-dev-m1
+  only:
+#    - web
+    - tags
+  variables:
+    PKGNAME: 'tarantool-picodata'
+    BUILDDIR: 'build_mac_arm'
+  script: |
+    VER=$(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
+    MAJOR=$(echo $VER | cut -f 1-2 -d '.')
+    curl -v -H "Authorization: Basic $RAW_AUTH_RW" --upload-file $BUILDDIR/$PKGNAME-$VER.tar.gz $RAW_REGISTRY/brew/packages/
+    curl -v -H "Authorization: Basic $RAW_AUTH_RW" --upload-file $BUILDDIR/$PKGNAME@$MAJOR-$VER.*.bottle.tar.gz $RAW_REGISTRY/brew/bottle/
+  dependencies:
+    - build-package-macos-arm
 
 .check-deployment:
   stage: check-deployment
