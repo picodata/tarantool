@@ -349,13 +349,6 @@ include_directories(${EXTRA_BOX_INCLUDE_DIRS})
 set(TARANTOOL_C_FLAGS ${CMAKE_C_FLAGS} PARENT_SCOPE)
 set(TARANTOOL_CXX_FLAGS ${CMAKE_CXX_FLAGS} PARENT_SCOPE)
 
-if(BUILD_STATIC AND HAVE_OPENMP)
-    # Link libgomp explicitly to make it static. Avoid linking
-    # against DSO version of libgomp, which implied by -fopenmp
-    set (common_libraries ${common_libraries} "libgomp.a")
-    set(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -fno-openmp")
-endif()
-
 set(exports_file_sources
     ${PROJECT_SOURCE_DIR}/extra/exports
     ${EXTRA_EXPORTS_FILE_SOURCES})

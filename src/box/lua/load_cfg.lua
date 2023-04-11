@@ -201,6 +201,7 @@ local default_cfg = {
     sql_vdbe_max_steps    = 45000,
     txn_timeout           = 365 * 100 * 86400,
     txn_isolation         = "best-effort",
+    memtx_sort_threads    = nil,
 
     metrics     = {
         include = 'all',
@@ -393,6 +394,7 @@ local template_cfg = {
     sql_cache_size        = 'number',
     sql_vdbe_max_steps    = 'number',
     txn_timeout           = 'number',
+    memtx_sort_threads    = 'number',
 
     metrics = 'table',
 }
