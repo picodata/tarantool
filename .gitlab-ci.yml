@@ -160,6 +160,7 @@ build-package-macos-arm:
   variables:
     PKGNAME: 'tarantool-picodata'
     BUILDDIR: 'build_mac_arm'
+    MACOS: 'ventura'
   before_script:
     - git describe --long
     - git submodule update --init --recursive
@@ -179,8 +180,8 @@ build-package-macos-arm:
     mv etc var .bottle/
     rm -rf lib
     popd
-    tar -caf $PKGNAME@$MAJOR-$VER.arm64_ventura.bottle.tar.gz $PKGNAME@$MAJOR
-    shasum -a 256  $PKGNAME@$MAJOR-$VER.arm64_ventura.bottle.tar.gz
+    tar -caf $PKGNAME@$MAJOR-$VER.arm64_$MACOS.bottle.tar.gz $PKGNAME@$MAJOR
+    shasum -a 256  $PKGNAME@$MAJOR-$VER.arm64_$MACOS.bottle.tar.gz
 
     popd
     echo "-------------------------------------------------------------------"
