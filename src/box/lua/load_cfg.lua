@@ -194,6 +194,7 @@ local default_cfg = {
     sql_vdbe_max_steps    = 45000,
     txn_timeout           = 365 * 100 * 86400,
     txn_isolation         = "best-effort",
+    memtx_sort_threads    = nil,
 }
 
 -- We need to track cfg changes done through API of distinct modules (log.cfg of
@@ -379,6 +380,7 @@ local template_cfg = {
     sql_cache_size        = 'number',
     sql_vdbe_max_steps    = 'number',
     txn_timeout           = 'number',
+    memtx_sort_threads    = 'number',
 }
 
 local function normalize_uri_list_for_replication(port_list)
