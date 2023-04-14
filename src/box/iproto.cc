@@ -2321,17 +2321,27 @@ tx_process_call(struct cmsg *m)
 	int rc;
 	struct port port;
 
+	char fiber_name_sv[FIBER_NAME_MAX];
+	strlcpy(&fiber_name_sv[0], fiber_name(fiber()), FIBER_NAME_MAX);
+
 	switch (msg->header.type) {
 	case IPROTO_CALL:
-	case IPROTO_CALL_16:
+	case IPROTO_CALL_16: {
+		const char *proc_name = msg->call.name;
+		uint32_t len = mp_decode_strl(&proc_name);
+		fiber_set_name_n(fiber(), proc_name, len);
 		rc = box_process_call(&msg->call, &port);
 		break;
+	}
 	case IPROTO_EVAL:
+		fiber_set_name(fiber(), "(lua eval)");
 		rc = box_process_eval(&msg->call, &port);
 		break;
 	default:
 		unreachable();
 	}
+
+	fiber_set_name(fiber(), &fiber_name_sv[0]);
 
 	trigger_clear(&fiber_on_yield);
 
