@@ -1201,10 +1201,16 @@ fiber_loop(MAYBE_UNUSED void *data)
 	}
 }
 
-void
+inline void
 fiber_set_name(struct fiber *fiber, const char *name)
 {
-	size_t size = strlen(name) + 1;
+	fiber_set_name_n(fiber, name, strlen(name));
+}
+
+void
+fiber_set_name_n(struct fiber *fiber, const char *name, uint32_t len)
+{
+	size_t size = len + 1;
 	if (size <= FIBER_NAME_INLINE) {
 		if (fiber->name != fiber->inline_name) {
 			free(fiber->name);
