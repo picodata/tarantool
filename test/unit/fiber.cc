@@ -267,6 +267,19 @@ fiber_name_test()
 	fiber_set_name(fiber(), long_name);
 
 	note("fiber name is truncated: %s.\n", fiber_name(fiber()));
+
+	fiber_set_name_n(fiber(), long_name, 10);
+	note("set fiber name with given length: %s.\n", fiber_name(fiber()));
+
+	fiber_set_name_n(fiber(), long_name, 0);
+	note("set fiber name with 0 length: %s.\n", fiber_name(fiber()));
+
+	const int n = 3;
+	fiber_set_name_n(fiber(), "a\0b", n);
+	note("set fiber name with a nul byte in it (don't do that): %s.\n",
+	     fiber_name(fiber()));
+	fail_unless(memcmp(fiber_name(fiber()), "a\0b", n) == 0);
+
 	footer();
 }
 
