@@ -7,6 +7,12 @@ OutOfMemory: Failed to allocate 42 bytes in allocator for exception
 
 # fiber name is truncated: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.
 
+# set fiber name with given length: aaaaaaaaaa.
+
+# set fiber name with 0 length: .
+
+# set fiber name with a nul byte in it (don't do that): a.
+
 	*** fiber_name_test: done ***
 	*** fiber_join_test ***
 # exception propagated
