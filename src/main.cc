@@ -891,3 +891,11 @@ tarantool_main(int argc, char **argv, void (*cb)(void *), void *cb_data)
 	} while (false));
 	return exit_code;
 }
+
+#ifdef TARANTOOL_EXE
+int
+main(int argc, char **argv)
+{
+	return tarantool_main(argc, argv, NULL, NULL);
+}
+#endif /* TARANTOOL_EXE */
