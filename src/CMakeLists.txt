@@ -372,14 +372,25 @@ add_custom_command(
             ${exports_file} ${CMAKE_SYSTEM_NAME}
 )
 
+# library taraget can't be named tarantool becuse luajit will consider this
+# target as an tarantool executable. So lib suffix is added manually.
 add_library(
+    libtarantool main.cc
+    ${LIBUTIL_FREEBSD_SRC}/flopen.c
+    ${LIBUTIL_FREEBSD_SRC}/pidfile.c)
+set_target_properties(libtarantool PROPERTIES PREFIX "")
+
+add_executable(
     tarantool main.cc
     ${LIBUTIL_FREEBSD_SRC}/flopen.c
     ${LIBUTIL_FREEBSD_SRC}/pidfile.c)
+target_compile_definitions(tarantool PRIVATE TARANTOOL_EXE)
 
+add_dependencies(libtarantool build_bundled_libs preprocess_exports)
 add_dependencies(tarantool build_bundled_libs preprocess_exports)
 
 # Re-link if exports changed
+set_target_properties(libtarantool PROPERTIES LINK_DEPENDS ${exports_file})
 set_target_properties(tarantool PROPERTIES LINK_DEPENDS ${exports_file})
 
 # TODO(gh-7424): Autogenerate the list of internal symbols.
@@ -399,10 +410,22 @@ add_library(symbols STATIC symbols.c)
 #                from static libraries.
 #
 if (TARGET_OS_DARWIN)
+    target_link_libraries(libtarantool box symbols ${common_libraries})
+    set_target_properties(libtarantool PROPERTIES
+        LINK_FLAGS "-Wl,-exported_symbols_list,${exports_file}")
+
     target_link_libraries(tarantool box symbols ${common_libraries})
     set_target_properties(tarantool PROPERTIES
         LINK_FLAGS "-Wl,-exported_symbols_list,${exports_file}")
 else ()
+    target_link_libraries(libtarantool
+                          -Wl,--whole-archive box ${reexport_libraries}
+                          salad symbols -Wl,--no-whole-archive
+                          ${common_libraries}
+                          ${generic_libraries})
+    set_target_properties(libtarantool PROPERTIES
+        LINK_FLAGS "-Wl,--dynamic-list,${exports_file}")
+
     target_link_libraries(tarantool
                           -Wl,--whole-archive box ${reexport_libraries}
                           salad symbols -Wl,--no-whole-archive
