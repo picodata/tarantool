@@ -415,7 +415,7 @@ replicaset_on_health_change(void)
 		trigger_run(&replicaset_on_quorum_loss, NULL);
 }
 
-void
+static void
 replica_set_applier(struct replica *replica, struct applier *applier)
 {
 	assert(replica->applier == NULL);
@@ -455,7 +455,7 @@ replica_update_applier_health(struct replica *replica)
 		raft_notify_is_leader_seen(box_raft(), false, replica->id);
 }
 
-void
+static void
 replica_clear_applier(struct replica *replica)
 {
 	assert(replica->applier != NULL);
@@ -879,14 +879,29 @@ applier_on_connect_f(struct trigger *trigger, void *event)
 }
 
 void
-replicaset_connect(struct applier **appliers, int count,
+replicaset_connect(const struct uri_set *uris,
 		   bool connect_quorum, bool keep_connect)
 {
-	if (count == 0) {
+	if (uris->uri_count == 0) {
 		/* Cleanup the replica set. */
-		replicaset_update(appliers, 0, false);
+		replicaset_update(NULL, 0, false);
 		return;
 	}
+	if (uris->uri_count >= VCLOCK_MAX) {
+		tnt_raise(ClientError, ER_CFG, "replication",
+			  "too many replicas");
+	}
+	int count = 0;
+	struct applier *appliers[VCLOCK_MAX] = {};
+	auto appliers_guard = make_scoped_guard([&]{
+		for (int i = 0; i < count; i++) {
+			struct applier *applier = appliers[i];
+			applier_stop(applier);
+			applier_delete(applier);
+		}
+	});
+	for (; count < uris->uri_count; count++)
+		appliers[count] = applier_new(&uris->uris[count]);
 
 	say_info("connecting to %d replicas", count);
 
@@ -967,9 +982,8 @@ replicaset_connect(struct applier **appliers, int count,
 		/* Timeout or connection failure. */
 		if (state.connected < replicaset_connect_quorum(count) &&
 		    connect_quorum) {
-			diag_set(ClientError, ER_CFG, "replication",
-				 "failed to connect to one or more replicas");
-			goto error;
+			tnt_raise(ClientError, ER_CFG, "replication",
+				  "failed to connect to one or more replicas");
 		}
 	} else {
 		say_info("connected to %d replicas", state.connected);
@@ -989,19 +1003,8 @@ replicaset_connect(struct applier **appliers, int count,
 	}
 
 	/* Now all the appliers are connected, update the replica set. */
-	try {
-		replicaset_update(appliers, count, keep_connect);
-	} catch (Exception *e) {
-		goto error;
-	}
-	return;
-error:
-	/* Destroy appliers */
-	for (int i = 0; i < count; i++) {
-		trigger_clear(&triggers[i].base);
-		applier_stop(appliers[i]);
-	}
-	diag_raise();
+	replicaset_update(appliers, count, keep_connect);
+	appliers_guard.is_active = false;
 }
 
 bool

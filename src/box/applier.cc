@@ -2722,7 +2722,7 @@ applier_stop(struct applier *applier)
 }
 
 struct applier *
-applier_new(struct uri *uri)
+applier_new(const struct uri *uri)
 {
 	struct applier *applier = xalloc_object(struct applier);
 	memset(applier, 0, sizeof(*applier));
@@ -2733,7 +2733,7 @@ applier_new(struct uri *uri)
 	iostream_clear(&applier->io);
 	ibuf_create(&applier->ibuf, &cord()->slabc, 1024);
 
-	uri_move(&applier->uri, uri);
+	uri_copy(&applier->uri, uri);
 	applier->last_row_time = ev_monotonic_now(loop());
 	rlist_create(&applier->on_state);
 	rlist_create(&applier->on_ballot_update);
