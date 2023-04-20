@@ -2062,14 +2062,9 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 	 */
 	assert(space_def->fields == NULL);
 	struct region *region = &parse->region;
-	size_t size;
 	space_def->fields =
-		region_alloc_array(region, typeof(space_def->fields[0]),
-				   column_count, &size);
-	if (space_def->fields == NULL) {
-		diag_set(OutOfMemory, size, "region_alloc_array", "fields");
-		goto error;
-	}
+		xregion_alloc_array(region, typeof(space_def->fields[0]),
+				    column_count);
 	for (uint32_t i = 0; i < column_count; i++) {
 		memcpy(&space_def->fields[i], &field_def_default,
 		       sizeof(field_def_default));
@@ -2129,22 +2124,12 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 		assert(field != NULL);
 		if (zName != NULL)
 			sqlHashInsert(&ht, zName, field);
-		space_def->fields[i].name = region_alloc(region, name_len + 1);
-		if (space_def->fields[i].name == NULL) {
-			diag_set(OutOfMemory, size, "region_alloc", "name");
-			goto error;
-		}
+		space_def->fields[i].name = xregion_alloc(region, name_len + 1);
 		memcpy(space_def->fields[i].name, zName, name_len);
 		space_def->fields[i].name[name_len] = '\0';
 	}
 	sqlHashClear(&ht);
 	return 0;
-error:
-	sqlHashClear(&ht);
-	parse->is_aborted = true;
-	space_def->fields = NULL;
-	space_def->field_count = 0;
-	return -1;
 }
 
 /*
