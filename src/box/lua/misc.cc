@@ -399,15 +399,10 @@ lbox_tuple_format_new(struct lua_State *L)
 	uint32_t count = lua_objlen(L, 1);
 	if (count == 0)
 		return lbox_push_tuple_format(L, tuple_format_runtime);
-	size_t size;
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
-	struct field_def *fields = region_alloc_array(region, typeof(fields[0]),
-						      count, &size);
-	if (fields == NULL) {
-		diag_set(OutOfMemory, size, "region_alloc_array", "fields");
-		return luaT_error(L);
-	}
+	struct field_def *fields = xregion_alloc_array(region,
+						       struct field_def, count);
 	for (uint32_t i = 0; i < count; ++i) {
 		size_t len;
 
@@ -429,13 +424,7 @@ lbox_tuple_format_new(struct lua_State *L)
 		lua_gettable(L, -2);
 		assert(! lua_isnil(L, -1));
 		const char *name = lua_tolstring(L, -1, &len);
-		fields[i].name = (char *)region_alloc(region, len + 1);
-		if (fields == NULL) {
-			diag_set(OutOfMemory, size, "region_alloc",
-				 "fields[i].name");
-			region_truncate(region, region_svp);
-			return luaT_error(L);
-		}
+		fields[i].name = (char *)xregion_alloc(region, len + 1);
 		memcpy(fields[i].name, name, len);
 		fields[i].name[len] = '\0';
 		lua_pop(L, 1);
