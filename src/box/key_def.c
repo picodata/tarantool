@@ -632,6 +632,12 @@ box_tuple_compare_with_key(box_tuple_t *tuple_a, const char *key_b,
 
 }
 
+uint32_t
+box_tuple_hash(box_tuple_t *tuple, box_key_def_t *key_def)
+{
+	return tuple_hash(tuple, key_def);
+}
+
 box_key_def_t *
 box_key_def_merge(const box_key_def_t *first, const box_key_def_t *second)
 {
