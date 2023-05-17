@@ -6,6 +6,7 @@ local methods = {
     ['extract_key'] = key_def.extract_key,
     ['compare'] = key_def.compare,
     ['compare_with_key'] = key_def.compare_with_key,
+    ['hash'] = key_def.hash,
     ['merge'] = key_def.merge,
     ['totable'] = key_def.totable,
     ['__serialize'] = key_def.totable,
