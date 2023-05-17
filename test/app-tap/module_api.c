@@ -1974,6 +1974,72 @@ test_key_def_validate_key(struct lua_State *L)
 }
 
 static int
+test_key_def_hash(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	/* Prepare a new tuple [1, 2, 3] */
+	box_tuple_t *tuple_1 = new_runtime_tuple("\x93\x01\x02\x03", 4);
+	/* Create a key definition from the first two columns. */
+	box_key_part_def_t parts_1[2];
+	box_key_part_def_create(&parts_1[0]);
+	box_key_part_def_create(&parts_1[1]);
+	parts_1[0].fieldno = 0;
+	parts_1[0].field_type = "integer";
+	parts_1[1].fieldno = 1;
+	parts_1[1].field_type = "integer";
+	box_key_def_t *key_def_1 = box_key_def_new_v2(parts_1, 2);
+	fail_unless(key_def_1 != NULL);
+	/* Calculate tuple's hash */
+	uint32_t hash_1 = box_tuple_hash(tuple_1, key_def_1);
+	fail_unless(hash_1 == 605624609);
+	/* Clean up */
+	box_key_def_delete(key_def_1);
+	box_tuple_unref(tuple_1);
+
+	/* Prepare a new tuple [1] */
+	box_tuple_t *tuple_2 = new_runtime_tuple("\x91\x01", 2);
+	/* Create a key definition from its column. */
+	box_key_part_def_t parts_2[1];
+	box_key_part_def_create(&parts_2[0]);
+	parts_2[0].fieldno = 0;
+	parts_2[0].field_type = "integer";
+	box_key_def_t *key_def_2 = box_key_def_new_v2(parts_2, 1);
+	fail_unless(key_def_2 != NULL);
+	/* Calculate tuple's hash */
+	uint32_t hash_2 = box_tuple_hash(tuple_2, key_def_2);
+	fail_unless(hash_2 == 1457374933);
+	/* Clean up */
+	box_key_def_delete(key_def_2);
+	box_tuple_unref(tuple_2);
+
+	/* Prepare a new tuple [1] */
+	box_tuple_t *tuple_3 = new_runtime_tuple("\x91\x01", 2);
+	/* Create a key defenition where the second column is nullable */
+	box_key_part_def_t parts_3[2];
+	box_key_part_def_create(&parts_3[0]);
+	box_key_part_def_create(&parts_3[1]);
+	parts_3[0].fieldno = 0;
+	parts_3[0].field_type = "integer";
+	parts_3[1].fieldno = 1;
+	parts_3[1].field_type = "integer";
+	parts_3[1].flags = BOX_KEY_PART_DEF_IS_NULLABLE;
+	box_key_def_t *key_def_3 = box_key_def_new_v2(parts_3, 2);
+	fail_unless(key_def_3 != NULL);
+	/* Calculate tuple's hash */
+	uint32_t hash_3 = box_tuple_hash(tuple_3, key_def_3);
+	fail_unless(hash_3 == 766361540);
+	/* Clean up */
+	box_key_def_delete(key_def_3);
+	box_tuple_unref(tuple_3);
+
+	box_region_truncate(region_svp);
+
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
 test_key_def_dup(lua_State *L)
 {
 	size_t region_svp = box_region_used();
@@ -3197,6 +3263,7 @@ luaopen_module_api(lua_State *L)
 		{"test_key_def_merge", test_key_def_merge},
 		{"test_key_def_extract_key", test_key_def_extract_key},
 		{"test_key_def_validate_key", test_key_def_validate_key},
+		{"test_key_def_hash", test_key_def_hash},
 		{"test_box_ibuf", test_box_ibuf},
 		{"tuple_validate_def", test_tuple_validate_default},
 		{"tuple_validate_fmt", test_tuple_validate_formatted},
