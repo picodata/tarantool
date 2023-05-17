@@ -399,6 +399,33 @@ lbox_key_def_compare_with_key(struct lua_State *L)
 }
 
 /**
+ * Calculate a tuple hash with a given key definition.
+ * At the moment 32-bit murmur3 hash is used but it may
+ * change in future.
+ * Push hash integer to a LUA stack on success.
+ * Raise error otherwise.
+ */
+static int
+lbox_key_def_hash(struct lua_State *L)
+{
+	struct key_def *key_def = luaT_check_key_def(L, 1);
+	if (lua_gettop(L) != 2 || key_def == NULL)
+		return luaL_error(L, "Usage: key_def:hash(tuple)");
+
+	struct tuple *tuple = luaT_key_def_check_tuple(L, key_def, 2);
+	if (tuple == NULL)
+		return luaT_error(L);
+
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+	uint32_t hash = box_tuple_hash(tuple, key_def);
+	region_truncate(region, region_svp);
+	tuple_unref(tuple);
+	lua_pushinteger(L, hash);
+	return 1;
+}
+
+/**
  * Construct and export to LUA a new key definition with a set
  * union of key parts from first and second key defs. Parts of
  * the new key_def consist of the first key_def's parts and those
@@ -519,6 +546,7 @@ luaopen_key_def(struct lua_State *L)
 		{"extract_key", lbox_key_def_extract_key},
 		{"compare", lbox_key_def_compare},
 		{"compare_with_key", lbox_key_def_compare_with_key},
+		{"hash", lbox_key_def_hash},
 		{"merge", lbox_key_def_merge},
 		{"totable", lbox_key_def_to_table},
 		{NULL, NULL}
