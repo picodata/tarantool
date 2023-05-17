@@ -535,6 +535,16 @@ box_tuple_compare_with_key(box_tuple_t *tuple_a, const char *key_b,
 			   box_key_def_t *key_def);
 
 /**
+ * Calculate a tuple hash value with a given key definition.
+ *
+ * @param tuple tuple
+ * @param key_def key definition
+ * @return - hash value
+ */
+API_EXPORT uint32_t
+box_tuple_hash(box_tuple_t *tuple, box_key_def_t *key_def);
+
+/**
  * Allocate a new key_def with a set union of key parts from
  * first and second key defs.
  *
