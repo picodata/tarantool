@@ -261,6 +261,9 @@ create_unit_test(PREFIX cbus_call
                  LIBRARIES core unit stat
 )
 
+add_executable(cbus_lcpipe.test cbus_lcpipe.c core_test_utils.c)
+target_link_libraries(cbus_lcpipe.test core unit stat)
+
 include(CheckSymbolExists)
 check_symbol_exists(__GLIBC__ features.h GLIBC_USED)
 if (GLIBC_USED)

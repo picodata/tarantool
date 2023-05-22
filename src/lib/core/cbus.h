@@ -300,6 +300,28 @@ cbus_endpoint_create(struct cbus_endpoint *endpoint, const char *name,
 		     void (*fetch_cb)(ev_loop *, struct ev_watcher *, int), void *fetch_data);
 
 /**
+ * Allocate and initialize cbus endpoint.
+ * Endpoint initialized by ready for use defaults. Can be using by 3rtd party
+ * code.
+ * @param endpoint cbus endpoint dst
+ * @param name a destination name
+ * @retval 0 for success
+ * @retval 1 if endpoint with given name already registered
+ */
+int
+cbus_endpoint_new(struct cbus_endpoint **endpoint, const char *name);
+
+/**
+ * Delete cbus endpoint. Disconnect the cord from cbus and free endpoint data.
+ * @param endpoint cbus endpoint must have been allocated with a call to
+ * `cbus_endpoint_new`.
+ * @retval 0 for success
+ * @retval 1 if there is connected pipe or unhandled message`
+ */
+int
+cbus_endpoint_delete(struct cbus_endpoint *endpoint);
+
+/**
  * One round for message fetch and deliver */
 void
 cbus_process(struct cbus_endpoint *endpoint);
@@ -452,6 +474,66 @@ void
 cbus_unpair(struct cpipe *dest_pipe, struct cpipe *src_pipe,
 	    void (*unpair_cb)(void *), void *unpair_arg,
 	    void (*process_cb)(struct cbus_endpoint *));
+
+/**
+ * A  uni-directional FIFO queue from any thread to cord.
+ * It is a light version of the cpipe, since some features are not needed for
+ * 3td party threads or they cannot be implemented.
+ *
+ */
+struct lcpipe {
+	/** Staging area for pushed messages */
+	struct stailq input;
+	/** Counters are useful for finer-grained scheduling. */
+	int n_input;
+	/**
+	 * When pushing messages, keep the staged input size under
+	 * this limit (speeds up message delivery and reduces
+	 * latency, while still keeping the bus mutex cold enough).
+	 */
+	int max_input;
+	/**
+	 * The cbus endpoint at the destination cord to handle
+	 * flushed messages.
+	 */
+	struct cbus_endpoint *endpoint;
+};
+
+/**
+ * Create and initialize a pipe and connect it to the consumer.
+ * The call returns only when the consumer, identified by consumer name, has
+ * joined the bus.
+ **/
+struct lcpipe *
+lcpipe_new(const char *consumer);
+
+/**
+ * Destroy a pipe with freeing up occupied memory.
+ * @param pipe lcpipe must have been allocated with a call to `lcpipe_new`.
+ **/
+void
+lcpipe_delete(struct lcpipe *pipe);
+
+/**
+ * Flush all staged messages into the pipe and eventually to the
+ * consumer.
+ */
+void
+lcpipe_flush_input(struct lcpipe *pipe);
+
+/**
+ * Push a message into input queue without flushing.
+ * @param msg cbus message, pipe in message hop must be set at NULL.
+ */
+void
+lcpipe_push(struct lcpipe *pipe, struct cmsg *msg);
+
+/**
+ * Push a single message and flush input queue immediately.
+ * @param msg cbus message, pipe in message hop must be set at NULL.
+ */
+void
+lcpipe_push_now(struct lcpipe *pipe, struct cmsg *msg);
 
 #if defined(__cplusplus)
 } /* extern "C" */

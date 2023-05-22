@@ -624,3 +624,14 @@ fiber_channel_get_msg_timeout
 fiber_channel_has_readers
 fiber_channel_has_writers
 fiber_channel_new
+
+# picodata cbus
+cbus_endpoint_delete
+cbus_endpoint_new
+cbus_loop
+cbus_process
+lcpipe_delete
+lcpipe_flush_input
+lcpipe_new
+lcpipe_push
+lcpipe_push_now
