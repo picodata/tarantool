@@ -4,7 +4,7 @@ file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/src/box/sql)
 # Sometimes 'spying' code is not acceptable even if it would be
 # disabled by default. That option allows to remove the feedback
 # daemon from the build completely.
-option(ENABLE_FEEDBACK_DAEMON "Feedback daemon which reports debug data to the Tarantool team" ON)
+option(ENABLE_FEEDBACK_DAEMON "Feedback daemon which reports debug data to the Tarantool team" OFF)
 
 set(lua_sources)
 lua_source(lua_sources lua/load_cfg.lua load_cfg_lua)
