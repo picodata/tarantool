@@ -22,8 +22,7 @@ g.test_fatal_signal_handler = function(cg)
     tarantool_env[cg.params.errinj] = 'true'
 
     -- Use `cd' and `shell = true' due to lack of cwd option in popen (gh-5633),
-    -- `feedback_enabled = false' to avoid forking for sending feedback.
-    local fmt = 'cd %s && %s -e "box.cfg{feedback_enabled = false} os.exit()"'
+    local fmt = 'cd %s && %s -e "box.cfg{} os.exit()"'
     local cmd = string.format(fmt, cg.tempdir, tarantool_exe)
     local ph = popen.new({cmd}, {stderr = popen.opts.PIPE, env = tarantool_env,
                                  shell = true})

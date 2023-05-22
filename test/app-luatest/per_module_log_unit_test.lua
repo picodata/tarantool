@@ -28,8 +28,7 @@ g.test_module_name_from_filename = function()
     local testcases = {
         { filename = 'my/modules/test1.lua', expected = 'my.modules.test1' },
         { filename = '/etc/modules/test2/init.lua', expected = 'etc.modules.test2' },
-        { filename = fio.pathjoin(fio.cwd(), 'mod/test3.lua'), expected = 'mod.test3' },
-        { filename = 'builtin/box/feedback_daemon.lua', expected = 'box.feedback_daemon' },
+        { filename = fio.pathjoin(fio.cwd(), 'mod/test3.lua'), expected = 'mod.test3' }
     }
     for _, test in pairs(testcases) do
         t.assert_equals(module_name_from_filename(test.filename), test.expected)
