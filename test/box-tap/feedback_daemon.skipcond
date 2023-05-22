@@ -1,0 +1,4 @@
+# Disabled in Picodata fork.
+self.skip = 1
+
+# vim: set ft=python:

@@ -283,7 +283,7 @@
 #cmakedefine ENABLE_SPACE_UPGRADE 1
 #cmakedefine ENABLE_SSL 1
 #cmakedefine ENABLE_AUDIT_LOG 1
-#cmakedefine ENABLE_FEEDBACK_DAEMON 1
+#cmakedefine ENABLE_FEEDBACK_DAEMON 0
 #cmakedefine ENABLE_WAL_EXT 1
 #cmakedefine ENABLE_RETENTION_PERIOD 1
 #cmakedefine ENABLE_READ_VIEW 1
