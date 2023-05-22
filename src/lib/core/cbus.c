@@ -87,6 +87,25 @@ static void
 cpipe_flush_cb(ev_loop * /* loop */, struct ev_async *watcher,
 	       int /* events */);
 
+/**
+ * Acquire cbus endpoint, identified by consumer name.
+ * The call returns when the consumer has joined the bus.
+ */
+static inline void
+acquire_consumer(struct cbus_endpoint **pipe_endpoint, const char *name)
+{
+	tt_pthread_mutex_lock(&cbus.mutex);
+	struct cbus_endpoint *endpoint =
+		cbus_find_endpoint_locked(&cbus, name);
+	while (endpoint == NULL) {
+		tt_pthread_cond_wait(&cbus.cond, &cbus.mutex);
+		endpoint = cbus_find_endpoint_locked(&cbus, name);
+	}
+	*pipe_endpoint = endpoint;
+	++(*pipe_endpoint)->n_pipes;
+	tt_pthread_mutex_unlock(&cbus.mutex);
+}
+
 void
 cpipe_create(struct cpipe *pipe, const char *consumer)
 {
@@ -100,16 +119,7 @@ cpipe_create(struct cpipe *pipe, const char *consumer)
 	pipe->flush_input.data = pipe;
 	rlist_create(&pipe->on_flush);
 
-	tt_pthread_mutex_lock(&cbus.mutex);
-	struct cbus_endpoint *endpoint =
-		cbus_find_endpoint_locked(&cbus, consumer);
-	while (endpoint == NULL) {
-		tt_pthread_cond_wait(&cbus.cond, &cbus.mutex);
-		endpoint = cbus_find_endpoint_locked(&cbus, consumer);
-	}
-	pipe->endpoint = endpoint;
-	++pipe->endpoint->n_pipes;
-	tt_pthread_mutex_unlock(&cbus.mutex);
+	acquire_consumer(&pipe->endpoint, consumer);
 }
 
 struct cmsg_poison {
@@ -175,6 +185,145 @@ cpipe_destroy(struct cpipe *pipe)
 	tt_pthread_setcancelstate(old_cancel_state, NULL);
 
 	TRASH(pipe);
+}
+
+struct lcpipe *
+lcpipe_new(const char *consumer)
+{
+	struct lcpipe *pipe = xmalloc(sizeof(*pipe));
+
+	stailq_create(&pipe->input);
+
+	pipe->n_input = 0;
+	pipe->max_input = INT_MAX;
+
+	acquire_consumer(&pipe->endpoint, consumer);
+
+	return pipe;
+}
+
+/**
+ * Flush all staged messages into consumer output and wake up it after.
+ */
+static void
+lcpipe_flush(struct lcpipe *pipe)
+{
+	struct cbus_endpoint *endpoint = pipe->endpoint;
+	if (pipe->n_input == 0)
+		return;
+
+	/* Trigger task processing when the queue becomes non-empty. */
+	bool output_was_empty;
+
+	/*
+	 * We need to set a thread cancellation guard, because
+	 * another thread may cancel the current thread
+	 * (write() is a cancellation point in ev_async_send)
+	 * and the activation of the ev_async watcher
+	 * through ev_async_send will fail.
+	 */
+
+	int old_cancel_state;
+	tt_pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel_state);
+
+	tt_pthread_mutex_lock(&endpoint->mutex);
+	output_was_empty = stailq_empty(&endpoint->output);
+	/** Flush input */
+	stailq_concat(&endpoint->output, &pipe->input);
+	tt_pthread_mutex_unlock(&endpoint->mutex);
+
+	pipe->n_input = 0;
+	if (output_was_empty) {
+		/* Count statistics */
+		rmean_collect(cbus.stats, CBUS_STAT_EVENTS, 1);
+
+		ev_async_send(pipe->endpoint->consumer, &pipe->endpoint->async);
+	}
+
+	tt_pthread_setcancelstate(old_cancel_state, NULL);
+}
+
+void
+lcpipe_flush_input(struct lcpipe *pipe)
+{
+	/** Flush may be called with no input. */
+	if (pipe->n_input > 0) {
+		lcpipe_flush(pipe);
+	}
+}
+
+/**
+ * Insert message into pipe input queue.
+ */
+static inline void
+lcpipe_insert_input(struct lcpipe *pipe, struct cmsg *msg)
+{
+	assert(msg->hop->pipe == NULL);
+	stailq_add_tail_entry(&pipe->input, msg, fifo);
+	pipe->n_input++;
+	if (pipe->n_input >= pipe->max_input) {
+		lcpipe_flush(pipe);
+	}
+}
+
+void
+lcpipe_push(struct lcpipe *pipe, struct cmsg *msg)
+{
+	lcpipe_insert_input(pipe, msg);
+	assert(pipe->n_input < pipe->max_input);
+}
+
+void
+lcpipe_push_now(struct lcpipe *pipe, struct cmsg *msg)
+{
+	lcpipe_insert_input(pipe, msg);
+	assert(pipe->n_input < pipe->max_input);
+	lcpipe_flush(pipe);
+}
+
+void
+lcpipe_delete(struct lcpipe *pipe)
+{
+	/*
+	 * The thread should not be canceled while mutex is locked.
+	 * And everything else must be protected for consistency.
+	 */
+	int old_cancel_state;
+	tt_pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel_state);
+
+	static const struct cmsg_hop route[1] = {
+		{cbus_endpoint_poison_f, NULL}
+	};
+
+	struct cbus_endpoint *endpoint = pipe->endpoint;
+	struct cmsg_poison *poison = xmalloc(sizeof(*poison));
+	cmsg_init(&poison->msg, route);
+	poison->endpoint = pipe->endpoint;
+	/*
+	 * Avoid the general purpose lcpipe_insert_input() since
+	 * we want to control the way the poison message is
+	 * delivered.
+	 */
+	tt_pthread_mutex_lock(&endpoint->mutex);
+	/* Flush input */
+	stailq_concat(&endpoint->output, &pipe->input);
+	pipe->n_input = 0;
+	/* Add the pipe shutdown message as the last one. */
+	stailq_add_tail_entry(&endpoint->output, poison, msg.fifo);
+	/* Count statistics */
+	rmean_collect(cbus.stats, CBUS_STAT_EVENTS, 1);
+	/*
+	 * Keep the lock for the duration of ev_async_send():
+	 * this will avoid a race condition between
+	 * ev_async_send() and execution of the poison
+	 * message, after which the endpoint may disappear.
+	 */
+	ev_async_send(endpoint->consumer, &endpoint->async);
+	tt_pthread_mutex_unlock(&endpoint->mutex);
+
+	tt_pthread_setcancelstate(old_cancel_state, NULL);
+
+	free(pipe);
 }
 
 static void
@@ -247,8 +396,21 @@ cbus_endpoint_create(struct cbus_endpoint *endpoint, const char *name,
 }
 
 int
-cbus_endpoint_destroy(struct cbus_endpoint *endpoint,
-		      void (*process_cb)(struct cbus_endpoint *endpoint))
+cbus_endpoint_new(struct cbus_endpoint **endpoint, const char *name)
+{
+	struct cbus_endpoint *new_endpoint = xmalloc(sizeof(*new_endpoint));
+	*endpoint = new_endpoint;
+
+	int err = cbus_endpoint_create(new_endpoint, name, fiber_schedule_cb,
+				       fiber());
+	if (err)
+		free(new_endpoint);
+	return err;
+}
+
+static inline void
+cbus_endpoint_destroy_inner(struct cbus_endpoint *endpoint,
+			    void (*process_cb)(struct cbus_endpoint *endpoint))
 {
 	tt_pthread_mutex_lock(&cbus.mutex);
 	/*
@@ -263,7 +425,7 @@ cbus_endpoint_destroy(struct cbus_endpoint *endpoint,
 			process_cb(endpoint);
 		if (endpoint->n_pipes == 0 && stailq_empty(&endpoint->output))
 			break;
-		 fiber_cond_wait(&endpoint->cond);
+		fiber_cond_wait(&endpoint->cond);
 	}
 
 	/*
@@ -275,6 +437,22 @@ cbus_endpoint_destroy(struct cbus_endpoint *endpoint,
 	tt_pthread_mutex_destroy(&endpoint->mutex);
 	ev_async_stop(endpoint->consumer, &endpoint->async);
 	fiber_cond_destroy(&endpoint->cond);
+}
+
+int
+cbus_endpoint_delete(struct cbus_endpoint *endpoint)
+{
+	cbus_endpoint_destroy_inner(endpoint, cbus_process);
+	TRASH(endpoint);
+	free(endpoint);
+	return 0;
+}
+
+int
+cbus_endpoint_destroy(struct cbus_endpoint *endpoint,
+		      void (*process_cb)(struct cbus_endpoint *endpoint))
+{
+	cbus_endpoint_destroy_inner(endpoint, process_cb);
 	TRASH(endpoint);
 	return 0;
 }
