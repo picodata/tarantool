@@ -1,0 +1,5 @@
+## feat/box
+* Support md5 authentication method.
+  It prevents password sniffing and avoids storing passwords on the
+  server in plain text but provides no protection if an attacker
+  manages to steal the password hash from the server.
