@@ -13,6 +13,7 @@
 
 #include "assoc.h"
 #include "auth_chap_sha1.h"
+#include "auth_md5.h"
 #include "base64.h"
 #include "diag.h"
 #include "errcode.h"
@@ -169,9 +170,11 @@ void
 auth_init(void)
 {
 	auth_methods = mh_strnptr_new();
-	struct auth_method *method = auth_chap_sha1_new();
-	AUTH_METHOD_DEFAULT = method;
-	auth_method_register(method);
+	struct auth_method *chap_sha1_method = auth_chap_sha1_new();
+	AUTH_METHOD_DEFAULT = chap_sha1_method;
+	auth_method_register(chap_sha1_method);
+	struct auth_method *md5_method = auth_md5_new();
+	auth_method_register(md5_method);
 }
 
 void
