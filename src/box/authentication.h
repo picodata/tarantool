@@ -80,6 +80,7 @@ struct auth_method {
 	void
 	(*auth_data_prepare)(const struct auth_method *method,
 			     const char *password, int password_len,
+			     const char *user,
 			     const char **auth_data,
 			     const char **auth_data_end);
 	/**
@@ -95,6 +96,7 @@ struct auth_method {
 	void
 	(*auth_request_prepare)(const struct auth_method *method,
 				const char *password, int password_len,
+				const char *user,
 				const char *salt,
 				const char **auth_request,
 				const char **auth_request_end);
@@ -143,19 +145,20 @@ struct auth_method {
 
 static inline void
 auth_data_prepare(const struct auth_method *method,
-		  const char *password, int password_len,
+		  const char *password, int password_len, const char *user,
 		  const char **auth_data, const char **auth_data_end)
 {
 	method->auth_data_prepare(method, password, password_len,
-				 auth_data, auth_data_end);
+				  user, auth_data, auth_data_end);
 }
 
 static inline void
 auth_request_prepare(const struct auth_method *method,
-		     const char *password, int password_len, const char *salt,
+		     const char *password, int password_len,
+		     const char *user, const char *salt,
 		     const char **auth_request, const char **auth_request_end)
 {
-	method->auth_request_prepare(method, password, password_len, salt,
+	method->auth_request_prepare(method, password, password_len, user, salt,
 				     auth_request, auth_request_end);
 }
 
@@ -208,7 +211,7 @@ authenticate_request(const struct authenticator *auth, const char *salt,
  */
 bool
 authenticate_password(const struct authenticator *auth,
-		      const char *password, int password_len);
+		      const char *password, int password_len, const char *user);
 
 /**
  * Authenticates a user.

@@ -34,7 +34,7 @@ static struct mh_strnptr_t *auth_methods = NULL;
 
 bool
 authenticate_password(const struct authenticator *auth,
-		      const char *password, int password_len)
+		      const char *password, int password_len, const char *user)
 {
 	/*
 	 * We don't really need to zero the salt here, because any salt would
@@ -46,7 +46,7 @@ authenticate_password(const struct authenticator *auth,
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *auth_request, *auth_request_end;
-	auth_request_prepare(auth->method, password, password_len, salt,
+	auth_request_prepare(auth->method, password, password_len, user, salt,
 			     &auth_request, &auth_request_end);
 	bool ret = authenticate_request(auth, salt, auth_request,
 					auth_request_end);
