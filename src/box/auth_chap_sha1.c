@@ -141,10 +141,12 @@ auth_chap_sha1_delete(struct auth_method *method)
 static void
 auth_chap_sha1_data_prepare(const struct auth_method *method,
 			    const char *password, int password_len,
+			    const char *user,
 			    const char **auth_data,
 			    const char **auth_data_end)
 {
 	(void)method;
+	(void)user;
 	struct region *region = &fiber()->gc;
 	size_t size = mp_sizeof_str(SCRAMBLE_BASE64_SIZE);
 	char *p = xregion_alloc(region, size);
@@ -158,11 +160,13 @@ auth_chap_sha1_data_prepare(const struct auth_method *method,
 static void
 auth_chap_sha1_request_prepare(const struct auth_method *method,
 			       const char *password, int password_len,
+			       const char *user,
 			       const char *salt,
 			       const char **auth_request,
 			       const char **auth_request_end)
 {
 	(void)method;
+	(void)user;
 	struct region *region = &fiber()->gc;
 	size_t size = mp_sizeof_str(SCRAMBLE_SIZE);
 	char *p = xregion_alloc(region, size);
