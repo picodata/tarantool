@@ -3200,13 +3200,14 @@ end
 
 box.schema.user = {}
 
-box.schema.user.password = function(password)
-    return internal.prepare_auth(box.cfg.auth_type, password)
+box.schema.user.password = function(password, name)
+    return internal.prepare_auth(box.cfg.auth_type, password, name)
 end
 
-local function prepare_auth_list(password)
+local function prepare_auth_list(password, name)
     return {
-        [box.cfg.auth_type] = internal.prepare_auth(box.cfg.auth_type, password)
+        [box.cfg.auth_type] =
+            internal.prepare_auth(box.cfg.auth_type, password, name)
     }
 end
 
@@ -3224,11 +3225,11 @@ local function check_password(password, auth_history)
     end
 end
 
-local function chpasswd(uid, new_password)
+local function chpasswd(uid, new_password, name)
     local _user = box.space[box.schema.USER_ID]
     local auth_history = prepare_auth_history(uid)
     check_password(new_password, auth_history)
-    _user:update({uid}, {{'=', 5, prepare_auth_list(new_password)},
+    _user:update({uid}, {{'=', 5, prepare_auth_list(new_password, name)},
                          {'=', 6, auth_history},
                          {'=', 7, math.floor(fiber.time())}})
 end
@@ -3240,14 +3241,14 @@ box.schema.user.passwd = function(name, new_password)
     if new_password == nil then
         -- change password for current user
         new_password = name
-        box.session.su('admin', chpasswd, session.uid(), new_password)
+        box.session.su('admin', chpasswd, session.uid(), new_password, name)
     else
         -- change password for other user
         local uid = user_resolve(name)
         if uid == nil then
             box.error(box.error.NO_SUCH_USER, name)
         end
-        return chpasswd(uid, new_password)
+        return chpasswd(uid, new_password, name)
     end
 end
 
@@ -3264,7 +3265,7 @@ box.schema.user.create = function(name, opts)
     local auth_list
     if opts.password then
         check_password(opts.password)
-        auth_list = prepare_auth_list(opts.password)
+        auth_list = prepare_auth_list(opts.password, name)
     else
         auth_list = setmap({})
     end

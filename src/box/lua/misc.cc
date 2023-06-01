@@ -237,7 +237,7 @@ lbox_generate_space_id(lua_State *L)
 /** {{{ Helper that generates user auth data. **/
 
 /**
- * Takes authentication method name (e.g. 'chap-sha1') and a password.
+ * Takes authentication method name (e.g. 'chap-sha1'), password and user name.
  * Returns authentication data that can be stored in the _user space.
  * Raises Lua error if the specified authentication method doesn't exist.
  */
@@ -255,10 +255,17 @@ lbox_prepare_auth(lua_State *L)
 			 tt_cstr(method_name, method_name_len));
 		return luaT_error(L);
 	}
+	size_t user_len;
+	const char *user = luaL_checklstring(L, 3, &user_len);
+	/*
+	 * User name shouldn't be verified, because this routine is called
+	 * by box.schema.user.create before the user is actually creted.
+	 */
+
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *auth_data, *auth_data_end;
-	auth_data_prepare(method, password, password_len,
+	auth_data_prepare(method, password, password_len, user,
 			  &auth_data, &auth_data_end);
 	luamp_decode(L, luaL_msgpack_default, &auth_data);
 	assert(auth_data == auth_data_end);
