@@ -2949,7 +2949,7 @@ user_def_fill_auth_data(struct user_def *user, const char *auth_data)
 			return -1;
 		/* The guest user may only have an empty password. */
 		if (user->uid == GUEST &&
-		    !authenticate_password(auth, "", 0)) {
+		    !authenticate_password(auth, "", 0, user->name)) {
 			authenticator_delete(auth);
 			diag_set(ClientError, ER_GUEST_USER_PASSWORD);
 			return -1;
