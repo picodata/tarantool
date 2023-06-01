@@ -36,11 +36,11 @@ session.user(nil)
 ...
 -- password() is a function which returns base64(sha1(sha1(password))
 -- a string to store in _user table
-box.schema.user.password('test')
+box.schema.user.password('test', "user")
 ---
 - lL3OvhkIPOKh+Vn9Avlkx69M/Ck=
 ...
-box.schema.user.password('test1')
+box.schema.user.password('test1', "user")
 ---
 - BsC/W2Ts4vZItfBIpxkDkGugjlw=
 ...
