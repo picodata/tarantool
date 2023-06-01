@@ -775,7 +775,7 @@ iproto_reply_select(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
 /** Reply select with IPROTO_DATA and IPROTO_POSITION. */
 int
 iproto_reply_select_with_position(struct obuf *buf, struct obuf_svp *svp,
-				  uint64_t sync, uint32_t schema_version,
+				  uint64_t sync, uint64_t schema_version,
 				  uint32_t count, const char *packed_pos,
 				  const char *packed_pos_end)
 {
