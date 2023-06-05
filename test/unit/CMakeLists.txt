@@ -466,7 +466,7 @@ create_unit_test(PREFIX sio
 
 create_unit_test(PREFIX crypto
                  SOURCES crypto.c core_test_utils.c
-                 LIBRARIES crypto unit
+                 LIBRARIES tcrypto unit
 )
 
 create_unit_test(PREFIX swim
