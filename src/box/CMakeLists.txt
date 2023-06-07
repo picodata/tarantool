@@ -105,6 +105,7 @@ set(tuple_sources
     tuple_format.c
     tuple_constraint_def.c
     tuple_constraint.c
+    tuple_builder.c
     xrow_update.c
     xrow_update_field.c
     xrow_update_array.c
