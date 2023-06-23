@@ -110,6 +110,13 @@ static bool yaml_pretty_multiline;
 TWEAK_BOOL(yaml_pretty_multiline);
 
 /**
+ * If this flag is set, a binary data field will be decoded to a plain Lua
+ * string, not a varbinary object.
+ */
+static bool yaml_decode_binary_as_string = false;
+TWEAK_BOOL(yaml_decode_binary_as_string);
+
+/**
  * Verify whether a string represents a boolean literal in YAML.
  *
  * Non-standard: only subset of YAML 1.1 boolean literals are
@@ -278,7 +285,14 @@ static void load_scalar(struct lua_yaml_loader *loader) {
          lua_pushboolean(loader->L, value);
          return;
       } else if (!strcmp(tag, "binary")) {
-         frombase64(loader->L, (const unsigned char *)str, length);
+         int bufsize = base64_decode_bufsize(length);
+         char *buf = (char *)xmalloc(bufsize);
+         int size = base64_decode(str, length, buf, bufsize);
+         if (yaml_decode_binary_as_string)
+            lua_pushlstring(loader->L, buf, size);
+         else
+            luaT_pushvarbinary(loader->L, buf, size);
+         free(buf);
          return;
       }
    }
