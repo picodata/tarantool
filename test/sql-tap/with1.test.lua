@@ -553,7 +553,7 @@ test:do_execsql_test("8.1-mandelbrot", [[
   SELECT group_concat(CAST(TRIM(TRAILING FROM t) AS VARBINARY),x'0a') FROM a;
 ]], {
   -- <8.1-mandelbrot>
-  [[                                    ....#
+  require('varbinary').new([[                                    ....#
                                    ..#*..
                                  ..+####+.
                             .......+####....   +
@@ -574,7 +574,7 @@ test:do_execsql_test("8.1-mandelbrot", [[
                                  ..+####+.
                                    ..#*..
                                     ....#
-                                    +.]]
+                                    +.]])
   -- </8.1-mandelbrot>
 })
 

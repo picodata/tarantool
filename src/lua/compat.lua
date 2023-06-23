@@ -58,6 +58,13 @@ additional msgpack array when returning them via iproto.
 https://tarantool.io/compat/c_func_iproto_multireturn
 ]]
 
+local BINARY_DATA_DECODING_BRIEF = [[
+Whether a binary data field should be stored in a varbinary object or a plain
+string when decoded in Lua.
+
+https://tarantool.io/compat/binary_data_decoding
+]]
+
 -- Returns an action callback that toggles a tweak.
 local function tweak_action(tweak_name, old_tweak_value, new_tweak_value)
     return function(is_new)
@@ -109,6 +116,15 @@ local options = {
         brief = C_FUNC_IPROTO_MULTIRETURN_BRIEF,
         run_action_now = true,
         action = tweak_action('c_func_iproto_multireturn', false, true),
+    },
+    binary_data_decoding = {
+        default = 'new',
+        obsolete = nil,
+        brief = BINARY_DATA_DECODING_BRIEF,
+        action = function(is_new)
+            tweaks.yaml_decode_binary_as_string = not is_new
+            tweaks.msgpack_decode_binary_as_string = not is_new
+        end,
     },
 }
 
