@@ -443,8 +443,8 @@ int
 cbus_endpoint_delete(struct cbus_endpoint *endpoint)
 {
 	cbus_endpoint_destroy_inner(endpoint, cbus_process);
-	free(endpoint);
 	TRASH(endpoint);
+	free(endpoint);
 	return 0;
 }
 
