@@ -82,6 +82,13 @@ add_compile_flags("C;CXX" ${PREFIX_MAP_FLAGS})
 set(DEPENDENCY_CFLAGS "${DEPENDENCY_CFLAGS} ${PREFIX_MAP_FLAGS}")
 set(DEPENDENCY_CXXFLAGS "${DEPENDENCY_CXXFLAGS} ${PREFIX_MAP_FLAGS}")
 
+# We need this for bundled SASL & LDAP libs (in fact, for any autotools-based project)
+if(APPLE)
+    set(DEPENDENCY_CFLAGS "${DEPENDENCY_CFLAGS} ${CMAKE_C_SYSROOT_FLAG} ${CMAKE_OSX_SYSROOT}")
+    set(DEPENDENCY_CPPFLAGS "${DEPENDENCY_CPPFLAGS} ${CMAKE_C_SYSROOT_FLAG} ${CMAKE_OSX_SYSROOT}")
+    set(DEPENDENCY_CXXFLAGS "${DEPENDENCY_CXXFLAGS} ${CMAKE_C_SYSROOT_FLAG} ${CMAKE_OSX_SYSROOT}")
+endif()
+
 set(CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
 
 check_symbol_exists(MAP_ANON sys/mman.h HAVE_MAP_ANON)
@@ -447,6 +454,55 @@ endif()
 if(OPENSSL_USE_STATIC_LIBS)
     set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} ${ZLIB_LIBRARIES})
 endif()
+
+#
+# OpenLDAP
+#
+option(ENABLE_BUNDLED_LDAP "Enable building of the bundled libldap" ON)
+if(ENABLE_BUNDLED_LDAP OR BUILD_STATIC)
+    include(BuildSASL)
+    sasl_build()
+    add_dependencies(build_bundled_libs bundled-sasl)
+
+    include(BuildLDAP)
+    ldap_build()
+    add_dependencies(build_bundled_libs bundled-ldap)
+else()
+    set(SASL_FIND_REQUIRED ON)
+    find_package(SASL)
+
+    set(LDAP_FIND_REQUIRED ON)
+    find_package(LDAP)
+endif()
+
+# Download GLAuth, a LDAP server used in tests
+message(STATUS "Downloading GLAuth for tests")
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    if(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+        set(GLAUTH_URL https://github.com/glauth/glauth/releases/download/v2.2.0/glauth-linux-amd64)
+        set(GLAUTH_HASH 823b4403b87e0294ca921651694b57ca)
+    elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+        set(GLAUTH_URL https://github.com/glauth/glauth/releases/download/v2.2.0/glauth-linux-arm64)
+        set(GLAUTH_HASH c3e749a34f54e82597e7b4cd7efeae42)
+    else()
+        message(WARNING "Failed to download GLAuth: unsupported platform ${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+    if(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+        set(GLAUTH_URL https://github.com/glauth/glauth/releases/download/v2.2.0/glauth-darwin-amd64)
+        set(GLAUTH_HASH 19b3a8d83d6b258508df626cd1ff3f46)
+    elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "arm64")
+        set(GLAUTH_URL https://github.com/glauth/glauth/releases/download/v2.2.0/glauth-darwin-arm64)
+        set(GLAUTH_HASH 45b9f2ff7a27ca1cc2b53910f0c89c67)
+    else()
+        message(WARNING "Failed to download GLAuth: unsupported platform ${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    endif()
+else()
+    message(WARNING "Failed to download GLAuth: unsupported OS")
+endif()
+set(GLAUTH_BIN ${CMAKE_BINARY_DIR}/glauth)
+file(DOWNLOAD ${GLAUTH_URL} ${GLAUTH_BIN} EXPECTED_MD5 ${GLAUTH_HASH} SHOW_PROGRESS)
+execute_process(COMMAND chmod 770 ${GLAUTH_BIN})
 
 #
 # Curl

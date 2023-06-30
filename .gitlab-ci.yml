@@ -32,6 +32,7 @@ test-ubuntu:
     tags: [docker]
     image: docker-public.binary.picodata.io/tarantool-testing:latest
     script:
+      - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk test-release
 
 test_mac-m1:
@@ -40,6 +41,7 @@ test_mac-m1:
     script:
       - ulimit -n 10240
       - sudo chown -R $(id -u) /private/tmp/t
+      - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk build
 
 checkpatch:

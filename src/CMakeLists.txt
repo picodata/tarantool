@@ -269,6 +269,8 @@ set (common_libraries
     ${LIBYAML_LIBRARIES}
     ${READLINE_LIBRARIES}
     ${ICONV_LIBRARIES}
+    ${LDAP_LIBRARIES}
+    ${SASL_LIBRARIES}
     ${OPENSSL_LIBRARIES}
 )
 
