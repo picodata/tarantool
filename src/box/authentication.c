@@ -49,7 +49,7 @@ authenticate_password(const struct authenticator *auth,
 	const char *auth_request, *auth_request_end;
 	auth_request_prepare(auth->method, password, password_len, user, salt,
 			     &auth_request, &auth_request_end);
-	bool ret = authenticate_request(auth, salt, auth_request,
+	bool ret = authenticate_request(auth, user, salt, auth_request,
 					auth_request_end);
 	region_truncate(region, region_svp);
 	return ret;
@@ -109,7 +109,7 @@ authenticate(const char *user_name, uint32_t user_name_len,
 		return -1;
 	if (user == NULL || user->def->auth == NULL ||
 	    user->def->auth->method != method ||
-	    !authenticate_request(user->def->auth, salt,
+	    !authenticate_request(user->def->auth, user->def->name, salt,
 				  auth_request, auth_request_end)) {
 		auth_res.is_authenticated = false;
 		if (session_run_on_auth_triggers(&auth_res) != 0)
