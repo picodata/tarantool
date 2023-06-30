@@ -138,6 +138,7 @@ struct auth_method {
 	 */
 	bool
 	(*authenticate_request)(const struct authenticator *auth,
+				const char *user,
 				const char *salt,
 				const char *auth_request,
 				const char *auth_request_end);
@@ -191,13 +192,15 @@ authenticator_delete(struct authenticator *auth)
  * NOTE: the request must be well-formed (checked by auth_request_check).
  */
 static inline bool
-authenticate_request(const struct authenticator *auth, const char *salt,
+authenticate_request(const struct authenticator *auth,
+		     const char *user, const char *salt,
 		     const char *auth_request, const char *auth_request_end)
 {
 	assert(auth->method->auth_request_check(auth->method, auth_request,
 						auth_request_end) == 0);
-	return auth->method->authenticate_request(
-			auth, salt, auth_request, auth_request_end);
+	return auth->method->authenticate_request(auth, user, salt,
+						  auth_request,
+						  auth_request_end);
 }
 
 /**

@@ -205,10 +205,12 @@ auth_md5_authenticator_delete(struct authenticator *auth_)
 /** auth_method::authenticator_check_request */
 static bool
 auth_md5_authenticate_request(const struct authenticator *auth_,
+			      const char *user,
 			      const char *salt,
 			      const char *auth_request,
 			      const char *auth_request_end)
 {
+	(void)user;
 	const struct auth_md5_authenticator *auth =
 		(const struct auth_md5_authenticator *)auth_;
 	uint32_t client_pass_len;
