@@ -42,6 +42,8 @@
 #include "watcher.h"
 #include "on_shutdown.h"
 #include "sql.h"
+#include "sqlInt.h"
+#include "cfg.h"
 
 const char *session_type_strs[] = {
 	"background",
@@ -258,6 +260,7 @@ session_new(enum session_type type)
 	session_set_type(session, type);
 	session->sql_flags = sql_default_session_flags();
 	session->sql_default_engine = SQL_STORAGE_ENGINE_MEMTX;
+	session->vdbe_max_steps = default_vdbe_max_steps;
 	session->sql_stmts = NULL;
 	session->watchers = NULL;
 	rlist_create(&session->in_shutdown_list);

@@ -1358,6 +1358,7 @@ sqlVdbeRewind(Vdbe * p)
 	/* Set the magic to VDBE_MAGIC_RUN sooner rather than later. */
 	p->magic = VDBE_MAGIC_RUN;
 
+	p->step_count = 0;
 	p->pc = -1;
 	p->is_aborted = false;
 	p->ignoreRaised = 0;

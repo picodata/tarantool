@@ -3222,6 +3222,8 @@ static struct sql_option_metadata sql_session_opts[] = {
 	/** SESSION_SETTING_SQL_VDBE_DEBUG */
 	{FIELD_TYPE_BOOLEAN,
 	 SQL_SqlTrace | SQL_VdbeListing | SQL_VdbeTrace},
+	 /** SESSION_SETTING_SQL_VDBE_MAX_STEPS */
+	 {FIELD_TYPE_UNSIGNED, 0},
 };
 
 static void
@@ -3236,15 +3238,18 @@ sql_session_setting_get(int id, const char **mp_pair, const char **mp_pair_end)
 	const char *name = session_setting_strs[id];
 	size_t name_len = strlen(name);
 	size_t engine_len;
+	uint64_t vdbe_max_steps = session->vdbe_max_steps;
 	const char *engine;
 	size_t size = mp_sizeof_array(2) + mp_sizeof_str(name_len);
 	/*
-	 * Currently, SQL session settings are of a boolean or
+	 * Currently, SQL session settings are of a boolean, unsigned or
 	 * string type.
 	 */
 	bool is_bool = opt->field_type == FIELD_TYPE_BOOLEAN;
 	if (is_bool) {
 		size += mp_sizeof_bool(true);
+	} else if (opt->field_type == FIELD_TYPE_UNSIGNED) {
+		size += mp_sizeof_uint(vdbe_max_steps);
 	} else {
 		assert(id == SESSION_SETTING_SQL_DEFAULT_ENGINE);
 		engine = sql_storage_engine_strs[session->sql_default_engine];
@@ -3258,6 +3263,8 @@ sql_session_setting_get(int id, const char **mp_pair, const char **mp_pair_end)
 	pos_end = mp_encode_str(pos_end, name, name_len);
 	if (is_bool)
 		pos_end = mp_encode_bool(pos_end, (flags & mask) == mask);
+	else if (opt->field_type == FIELD_TYPE_UNSIGNED)
+		pos_end = mp_encode_uint(pos_end, vdbe_max_steps);
 	else
 		pos_end = mp_encode_str(pos_end, engine, engine_len);
 	*mp_pair = pos;
@@ -3309,6 +3316,24 @@ sql_set_string_option(int id, const char *value)
 	return 0;
 }
 
+/**
+ * Set given value for option that has
+ * type uint64_t.
+ *
+ * Currently it is only sql_vdbe_max_steps
+ * option.
+ */
+static int
+sql_set_unsigned_option(int id, uint64_t value)
+{
+	assert(sql_session_opts[id - SESSION_SETTING_SQL_BEGIN].field_type =
+				   FIELD_TYPE_UNSIGNED);
+	assert(id == SESSION_SETTING_SQL_VDBE_MAX_STEPS);
+	(void)id;
+	current_session()->vdbe_max_steps = value;
+	return 0;
+}
+
 static int
 sql_session_setting_set(int id, const char *mp_value)
 {
@@ -3329,6 +3354,11 @@ sql_session_setting_set(int id, const char *mp_value)
 		tmp = mp_decode_str(&mp_value, &len);
 		tmp = tt_cstr(tmp, len);
 		return sql_set_string_option(id, tmp);
+	case FIELD_TYPE_UNSIGNED:
+		if (mtype != MP_UINT)
+			break;
+		return sql_set_unsigned_option(id,
+			mp_decode_uint(&mp_value));
 	default:
 		unreachable();
 	}

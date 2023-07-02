@@ -248,6 +248,8 @@ test:do_execsql_test(
 
 
 
+-- disable sql exec limit
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_test(
     "limit-4.1",
     function()
@@ -275,6 +277,9 @@ test:do_test(
         10240
         -- </limit-4.1>
     })
+
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 test:do_execsql_test(
     "limit-4.2",
@@ -358,7 +363,6 @@ test:do_execsql_test(
         1000, 1528204, 593161, 0, 3107, 505, 1005
         -- </limit-5.5>
     })
-
 -- There is some contraversy about whether LIMIT 0 should be the same as
 -- no limit at all or if LIMIT 0 should result in zero output rows.
 --

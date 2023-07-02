@@ -23,6 +23,7 @@ test:plan(64)
 --  return
 -- end
 
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_execsql_test(1.0, [[
   CREATE TABLE t1(x INTEGER UNIQUE, y INTEGER, z INTEGER PRIMARY KEY);
   WITH x(a) AS ( SELECT * FROM t1) SELECT 10

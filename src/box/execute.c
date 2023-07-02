@@ -43,7 +43,6 @@
 #include "schema.h"
 #include "port.h"
 #include "tuple.h"
-#include "sql/vdbe.h"
 #include "box/lua/execute.h"
 #include "box/sql_stmt_cache.h"
 #include "session.h"
@@ -176,10 +175,12 @@ sql_unprepare(uint32_t stmt_id)
  * @retval -1 Error.
  */
 static inline int
-sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region)
+sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region,
+	    uint64_t vdbe_max_steps)
 {
 	int rc, column_count = sql_column_count(stmt);
 	rmean_collect(rmean_box, IPROTO_EXECUTE, 1);
+	sql_set_vdbe_max_steps(stmt, vdbe_max_steps);
 	if (column_count > 0) {
 		/* Either ROW or DONE or ERROR. */
 		while ((rc = sql_step(stmt)) == SQL_ROW) {
@@ -200,7 +201,8 @@ sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region)
 int
 sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 		     uint32_t bind_count, struct port *port,
-		     struct region *region)
+		     struct region *region,
+		     uint64_t vdbe_max_steps)
 {
 
 	if (!session_check_stmt_id(current_session(), stmt_id)) {
@@ -219,7 +221,8 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 	if (sql_stmt_busy(stmt)) {
 		const char *sql_str = sql_stmt_query_str(stmt);
 		return sql_prepare_and_execute(sql_str, strlen(sql_str), bind,
-					       bind_count, port, region);
+					       bind_count, port, region,
+					       vdbe_max_steps);
 	}
 	/*
 	 * Clear all set from previous execution cycle values to be bound and
@@ -232,7 +235,7 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 	enum sql_serialization_format format = sql_column_count(stmt) > 0 ?
 					       DQL_EXECUTE : DML_EXECUTE;
 	port_sql_create(port, stmt, format, false);
-	if (sql_execute(stmt, port, region) != 0) {
+	if (sql_execute(stmt, port, region, vdbe_max_steps) != 0) {
 		port_destroy(port);
 		sql_stmt_reset(stmt);
 		return -1;
@@ -245,7 +248,8 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 int
 sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 			uint32_t bind_count, struct port *port,
-			struct region *region)
+			struct region *region,
+			uint64_t vdbe_max_steps)
 {
 	struct sql_stmt *stmt;
 	if (sql_stmt_compile(sql, len, NULL, &stmt, NULL) != 0)
@@ -255,7 +259,7 @@ sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 					   DQL_EXECUTE : DML_EXECUTE;
 	port_sql_create(port, stmt, format, true);
 	if (sql_bind(stmt, bind, bind_count) == 0 &&
-	    sql_execute(stmt, port, region) == 0)
+		sql_execute(stmt, port, region, vdbe_max_steps) == 0)
 		return 0;
 	port_destroy(port);
 	return -1;

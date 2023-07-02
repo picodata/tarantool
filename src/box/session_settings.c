@@ -51,6 +51,7 @@ const char *session_setting_strs[SESSION_SETTING_COUNT] = {
 	"sql_select_debug",
 	"sql_seq_scan",
 	"sql_vdbe_debug",
+	"sql_vdbe_max_steps",
 };
 
 struct session_settings_index {

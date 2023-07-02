@@ -2506,7 +2506,8 @@ tx_process_sql(struct cmsg *m)
 			sql = msg->sql.sql_text;
 			sql = mp_decode_str(&sql, &len);
 			if (sql_prepare_and_execute(sql, len, bind, bind_count,
-						    &port, &fiber()->gc) != 0)
+						    &port, &fiber()->gc,
+						    current_session()->vdbe_max_steps) != 0)
 				goto error;
 		} else {
 			assert(msg->sql.sql_text == NULL);
@@ -2514,7 +2515,8 @@ tx_process_sql(struct cmsg *m)
 			sql = msg->sql.stmt_id;
 			uint32_t stmt_id = mp_decode_uint(&sql);
 			if (sql_execute_prepared(stmt_id, bind, bind_count,
-						 &port, &fiber()->gc) != 0)
+						 &port, &fiber()->gc,
+						 current_session()->vdbe_max_steps) != 0)
 				goto error;
 		}
 	} else {

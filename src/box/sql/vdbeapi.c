@@ -170,6 +170,14 @@ sql_step(sql_stmt * pStmt)
 	return sqlStep(v);
 }
 
+void
+sql_set_vdbe_max_steps(sql_stmt *pStmt, uint64_t vdbe_max_steps)
+{
+	Vdbe *v = (Vdbe *) pStmt;	/* the prepared statement */
+	assert(v != NULL);
+	v->vdbe_max_steps = vdbe_max_steps;
+}
+
 /*
  * Return the number of columns in the result set for the statement pStmt.
  */
