@@ -11,6 +11,7 @@
 #include "mpstream/mpstream.h"
 #include "box/sql/vdbeInt.h"
 #include "box/sql/port.h"
+#include "box/session.h"
 
 /**
  * Serialize a description of the prepared statement.
@@ -103,18 +104,20 @@ lbox_execute_prepared(struct lua_State *L)
 {
 	int top = lua_gettop(L);
 
-	if ((top != 1 && top != 2) || ! lua_istable(L, 1))
-		return luaL_error(L, "Usage: statement:execute([, params])");
+	if ((top != 1 && top != 2 && top != 3) || !lua_istable(L, 1))
+		return luaL_error(L, "Usage: statement:execute([, "
+				     "params[, options]])");
 	lua_getfield(L, 1, "stmt_id");
 	if (!lua_isnumber(L, -1))
 		return luaL_error(L, "Query id is expected to be numeric");
 	lua_remove(L, 1);
-	if (top == 2) {
+	if (top >= 2) {
 		/*
 		 * Stack state (before remove operation):
 		 * 1 Prepared statement object (Lua table)
 		 * 2 Bindings (Lua table)
-		 * 3 Statement ID(fetched from PS table) - top of stack
+		 * 3 Options (Lua table)
+		 * 4 Statement ID(fetched from PS table) - top of stack
 		 *
 		 * We should make it suitable to pass arguments to
 		 * lbox_execute(), i.e. after manipulations stack
@@ -124,10 +127,14 @@ lbox_execute_prepared(struct lua_State *L)
 		 * Since there's no swap operation, we firstly remove
 		 * PS object, then copy table of values to be bound to
 		 * the top of stack (push), and finally remove original
-		 * bindings from stack.
+		 * bindings from stack. The goes if Options are present
 		 */
 		lua_pushvalue(L, 1);
 		lua_remove(L, 1);
+		if (top == 3) {
+			lua_pushvalue(L, 1);
+			lua_remove(L, 1);
+		}
 	}
 	return lbox_execute(L);
 }
@@ -278,26 +285,29 @@ sql_execute_prepared_ext(uint32_t stmt_id, const struct sql_bind *bind,
 			 uint32_t bind_count, struct port *port)
 {
 	return sql_execute_prepared(stmt_id, bind, bind_count, port,
-								&fiber()->gc);
+				    &fiber()->gc,
+				    current_session()->vdbe_max_steps);
 }
 
 /**
- * Decode a single bind column from Lua stack.
+ * Decode a single bind column or option from Lua stack.
  *
  * @param L Lua stack.
  * @param[out] bind Bind to decode to.
  * @param idx Position of table with bind columns on Lua stack.
  * @param i Ordinal bind number.
+ * @param is_option whether the option is being decoded.
  *
  * @retval  0 Success.
  * @retval -1 Memory or client error.
  */
 static inline int
-lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i)
+lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i, bool is_option)
 {
 	struct luaL_field field;
 	struct region *region = &fiber()->gc;
 	char *buf;
+	int old_stack_sz = lua_gettop(L);
 	lua_rawgeti(L, idx, i + 1);
 	bind->pos = i + 1;
 	if (lua_istable(L, -1)) {
@@ -330,6 +340,9 @@ lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i)
 		memcpy(buf, bind->name, name_len + 1);
 		bind->name = buf;
 		bind->name_len = name_len;
+	} else if (is_option) {
+		diag_set(ClientError, ER_ILLEGAL_OPTIONS_FORMAT);
+		return -1;
 	} else {
 		bind->name = NULL;
 		bind->name_len = 0;
@@ -418,13 +431,13 @@ lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i)
 	default:
 		unreachable();
 	}
-	lua_pop(L, lua_gettop(L) - idx);
+	lua_pop(L, lua_gettop(L) - old_stack_sz);
 	return 0;
 }
 
 int
 lua_sql_bind_list_decode(struct lua_State *L, struct sql_bind **out_bind,
-			 int idx)
+			 int idx, bool is_option)
 {
 	assert(out_bind != NULL);
 	uint32_t bind_count = lua_objlen(L, idx);
@@ -445,7 +458,7 @@ lua_sql_bind_list_decode(struct lua_State *L, struct sql_bind **out_bind,
 	struct sql_bind *bind = xregion_alloc_array(region, typeof(bind[0]),
 						    bind_count);
 	for (uint32_t i = 0; i < bind_count; ++i) {
-		if (lua_sql_bind_decode(L, &bind[i], idx, i) != 0) {
+		if (lua_sql_bind_decode(L, &bind[i], idx, i, is_option) != 0) {
 			region_truncate(region, used);
 			return -1;
 		}
@@ -457,26 +470,56 @@ lua_sql_bind_list_decode(struct lua_State *L, struct sql_bind **out_bind,
 static int
 lbox_execute(struct lua_State *L)
 {
-	struct sql_bind *bind = NULL;
+	struct sql_bind *bind = NULL, *options = NULL;
 	int bind_count = 0;
+	uint64_t vdbe_max_steps = current_session()->vdbe_max_steps;
 	size_t length;
 	struct port port;
 	int top = lua_gettop(L);
 
-	if ((top != 1 && top != 2) || ! lua_isstring(L, 1))
-		return luaL_error(L, "Usage: box.execute(sqlstring[, params]) "
-				  "or box.execute(stmt_id[, params])");
+	if ((top != 1 && top != 2 && top != 3) || !lua_isstring(L, 1))
+		return luaL_error(L, "Usage: box.execute(sqlstring"
+				     "[, params[, options]]) "
+				  "or box.execute(stmt_id[, params[, options]])");
 
 	if (lua_type(L, 1) != LUA_TSTRING && lua_tointeger(L, 1) < 0)
 		return luaL_error(L, "Statement id can't be negative");
+	if (top >= 2 && !lua_istable(L, 2))
+		return luaL_error(L, "Second argument must be a table");
+	if (top == 3 && !lua_istable(L, 3))
+		return luaL_error(L, "Third argument must be a table");
 
 	size_t region_svp = region_used(&fiber()->gc);
-	if (top == 2) {
-		if (! lua_istable(L, 2))
-			return luaL_error(L, "Second argument must be a table");
-		bind_count = lua_sql_bind_list_decode(L, &bind, 2);
+	if (top >= 2) {
+		bind_count = lua_sql_bind_list_decode(L, &bind, 2, false);
 		if (bind_count < 0)
 			return luaT_push_nil_and_error(L);
+	}
+	if (top == 3) {
+		int option_count = lua_sql_bind_list_decode(L,
+							    &options, 3, true);
+		if (option_count < 0)
+			goto error;
+		const char *option_name = "sql_vdbe_max_steps";
+		for (int i = 0; i < option_count; i++) {
+			/* Currently there exists only one option */
+			if (strcmp(options[i].name, option_name) == 0) {
+				if (options[i].type != MP_UINT) {
+					diag_set(ClientError,
+						 ER_ILLEGAL_OPTIONS,
+						 tt_sprintf("value of the "
+							    "%s option "
+							    "should be a non-negative integer.",
+							    option_name));
+					goto error;
+				}
+				vdbe_max_steps = options[i].u64;
+			} else {
+				diag_set(ClientError, ER_ILLEGAL_OPTIONS,
+					 options[i].name);
+				goto error;
+			}
+		}
 	}
 	/*
 	 * lua_isstring() returns true for numeric values as well,
@@ -485,13 +528,13 @@ lbox_execute(struct lua_State *L)
 	if (lua_type(L, 1) == LUA_TSTRING) {
 		const char *sql = lua_tolstring(L, 1, &length);
 		if (sql_prepare_and_execute(sql, length, bind, bind_count, &port,
-					    &fiber()->gc) != 0)
+					    &fiber()->gc, vdbe_max_steps) != 0)
 			goto error;
 	} else {
 		assert(lua_type(L, 1) == LUA_TNUMBER);
 		lua_Integer query_id = lua_tointeger(L, 1);
 		if (sql_execute_prepared(query_id, bind, bind_count, &port,
-					 &fiber()->gc) != 0)
+					 &fiber()->gc, vdbe_max_steps) != 0)
 			goto error;
 	}
 	port_dump_lua(&port, L, false);
