@@ -729,6 +729,9 @@ test:do_execsql_test(
         CREATE TABLE t10(id  INT primary key, a INT , b INT );
     ]])
 
+-- disable sql execution limit
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
+
 test:do_test(
     "sort-13.1",
     function()
@@ -791,6 +794,8 @@ box.internal.sql_create_function("cksum", cksum)
             UPDATE t11 SET b = cksum(a);
         ]])
 
+    -- restore exec limit to default value
+    test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
     -- Legacy from the original code. Must be replaced with analogue
     -- functions from box.
     local tn = nil
