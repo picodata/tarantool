@@ -319,7 +319,9 @@ struct errcode_record {
 	/*264 */_(ER_NIL_UUID,			"Nil UUID is reserved and can't be used in replication") \
 	/*265 */_(ER_WRONG_FUNCTION_OPTIONS,	"Wrong function options: %s") \
 	/*266 */_(ER_MISSING_SYSTEM_SPACES,	"Snapshot has no system spaces") \
-
+	/*267 */_(ER_EXCEEDED_VDBE_MAX_STEPS,	"Reached a limit on max executed vdbe opcodes. Limit: %u") \
+	/*268 */_(ER_ILLEGAL_OPTIONS,		"Illegal options: %s")   \
+	/*269 */_(ER_ILLEGAL_OPTIONS_FORMAT,    "Each option in third argument must be a table containing only one key value pair")   \
 /*
  * !IMPORTANT! Please follow instructions at start of the file
  * when adding new errors.

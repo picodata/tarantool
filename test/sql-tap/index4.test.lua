@@ -18,6 +18,7 @@ test:plan(7)
 --
 -- ["set","testdir",[["file","dirname",["argv0"]]]]
 -- ["source",[["testdir"],"\/tester.tcl"]]
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_execsql_test(
     1.1,
     [[
@@ -42,6 +43,8 @@ test:do_execsql_test(
           INSERT INTO t1 SELECT randomblob(102) FROM t1;     -- 65536
         COMMIT;
     ]])
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 test:do_execsql_test(
     1.2,

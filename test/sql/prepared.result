@@ -479,8 +479,16 @@ s = prepare([[WITH RECURSIVE \
  | ---
  | ...
 
+execute([[SET SESSION "sql_vdbe_max_steps" = 0;]])
+ | ---
+ | - row_count: 1
+ | ...
 res = execute(s.stmt_id)
  | ---
+ | ...
+execute(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
+ | ---
+ | - row_count: 1
  | ...
 res.metadata
  | ---

@@ -30,6 +30,7 @@ local engine = test:engine()
 local time_quota =
     engine == 'memtx' and 25 or (
     engine == 'vinyl' and 50 or 0) -- seconds
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_test(
     100,
     function()
@@ -51,6 +52,8 @@ test:do_test(
         100000, 5000050000, 50000, true
         -- </100>
     })
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 test:finish_test()
 
