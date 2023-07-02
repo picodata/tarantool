@@ -179,7 +179,9 @@ s = prepare([[WITH RECURSIVE \
                               FROM m2 GROUP BY cy) \
                   SELECT group_concat(CAST(TRIM(TRAILING FROM t) AS VARBINARY), x'0a') FROM a;]])
 
+execute([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 res = execute(s.stmt_id)
+execute(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 res.metadata
 unprepare(s.stmt_id)
 

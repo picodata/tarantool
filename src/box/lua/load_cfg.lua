@@ -198,6 +198,7 @@ local default_cfg = {
     feedback_metrics_limit = ifdef_feedback(1024 * 1024),
     net_msg_max           = 768,
     sql_cache_size        = 5 * 1024 * 1024,
+    sql_vdbe_max_steps    = 45000,
     txn_timeout           = 365 * 100 * 86400,
     txn_isolation         = "best-effort",
 
@@ -390,6 +391,7 @@ local template_cfg = {
     feedback_metrics_limit = ifdef_feedback('number'),
     net_msg_max           = 'number',
     sql_cache_size        = 'number',
+    sql_vdbe_max_steps    = 'number',
     txn_timeout           = 'number',
 
     metrics = 'table',

@@ -114,6 +114,8 @@ struct session {
 	/** SQL Connection flag for current user session */
 	uint32_t sql_flags;
 	enum session_type type;
+	/** Max number of Vdbe commands for query. */
+	uint64_t vdbe_max_steps;
 	/** Session virtual methods. */
 	const struct session_vtab *vtab;
 	/** Session metadata. */

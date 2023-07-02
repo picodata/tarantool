@@ -21,6 +21,7 @@ test:plan(2)
 -- ["source",[["testdir"],"\/tester.tcl"]]
 -- Create a table that contains a large number of rows.
 --
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_execsql_test(
     "delete3-1.1",
     [[
@@ -64,6 +65,8 @@ test:do_execsql_test(
         262144
         -- </delete3-1.2>
     })
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 --integrity_check delete3-1.3
 test:finish_test()
