@@ -47,6 +47,7 @@ test:do_test(
         end
         sql = sql .. "END;"
         test:execsql(sql)
+        test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
         return test:execsql [[
             INSERT INTO t1 VALUES(5);
             SELECT COUNT(*) FROM t2;
@@ -56,6 +57,8 @@ test:do_test(
         nStatement
         -- </trigger8-1.1>
     })
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 -- MUST_WORK_TEST
 test:finish_test()
