@@ -63,7 +63,7 @@ port_sql_dump_lua(struct port *port, struct lua_State *L, bool is_flat);
  */
 int
 lua_sql_bind_list_decode(struct lua_State *L, struct sql_bind **out_bind,
-			 int idx);
+			 int idx, bool is_option);
 
 void
 box_lua_sql_init(struct lua_State *L);

@@ -370,7 +370,6 @@ int sqlVdbeExec(Vdbe *p)
 	/* The database */
 	struct sql *db = sql_get();
 	int iCompare = 0;          /* Result of last comparison */
-	unsigned nVmStep = 0;      /* Number of virtual machine steps */
 	Mem *aMem = p->aMem;       /* Copy of p->aMem */
 	Mem *pIn1 = 0;             /* 1st input operand */
 	Mem *pIn2 = 0;             /* 2nd input operand */
@@ -416,7 +415,13 @@ int sqlVdbeExec(Vdbe *p)
 		assert(rc == 0);
 
 		assert(pOp>=aOp && pOp<&aOp[p->nOp]);
-		nVmStep++;
+		p->step_count++;
+		if (p->vdbe_max_steps > 0 &&
+		    p->vdbe_max_steps < p->step_count) {
+			diag_set(ClientError, ER_EXCEEDED_VDBE_MAX_STEPS,
+				 p->vdbe_max_steps);
+			goto abort_due_to_error;
+		}
 
 		/* Only allow tracing if SQL_DEBUG is defined.
 		 */
@@ -4379,6 +4384,17 @@ case OP_SetSession: {
 			goto abort_due_to_error;
 		break;
 	}
+	case FIELD_TYPE_UNSIGNED: {
+		if (!mem_is_uint(pIn1))
+			goto invalid_type;
+		uint64_t value = pIn1->u.u;
+		size_t size = mp_sizeof_uint(value);
+		char *mp_value = (char *)static_alloc(size);
+		mp_encode_uint(mp_value, value);
+		if (setting->set(sid, mp_value) != 0)
+			goto abort_due_to_error;
+		break;
+	}
 	default:
 	invalid_type:
 		diag_set(ClientError, ER_SESSION_SETTING_INVALID_VALUE,
@@ -4448,7 +4464,6 @@ abort_due_to_error:
 
 	/* This is the only way out of this procedure. */
 vdbe_return:
-	p->aCounter[SQL_STMTSTATUS_VM_STEP] += (int)nVmStep;
 	assert(rc == 0 || rc == -1 || rc == SQL_ROW || rc == SQL_DONE);
 	return rc;
 

@@ -258,7 +258,6 @@ static const int aHardLimit[] = {
 	SQL_MAX_COLUMN,
 	SQL_MAX_EXPR_DEPTH,
 	SQL_MAX_COMPOUND_SELECT,
-	SQL_MAX_VDBE_OP,
 	SQL_MAX_FUNCTION_ARG,
 	SQL_MAX_ATTACHED,
 	SQL_MAX_LIKE_PATTERN_LENGTH,
@@ -279,9 +278,6 @@ static const int aHardLimit[] = {
 #endif
 #if SQL_MAX_COMPOUND_SELECT<2
 #error SQL_MAX_COMPOUND_SELECT must be at least 2
-#endif
-#if SQL_MAX_VDBE_OP<40
-#error SQL_MAX_VDBE_OP must be at least 40
 #endif
 #if SQL_MAX_FUNCTION_ARG<0 || SQL_MAX_FUNCTION_ARG>127
 #error SQL_MAX_FUNCTION_ARG must be between 0 and 127

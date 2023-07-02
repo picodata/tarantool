@@ -90,6 +90,7 @@ for _, zIndex in ipairs(queries) do
             4096
         })
 
+    test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
     test:do_execsql_test(
         "count-1."..iTest..".5",
         [[
@@ -103,6 +104,8 @@ for _, zIndex in ipairs(queries) do
         ]], {
             65536
         })
+    -- restore exec limit to default value
+    test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 end
 local function uses_op_count(sql)

@@ -122,12 +122,10 @@ enum {
 #endif
 
 /*
- * The maximum number of opcodes in a VDBE program.
- * Not currently enforced.
+ * The default number of opcodes Vdbe is allowed
+ * to execute.
  */
-#ifndef SQL_MAX_VDBE_OP
-#define SQL_MAX_VDBE_OP 25000
-#endif
+extern uint64_t default_vdbe_max_steps;
 
 /*
  * The maximum number of arguments to an SQL function.
