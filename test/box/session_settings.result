@@ -61,6 +61,7 @@ s:select()
  |   - ['sql_select_debug', false]
  |   - ['sql_seq_scan', true]
  |   - ['sql_vdbe_debug', false]
+ |   - ['sql_vdbe_max_steps', 45000]
  | ...
 
 t = box.schema.space.create('settings', {format = s:format()})

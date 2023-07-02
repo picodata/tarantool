@@ -96,6 +96,7 @@
 #include "mp_util.h"
 #include "small/static.h"
 #include "memory.h"
+#include "sqlLimit.h"
 
 static char status[64] = "unconfigured";
 
@@ -252,6 +253,9 @@ static char box_feedback_host[BOX_FEEDBACK_HOST_MAX];
 
 /** Whether sending crash info to feedback URL is enabled. */
 static bool box_feedback_crash_enabled;
+
+/** Default limit for the number of executed VDBE opcodes. */
+uint64_t default_vdbe_max_steps = 45000;
 
 static int
 box_run_on_recovery_state(enum box_recovery_state state)
@@ -1638,6 +1642,20 @@ box_check_sql_cache_size(int size)
 	return 0;
 }
 
+/**
+ * Check sql_vdbe_max_steps cfg option value
+ */
+static int
+box_check_sql_vdbe_max_steps(int steps)
+{
+	if (steps < 0) {
+		diag_set(ClientError, ER_CFG, "sql_vdbe_max_steps",
+			 "must be non-negative");
+		return -1;
+	}
+	return 0;
+}
+
 static int
 box_check_allocator(void)
 {
@@ -1645,7 +1663,7 @@ box_check_allocator(void)
 	if (strcmp(allocator, "small") && strcmp(allocator, "system")) {
 		diag_set(ClientError, ER_CFG, "memtx_allocator",
 			 tt_sprintf("must be small or system, "
-				    "but was set to %s", allocator));
+					"but was set to %s", allocator));
 		return -1;
 	}
 	return 0;
@@ -1816,6 +1834,8 @@ box_check_config(void)
 	if (box_check_iproto_options() != 0)
 		diag_raise();
 	if (box_check_sql_cache_size(cfg_geti("sql_cache_size")) != 0)
+		diag_raise();
+	if (box_check_sql_vdbe_max_steps(cfg_geti("sql_vdbe_max_steps")) != 0)
 		diag_raise();
 	if (box_check_txn_timeout() < 0)
 		diag_raise();
@@ -2998,6 +3018,17 @@ box_set_prepared_stmt_cache_size(void)
 		return -1;
 	if (sql_stmt_cache_set_size(cache_sz) != 0)
 		return -1;
+	return 0;
+}
+
+int
+box_set_vdbe_max_steps(void)
+{
+	int new_limit = cfg_geti("sql_vdbe_max_steps");
+	if (box_check_sql_vdbe_max_steps(new_limit) != 0)
+		return -1;
+	current_session()->vdbe_max_steps = new_limit;
+	default_vdbe_max_steps = new_limit;
 	return 0;
 }
 
@@ -5053,6 +5084,8 @@ box_cfg_xc(void)
 	box_check_replicaset_uuid(&replicaset_uuid);
 
 	if (box_set_prepared_stmt_cache_size() != 0)
+		diag_raise();
+	if (box_set_vdbe_max_steps() != 0)
 		diag_raise();
 	box_set_net_msg_max();
 	box_set_readahead();

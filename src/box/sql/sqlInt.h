@@ -296,11 +296,10 @@ struct sql_vfs {
 #define SQL_LIMIT_COLUMN                    2
 #define SQL_LIMIT_EXPR_DEPTH                3
 #define SQL_LIMIT_COMPOUND_SELECT           4
-#define SQL_LIMIT_VDBE_OP                   5
-#define SQL_LIMIT_FUNCTION_ARG              6
-#define SQL_LIMIT_ATTACHED                  7
-#define SQL_LIMIT_LIKE_PATTERN_LENGTH       8
-#define SQL_LIMIT_TRIGGER_DEPTH             9
+#define SQL_LIMIT_FUNCTION_ARG              5
+#define SQL_LIMIT_ATTACHED                  6
+#define SQL_LIMIT_LIKE_PATTERN_LENGTH       7
+#define SQL_LIMIT_TRIGGER_DEPTH             8
 
 struct tt_uuid;
 struct sql_key_info;
@@ -349,6 +348,13 @@ sql_stmt_compile(const char *sql, int bytes_count, struct Vdbe *re_prepared,
 
 int
 sql_step(sql_stmt *);
+
+/**
+ * Set vdbe_max_steps limit before execution of
+ * Vdbe program.
+ */
+void
+sql_set_vdbe_max_steps(sql_stmt *, uint64_t);
 
 int
 sql_column_bytes16(sql_stmt *, int iCol);
@@ -479,7 +485,6 @@ sql_vfs_register(sql_vfs *, int makeDflt);
 #define SQL_STMTSTATUS_FULLSCAN_STEP     1
 #define SQL_STMTSTATUS_SORT              2
 #define SQL_STMTSTATUS_AUTOINDEX         3
-#define SQL_STMTSTATUS_VM_STEP           4
 
 /** Unbind all parameters of given prepared statement. */
 void

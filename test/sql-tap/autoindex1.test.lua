@@ -36,6 +36,7 @@ test:do_eqp_test(
         {1,0,0,"SEARCH TABLE T2 USING EPHEMERAL INDEX (C=?) (~20 rows)"}
     })
 
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 local result = test:execsql([[SELECT b, (SELECT d FROM t2 WHERE c = a) FROM t1;]])
 
 test:do_eqp_test(
@@ -50,6 +51,8 @@ test:do_execsql_test(
     "autoindex-1.3", [[
         SELECT b, d FROM t1 JOIN t2 ON a = c ORDER BY b;
     ]], result)
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 test:do_eqp_test(
     "autoindex-1.4", [[
@@ -59,10 +62,13 @@ test:do_eqp_test(
         {0,1,1,"SEARCH TABLE T2 USING EPHEMERAL INDEX (C=?) (~20 rows)"}
     })
 
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_execsql_test(
     "autoindex-1.5", [[
         SELECT b, d FROM t1 CROSS JOIN t2 ON (c = a);
     ]], result)
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 test:execsql([[
     CREATE TABLE t3(i INT PRIMARY KEY, a INT, b INT);
@@ -76,6 +82,7 @@ test:execsql([[
 --
 for i = 1, 10240 do test:execsql("INSERT INTO t3 VALUES ("..i..", "..i..", "..(i + 1)..");") end
 
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_execsql_test(
     "autoindex-1.6", [[
         SELECT count(*)
@@ -92,6 +99,8 @@ test:do_execsql_test(
     ]], {
         10231
     })
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]], box.cfg.sql_vdbe_max_steps))
 
 test:do_eqp_test(
     "autoindex-1.7", [[

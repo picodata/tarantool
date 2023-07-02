@@ -294,7 +294,7 @@ struct Vdbe {
 	 * does not use external resources other than bind variables.
 	 */
 	bft is_sandboxed : 1;
-	u32 aCounter[5];	/* Counters used by sql_stmt_status() */
+	u32 aCounter[4];	/* Counters used by sql_stmt_status() */
 	char *zSql;		/* Text of the SQL statement that generated this */
 	void *pFree;		/* Free this when deleting the vdbe */
 	VdbeFrame *pFrame;	/* Parent frame */
@@ -303,6 +303,10 @@ struct Vdbe {
 	SubProgram *pProgram;	/* Linked list of all sub-programs used by VM */
 	/** Parser flags with which this object was built. */
 	uint32_t sql_flags;
+	/** Limit for maximum vdbe opcodes to execute. */
+	uint64_t vdbe_max_steps;
+	/** The number of opcodes that were executed for current program */
+	uint64_t step_count;
 	/* Anonymous savepoint for aborts only */
 	struct txn_savepoint *anonymous_savepoint;
 };
