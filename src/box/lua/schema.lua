@@ -3205,10 +3205,14 @@ box.schema.user.password = function(password, name)
     return internal.prepare_auth(box.cfg.auth_type, password, name)
 end
 
-local function prepare_auth_list(password, name)
+local function prepare_auth_list_needs_password(auth_type)
+    return internal.prepare_auth_needs_password(auth_type)
+end
+
+local function prepare_auth_list(auth_type, password, name)
     return {
-        [box.cfg.auth_type] =
-            internal.prepare_auth(box.cfg.auth_type, password, name)
+        [auth_type] =
+            internal.prepare_auth(auth_type, password, name)
     }
 end
 
@@ -3228,9 +3232,11 @@ end
 
 local function chpasswd(uid, new_password, name)
     local _user = box.space[box.schema.USER_ID]
+    local auth_type = box.cfg.auth_type
+    local auth_list = prepare_auth_list(auth_type, new_password, name)
     local auth_history = prepare_auth_history(uid)
     check_password(new_password, auth_history)
-    _user:update({uid}, {{'=', 5, prepare_auth_list(new_password, name)},
+    _user:update({uid}, {{'=', 5, auth_list},
                          {'=', 6, auth_history},
                          {'=', 7, math.floor(fiber.time())}})
 end
@@ -3257,17 +3263,25 @@ end
 box.schema.user.create = function(name, opts)
     local uid = user_or_role_resolve(name)
     opts = opts or {}
-    check_param_table(opts, { password = 'string', if_not_exists = 'boolean' })
+    check_param_table(opts, {auth_type = 'string',
+                             password = 'string',
+                             if_not_exists = 'boolean'})
     if uid then
         if not opts.if_not_exists then
             box.error(box.error.USER_EXISTS, name)
         end
         return
     end
+    local auth_type = opts.auth_type or box.cfg.auth_type
     local auth_list
-    if opts.password then
+    if not prepare_auth_list_needs_password(auth_type) then
+        if opts.password then
+            log.warn(auth_type .. " doesn't need password")
+        end
+        auth_list = prepare_auth_list(auth_type, '', name)
+    elseif opts.password then
         check_password(opts.password)
-        auth_list = prepare_auth_list(opts.password, name)
+        auth_list = prepare_auth_list(auth_type, opts.password, name)
     else
         auth_list = setmap({})
     end
