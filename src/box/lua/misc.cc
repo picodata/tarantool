@@ -237,6 +237,28 @@ lbox_generate_space_id(lua_State *L)
 /** {{{ Helper that generates user auth data. **/
 
 /**
+ * Takes authentication method name (e.g. 'chap-sha1').
+ * Returns true if password is needed to produce auth data, false otherwise.
+ * Raises Lua error if the specified authentication method doesn't exist.
+ */
+static int
+lbox_prepare_auth_needs_password(lua_State *L)
+{
+	size_t method_name_len;
+	const char *method_name = luaL_checklstring(L, 1, &method_name_len);
+	const struct auth_method *method = auth_method_by_name(method_name,
+							       method_name_len);
+	if (method == NULL) {
+		diag_set(ClientError, ER_UNKNOWN_AUTH_METHOD,
+			 tt_cstr(method_name, method_name_len));
+		return luaT_error(L);
+	}
+	int pwdless = method->flags & AUTH_METHOD_PASSWORDLESS_DATA_PREPARE;
+	lua_pushboolean(L, !pwdless);
+	return 1;
+}
+
+/**
  * Takes authentication method name (e.g. 'chap-sha1'), password and user name.
  * Returns authentication data that can be stored in the _user space.
  * Raises Lua error if the specified authentication method doesn't exist.
@@ -507,6 +529,7 @@ void
 box_lua_misc_init(struct lua_State *L)
 {
 	static const struct luaL_Reg boxlib_internal[] = {
+		{"prepare_auth_needs_password", lbox_prepare_auth_needs_password},
 		{"prepare_auth", lbox_prepare_auth},
 		{"select", lbox_select},
 		{"new_tuple_format", lbox_tuple_format_new},
