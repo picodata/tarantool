@@ -53,6 +53,12 @@ enum auth_method_flag {
 	 * communication channel is encrypted (e.g. with SSL/TLS).
 	 */
 	AUTH_METHOD_REQUIRES_ENCRYPTION = 1 << 0,
+	/**
+	 * Set if the authentication method does not need
+	 * password in auth_method::auth_data_prepare.
+	 * This is opt-in because most methods require password.
+	 */
+	AUTH_METHOD_PASSWORDLESS_DATA_PREPARE = 1 << 1,
 };
 
 /**
