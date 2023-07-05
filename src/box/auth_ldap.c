@@ -292,7 +292,7 @@ auth_ldap_new(void)
 {
 	struct auth_method *method = xmalloc(sizeof(*method));
 	method->name = AUTH_LDAP_NAME;
-	method->flags = 0;
+	method->flags = AUTH_METHOD_PASSWORDLESS_DATA_PREPARE;
 	method->auth_method_delete = auth_ldap_delete;
 	method->auth_data_prepare = auth_ldap_data_prepare;
 	method->auth_request_prepare = auth_ldap_request_prepare;
