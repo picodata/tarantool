@@ -3237,24 +3237,25 @@ sql_session_setting_get(int id, const char **mp_pair, const char **mp_pair_end)
 	uint32_t mask = opt->mask;
 	const char *name = session_setting_strs[id];
 	size_t name_len = strlen(name);
-	size_t engine_len;
+	size_t engine_len = 0;
 	uint64_t vdbe_max_steps = session->vdbe_max_steps;
-	const char *engine;
+	const char *engine = NULL;
 	size_t size = mp_sizeof_array(2) + mp_sizeof_str(name_len);
 	/*
 	 * Currently, SQL session settings are of a boolean, unsigned or
 	 * string type.
 	 */
 	bool is_bool = opt->field_type == FIELD_TYPE_BOOLEAN;
+	bool is_str = opt->field_type == FIELD_TYPE_STRING;
 	if (is_bool) {
 		size += mp_sizeof_bool(true);
-	} else if (opt->field_type == FIELD_TYPE_UNSIGNED) {
-		size += mp_sizeof_uint(vdbe_max_steps);
-	} else {
+	} else if (is_str) {
 		assert(id == SESSION_SETTING_SQL_DEFAULT_ENGINE);
 		engine = sql_storage_engine_strs[session->sql_default_engine];
 		engine_len = strlen(engine);
 		size += mp_sizeof_str(engine_len);
+	} else {
+		size += mp_sizeof_uint(vdbe_max_steps);
 	}
 
 	char *pos = static_alloc(size);
@@ -3263,10 +3264,10 @@ sql_session_setting_get(int id, const char **mp_pair, const char **mp_pair_end)
 	pos_end = mp_encode_str(pos_end, name, name_len);
 	if (is_bool)
 		pos_end = mp_encode_bool(pos_end, (flags & mask) == mask);
-	else if (opt->field_type == FIELD_TYPE_UNSIGNED)
-		pos_end = mp_encode_uint(pos_end, vdbe_max_steps);
-	else
+	else if (is_str)
 		pos_end = mp_encode_str(pos_end, engine, engine_len);
+	else
+		pos_end = mp_encode_uint(pos_end, vdbe_max_steps);
 	*mp_pair = pos;
 	*mp_pair_end = pos_end;
 }
