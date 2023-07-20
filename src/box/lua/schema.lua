@@ -3201,6 +3201,7 @@ end
 box.schema.user = {}
 
 box.schema.user.password = function(password, name)
+    name = name or box.session.user()
     return internal.prepare_auth(box.cfg.auth_type, password, name)
 end
 
