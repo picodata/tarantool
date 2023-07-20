@@ -81,7 +81,11 @@ void
 md5_encrypt(const char *password, size_t password_len,
 	    const char *salt, size_t salt_len, char *buf)
 {
-	assert(password_len + salt_len > 0);
+	if (password_len + salt_len == 0) {
+		memcpy(buf, "md5", strlen("md5"));
+		md5_hash("", 0, buf + strlen("md5"));
+		return;
+	}
 
 	char *crypt_buf = xmalloc(password_len + salt_len);
 	/*
