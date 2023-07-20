@@ -15,7 +15,8 @@ end)
 g.test_box_password_without_username_argument = function()
     t.assert(g.server:exec(function()
         box.cfg{auth_type='chap-sha1'}
-
+        t.assert_equals(box.schema.user.password("", ""),
+                        'vhvewKp0tNyweZQ+cFKAlsyphfg=')
         t.assert_equals(box.schema.user.password("qwerty", box.session.user()),
                         'qhQg8YLoi55fh09vvnRZKR6PRgE=')
         t.assert_equals(box.schema.user.password("qwerty"),
@@ -24,7 +25,10 @@ g.test_box_password_without_username_argument = function()
         --- so the passwords must be equal
         t.assert_equals(box.schema.user.password("qwerty"),
                         box.schema.user.password("qwerty", "???"))
+
         box.cfg{auth_type='md5'}
+        t.assert_equals(box.schema.user.password("", ""),
+                        'md5d41d8cd98f00b204e9800998ecf8427e')
         t.assert_equals(box.schema.user.password("qwerty", ""),
                         'md5d8578edf8458ce06fbc5bb76a58c5ca4')
         t.assert_equals(box.schema.user.password("qwerty"),
