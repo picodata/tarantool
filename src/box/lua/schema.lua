@@ -3242,7 +3242,8 @@ box.schema.user.passwd = function(name, new_password)
     if new_password == nil then
         -- change password for current user
         new_password = name
-        box.session.su('admin', chpasswd, session.uid(), new_password, name)
+        box.session.su('admin', chpasswd, session.uid(), new_password,
+                       session.user())
     else
         -- change password for other user
         local uid = user_resolve(name)
