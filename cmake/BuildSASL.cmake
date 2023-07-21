@@ -50,6 +50,7 @@ macro(sasl_build)
 
     ExternalProject_Get_Property(bundled-sasl install_dir)
     set(SASL_INSTALL_DIR ${install_dir})
+    unset(install_dir)
 
     # Unfortunately, we can't use find_library here,
     # since the package hasn't been built yet.
@@ -65,4 +66,10 @@ macro(sasl_build)
         ${SASL_INSTALL_DIR}/lib/sasl2/libplain.a
         ${SASL_INSTALL_DIR}/lib/sasl2/libscram.a
     )
+
+    ExternalProject_Add_Step(bundled-sasl byproducts
+        BYPRODUCTS ${SASL_LIBRARIES})
+
+    message(STATUS "Found SASL includes: ${SASL_INCLUDE_DIR}")
+    message(STATUS "Found SASL libraries: ${SASL_LIBRARIES}")
 endmacro()
