@@ -68,6 +68,7 @@ coverage:
       TEST_TIMEOUT: 420
       NO_OUTPUT_TIMEOUT: 440
     script:
+      - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk test-coverage
 
 .pack:

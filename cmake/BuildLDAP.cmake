@@ -45,6 +45,7 @@ macro(ldap_build)
 
     ExternalProject_Get_Property(bundled-ldap install_dir)
     set(LDAP_INSTALL_DIR ${install_dir})
+    unset(install_dir)
 
     # Unfortunately, we can't use find_library here,
     # since the package hasn't been built yet.
@@ -55,6 +56,9 @@ macro(ldap_build)
         ${LDAP_INSTALL_DIR}/lib/libldap.a
         ${LDAP_INSTALL_DIR}/lib/liblber.a
     )
+
+    ExternalProject_Add_Step(bundled-ldap byproducts
+        BYPRODUCTS ${LDAP_LIBRARIES})
 
     # On OS X we may also need to link libresolv.dylib.
     # However, note that newer OS X releases don't have that file;
@@ -69,4 +73,7 @@ macro(ldap_build)
             set(LDAP_LIBRARIES ${LDAP_LIBRARIES} ${RESOLV_LIBRARIES})
         endif()
     endif()
+
+    message(STATUS "Found LDAP includes: ${LDAP_INCLUDE_DIR}")
+    message(STATUS "Found LDAP libraries: ${LDAP_LIBRARIES}")
 endmacro()
