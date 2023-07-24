@@ -97,7 +97,13 @@ coio_ldap_check_password(va_list ap)
 	if (format_dn(dn_fmt, user, dn, sizeof(dn)) != 0)
 		goto cleanup;
 
-	/** Initialize the context, but don't connect just yet */
+	/**
+	 * Initialize the context, but don't connect just yet.
+	 * According to the documentation, the actual connection open
+	 * will occur when the first operation is attempted.
+	 * Previosly we used to call ldap_connect() after this,
+	 * but it's not available in libldap 2.4 (centos 7).
+	 */
 	ret = ldap_initialize(&ldp, url);
 	if (ret != LDAP_SUCCESS) {
 		say_error("failed to initialize LDAP connection: %s",
@@ -111,14 +117,6 @@ coio_ldap_check_password(va_list ap)
 	if (ret != LDAP_SUCCESS) {
 		say_error("failed to set LDAP connection option: %s",
 			  ldap_err2string(ret));
-		goto cleanup;
-	}
-
-	say_info("connecting to LDAP server at '%s'", url);
-	ret = ldap_connect(ldp);
-	if (ret != LDAP_SUCCESS) {
-		say_error("failed to connect to LDAP server at '%s': %s",
-			  url, ldap_err2string(ret));
 		goto cleanup;
 	}
 
