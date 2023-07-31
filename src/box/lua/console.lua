@@ -850,10 +850,18 @@ local function connect(uri, opts)
         error('Usage: console.connect("[login:password@][host:]port")')
     end
 
+    if opts.auth_type == nil and u.params ~= nil and
+       u.params.auth_type ~= nil then
+        opts.auth_type = u.params.auth_type[1]
+    end
+
     -- We don't know if the remote end is binary or Lua console so we first try
     -- to connect to it as binary using net.box and fall back on Lua console if
     -- it fails.
-    local remote = net_box.connect(uri, {connect_timeout = opts.timeout})
+    local remote = net_box.connect(uri, {
+        connect_timeout = opts.timeout,
+        auth_type = opts.auth_type,
+    })
     if remote.state == 'error' then
         local err = remote.error
         remote = nil
