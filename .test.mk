@@ -64,6 +64,7 @@ run-test: install-test-deps
 
 .PHONY: test-release
 test-release: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                             -DENABLE_GLAUTH_DOWNLOAD=ON \
                              -DENABLE_WERROR=ON \
                              -DTEST_BUILD=ON
 
@@ -82,6 +83,7 @@ test-release-asan: CMAKE_ENV = CC=clang-11 CXX=clang++-11
 # Experiments once again confirm the notorious quote that "640 Kb
 # ought to be enough for anybody".
 test-release-asan: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                                  -DENABLE_GLAUTH_DOWNLOAD=ON \
                                   -DENABLE_WERROR=ON \
                                   -DENABLE_ASAN=ON \
                                   -DENABLE_UB_SANITIZER=ON \
@@ -115,6 +117,7 @@ test-release-asan: build run-luajit-test run-test
 
 .PHONY: test-debug
 test-debug: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=Debug \
+                           -DENABLE_GLAUTH_DOWNLOAD=ON \
                            -DTEST_BUILD=ON
 test-debug: build run-luajit-test run-test
 
@@ -122,6 +125,7 @@ test-debug: build run-luajit-test run-test
 
 .PHONY: test-static
 test-static: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                            -DENABLE_GLAUTH_DOWNLOAD=ON \
                             -DENABLE_WERROR=ON \
                             -DBUILD_STATIC=ON \
                             -DTEST_BUILD=ON
@@ -132,7 +136,7 @@ test-static: build run-luajit-test run-test
 .PHONY: test-static-cmake
 test-static-cmake: SRC_DIR = ${STATIC_DIR}
 test-static-cmake: BUILD_DIR = ${STATIC_DIR}
-test-static-cmake: CMAKE_PARAMS = -DCMAKE_TARANTOOL_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DENABLE_WERROR=ON;-DTEST_BUILD=ON"
+test-static-cmake: CMAKE_PARAMS = -DCMAKE_TARANTOOL_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DENABLE_WERROR=ON;-DTEST_BUILD=ON;-DENABLE_GLAUTH_DOWNLOAD=ON"
 test-static-cmake: CTEST = true
 test-static-cmake: LUAJIT_TEST_BUILD_DIR = ${STATIC_BIN_DIR}
 test-static-cmake: TEST_RUN_PARAMS = --builddir ${PWD}/${STATIC_BIN_DIR}
@@ -143,6 +147,7 @@ test-static-cmake: build run-luajit-test run-test
 .PHONY: test-coverage
 test-coverage: CMAKE_PARAMS = -G Ninja \
                               -DCMAKE_BUILD_TYPE=Debug \
+                              -DENABLE_GLAUTH_DOWNLOAD=ON \
                               -DENABLE_GCOV=ON \
                               -DTEST_BUILD=ON
 test-coverage: TEST_RUN_PARAMS += --long
@@ -177,6 +182,7 @@ pretest-osx:
 
 .PHONY: test-osx-release
 test-osx-release: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                                 -DENABLE_GLAUTH_DOWNLOAD=ON \
                                  -DENABLE_WERROR=ON \
                                  -DTEST_BUILD=ON
 test-osx-release: prebuild-osx build run-luajit-test pretest-osx run-test
@@ -185,6 +191,7 @@ test-osx-release: prebuild-osx build run-luajit-test pretest-osx run-test
 
 .PHONY: test-osx-debug
 test-osx-debug: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=Debug \
+                               -DENABLE_GLAUTH_DOWNLOAD=ON \
                                -DTEST_BUILD=ON
 test-osx-debug: prebuild-osx build run-luajit-test pretest-osx run-test
 
@@ -193,7 +200,7 @@ test-osx-debug: prebuild-osx build run-luajit-test pretest-osx run-test
 .PHONY: test-osx-static-cmake
 test-osx-static-cmake: SRC_DIR = ${STATIC_DIR}
 test-osx-static-cmake: BUILD_DIR = ${STATIC_DIR}
-test-osx-static-cmake: CMAKE_PARAMS = -DCMAKE_TARANTOOL_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DENABLE_WERROR=ON;-DTEST_BUILD=ON"
+test-osx-static-cmake: CMAKE_PARAMS = -DCMAKE_TARANTOOL_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo;-DENABLE_WERROR=ON;-DTEST_BUILD=ON;-DENABLE_GLAUTH_DOWNLOAD=ON"
 test-osx-static-cmake: CTEST = true
 test-osx-static-cmake: LUAJIT_TEST_BUILD_DIR = ${STATIC_BIN_DIR}
 test-osx-static-cmake: TEST_RUN_PARAMS = --builddir ${PWD}/${STATIC_BIN_DIR}
@@ -212,6 +219,7 @@ prebuild-freebsd:
 
 .PHONY: test-freebsd-release
 test-freebsd-release: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                                     -DENABLE_GLAUTH_DOWNLOAD=ON \
                                      -DENABLE_WERROR=ON \
                                      -DTEST_BUILD=ON
 test-freebsd-release: prebuild-freebsd build run-luajit-test run-test
@@ -229,6 +237,7 @@ prebuild-jepsen:
 
 .PHONY: test-jepsen
 test-jepsen: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                            -DENABLE_GLAUTH_DOWNLOAD=ON \
                             -DENABLE_WERROR=ON \
                             -DWITH_JEPSEN=ON \
                             -DTEST_BUILD=ON
@@ -241,6 +250,7 @@ test-jepsen: configure prebuild-jepsen
 
 .PHONY: build-coverity
 build-coverity: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                               -DENABLE_GLAUTH_DOWNLOAD=ON \
                                -DENABLE_WERROR=ON \
                                -DTEST_BUILD=ON
 build-coverity: CMAKE_BUILD_ENV = PATH=${PATH}:/cov-analysis/bin cov-build --dir ${COVERITY_DIR}
