@@ -222,6 +222,8 @@ bool
 authenticate_password(const struct authenticator *auth,
 		      const char *password, int password_len, const char *user);
 
+/** \cond public */
+
 /**
  * Authenticates a user.
  *
@@ -242,6 +244,8 @@ authenticate_password(const struct authenticator *auth,
 int
 authenticate(const char *user_name, uint32_t user_name_len,
 	     const char *salt, const char *tuple);
+
+/** \endcond public */
 
 /**
  * Checks if an authentication method may be used over an IO stream.

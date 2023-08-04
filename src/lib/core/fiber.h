@@ -970,6 +970,8 @@ fiber_signal_reset(void);
 void
 fiber_set_name(struct fiber *fiber, const char *name);
 
+/** \cond public */
+
 /**
  * Set fiber name providing a length for it.
  * @param fiber Fiber to set name for.
@@ -978,6 +980,8 @@ fiber_set_name(struct fiber *fiber, const char *name);
  */
 void
 fiber_set_name_n(struct fiber *fiber, const char *name, uint32_t len);
+
+/** \endcond public */
 
 static inline const char *
 fiber_name(struct fiber *f)
