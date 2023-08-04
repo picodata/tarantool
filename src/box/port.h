@@ -107,6 +107,8 @@ void
 port_vdbemem_create(struct port *base, struct sql_value *mem,
 		    uint32_t mem_count);
 
+/** \cond public */
+
 struct port_c_entry {
 	struct port_c_entry *next;
 	union {
@@ -147,6 +149,8 @@ static_assert(sizeof(struct port_c) <= sizeof(struct port),
 /** Create a C port object. */
 void
 port_c_create(struct port *base);
+
+/** \endcond public */
 
 /** Append a tuple to the port. Tuple is referenced. */
 int
