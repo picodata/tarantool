@@ -1,0 +1,1012 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Options &mdash; Cyrus SASL 2.1.28 documentation</title>
+  
+
+  
+  
+
+  
+
+  
+  
+    
+
+  
+
+  
+  
+    <link rel="stylesheet" href="../_static/css/theme.css" type="text/css" />
+  
+
+  
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../_static/css/theme.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../_static/graphviz.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../_static/cyrus.css" type="text/css" />
+  
+
+  
+        <link rel="index" title="Index"
+              href="../genindex.html"/>
+        <link rel="search" title="Search" href="../search.html"/>
+    <link rel="top" title="Cyrus SASL 2.1.28 documentation" href="../index.html"/>
+        <link rel="up" title="Setup" href="../setup.html"/>
+        <link rel="next" title="Advanced Usage" href="advanced.html"/>
+        <link rel="prev" title="Components" href="components.html"/> 
+
+  
+  
+  
+
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  
+  
+<div class="pageheader">
+  <ul>
+    <li><a href="../index.html">Home</a></li>
+    <li><a href="http://www.cyrusimap.org">Cyrus IMAP</a></li>
+    <li><a href="../download.html">Download</a></li>
+    <li><a href="../contribute.html">Contribute</a></li>
+  </ul>
+  <div>
+    <a href="../index.html">
+      <h1>Cyrus SASL</h1>
+      <!-- <img src="../_static/logo.gif" alt="CYRUS SASL" /> -->
+    </a>
+  </div>
+</div>
+<div style="clear: both;"></div>
+
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-nav-search">
+        
+
+        
+ 
+          <a href="../index.html">
+ 
+
+        
+          <h1>Cyrus SASL</h1>
+        
+        </a>
+
+        
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+        
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+        
+          
+          
+              <p class="caption" role="heading"><span class="caption-text">Cyrus SASL</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../download.html">Download</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../getsasl.html">Get SASL</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="installation.html">Installation</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#quick-install-guide">Quick install guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#detailed-installation-guide">Detailed installation guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#supported-platforms">Supported platforms</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="release-notes/index.html">Release Notes</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="release-notes/index.html#supported-product-series">Supported Product Series</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="release-notes/index.html#series-2-1">Series 2.1</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="release-notes/index.html#older-versions">Older Versions</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="release-notes/index.html#series-2-2-0">Series 2: 2.0</a></li>
+<li class="toctree-l4"><a class="reference internal" href="release-notes/index.html#series-1">Series 1</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../packager.html">Note for Packagers</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart guide</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="quickstart.html#features">Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="quickstart.html#typical-installation">Typical Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="quickstart.html#configuration">Configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="concepts.html">Concepts</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#sasl">SASL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#sasl-authentication-mechanisms">SASL Authentication Mechanisms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#security-layers">Security Layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#channel-binding">Channel Binding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#realms">Realms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#protocols">Protocols</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#cyrus-sasl">Cyrus SASL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#the-glue-library">The Glue Library</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#auxiliary-properties">Auxiliary Properties</a></li>
+<li class="toctree-l2"><a class="reference internal" href="concepts.html#plugins">Plugins</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current"><a class="reference internal" href="../setup.html">Setup</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="installation.html">Installation</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="installation.html#quick-install-guide">Quick install guide</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#tarball-installation">Tarball installation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#unix-package-installation">Unix package Installation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#configuration">Configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="installation.html#detailed-installation-guide">Detailed installation guide</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#requirements">Requirements</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#build-configuration">Build Configuration</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#building-and-installation">Building and Installation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#compilation-hints">Compilation Hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="installation.html#application-configuration">Application Configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="installation.html#supported-platforms">Supported platforms</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="upgrading.html">Upgrading from v1 to v2</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="upgrading.html#backwards-compatibility">Backwards Compatibility</a></li>
+<li class="toctree-l3"><a class="reference internal" href="upgrading.html#coexistence-with-saslv1">Coexistence with SASLv1</a></li>
+<li class="toctree-l3"><a class="reference internal" href="upgrading.html#database-upgrades">Database Upgrades</a></li>
+<li class="toctree-l3"><a class="reference internal" href="upgrading.html#errors-on-migration">Errors on migration</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="components.html">Components</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="components.html#the-application">The Application</a></li>
+<li class="toctree-l3"><a class="reference internal" href="components.html#the-sasl-glue-layer">The SASL Glue Layer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="components.html#plugins">Plugins</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="components.html#plugins-general">Plugins: General</a></li>
+<li class="toctree-l4"><a class="reference internal" href="components.html#plugins-sasl-mechanisms">Plugins: SASL Mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="components.html#plugins-auxiliary-property">Plugins: Auxiliary Property</a></li>
+<li class="toctree-l4"><a class="reference internal" href="components.html#plugins-username-canonicalization">Plugins: Username Canonicalization</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="components.html#password-verification-services">Password Verification Services</a></li>
+</ul>
+</li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Options</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#sasl-library">SASL Library</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#auxiliary-property-plugin">Auxiliary Property Plugin</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#gssapi">GSSAPI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ldapdb">LDAPDB</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#notes-on-ldapdb">Notes on LDAPDB</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#ntlm">NTLM</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#otp">OTP</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#digest-md5">Digest-md5</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#sasldb">SASLDB</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#notes-on-sasldb-with-lmdb">Notes on sasldb with LMDB</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#sql-plugin">SQL Plugin</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#notes-on-sql">Notes on SQL</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id2">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#srp">SRP</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#kerberos-v4">Kerberos V4</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="advanced.html">Advanced Usage</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="advanced.html#notes-for-advanced-usage-of-libsasl">Notes for Advanced Usage of libsasl</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="advanced.html#using-cyrus-sasl-as-a-static-library">Using Cyrus SASL as a static library</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../operations.html">Operations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="sysadmin.html">System Administrators</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="sysadmin.html#what-sasl-is">What SASL is</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#authentication-and-authorization-identifiers">Authentication and authorization identifiers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#realms">Realms</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="sysadmin.html#how-sasl-works">How SASL works</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#the-plain-mechanism-sasl-checkpass-and-plaintext-passwords">The PLAIN mechanism, <code class="docutils literal notranslate"><span class="pre">sasl_checkpass()</span></code>, and plaintext passwords</a></li>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#shared-secrets-mechanisms">Shared secrets mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#kerberos-mechanisms">Kerberos mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#the-otp-mechanism">The OTP mechanism</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="sysadmin.html#auxiliary-properties">Auxiliary Properties</a></li>
+<li class="toctree-l3"><a class="reference internal" href="sysadmin.html#how-to-set-configuration-options">How to set configuration options</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#the-default-configuration-file">The default configuration file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="sysadmin.html#application-configuration">Application configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="sysadmin.html#troubleshooting">Troubleshooting</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="manpages.html">Man pages</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="manpages.html#library-files">(3) Library Files</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl.html"><strong>SASL</strong> - SASL Authentication Library</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_authorize_t.html"><strong>sasl_authorize_t</strong> - The SASL authorization callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_auxprop.html"><strong>sasl_auxprop</strong> - How to work with SASL auxiliary properties</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_auxprop_add_plugin.html"><strong>sasl_auxprop_add_plugin</strong> - add a SASL auxiliary property plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_auxprop_getctx.html"><strong>sasl_auxprop_getctx</strong> - Acquire an auxiliary property context</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_auxprop_request.html"><strong>sasl_auxprop_request</strong> - Request auxiliary properties from SASL</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_callbacks.html"><strong>sasl_callbacks</strong> - How to work with SASL callbacks</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_canon_user_t.html"><strong>sasl_canon_user_t</strong> - Application-supplied user canonicalization function</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_canonuser_add_plugin.html"><strong>sasl_canonuser_add_plugin</strong> - add a SASL user canonicalization plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_chalprompt_t.html"><strong>sasl_chalprompt_t</strong> - Realm acquisition callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_checkapop.html"><strong>sasl_checkapop</strong> - Check an APOP challenge/response</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_checkpass.html"><strong>sasl_checkpass</strong> - Check a plaintext password</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_add_plugin.html"><strong>sasl_client_add_plugin</strong> - add a SASL client plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_done.html"><strong>sasl_client_done</strong> - Cleanup function</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_init.html"><strong>sasl_client_init</strong> - SASL client authentication initialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_new.html"><strong>sasl_client_new</strong> - Create a new client authentication object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_plug_init_t.html"><strong>sasl_client_plug_init_t</strong> - client plug‐in entry point</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_start.html"><strong>sasl_client_start</strong> - Begin an authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_client_step.html"><strong>sasl_client_step</strong> - Perform a step in the authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_decode.html"><strong>sasl_decode</strong> - Decode data received</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_decode64.html"><strong>sasl_decode64</strong> - Decode base64 string</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_dispose.html"><strong>sasl_dispose</strong> - Dispose of a SASL connection object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_done.html"><strong>sasl_done</strong> - Dispose of a SASL connection object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_encode.html"><strong>sasl_encode</strong> - Encode data for transport to authenticated host</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_encode64.html"><strong>sasl_encode64</strong> - Encode base64 string</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_encodev.html"><strong>sasl_encodev</strong> - Encode data for transport to authenticated host</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_erasebuffer.html"><strong>sasl_erasebuffer</strong> - erase buffer</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_errdetail.html"><strong>sasl_errdetail</strong> - Retrieve  detailed information about an error</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_errors.html"><strong>sasl_errors</strong> - SASL error codes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_errstring.html"><strong>sasl_errstring</strong> - Translate a SASL return code to a human-readable form</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getcallback_t.html"><strong>sasl_getcallback_t</strong> - callback function to lookup a sasl_callback_t for a connection</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getconfpath_t.html"><strong>sasl_getconfpath_t</strong> - The SASL callback to indicate location of the config files</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getopt_t.html"><strong>sasl_getopt_t</strong> - The SASL get option callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getpath_t.html"><strong>sasl_getpath_t</strong> - The SASL callback to indicate location of the mechanism drivers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getprop.html"><strong>sasl_getprop</strong> - Get a SASL property</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getrealm_t.html"><strong>sasl_getrealm_t</strong> - Realm Acquisition Callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getsecret_t.html"><strong>sasl_getsecret_t</strong> - The SASL callback for secrets (passwords)</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_getsimple_t.html"><strong>sasl_getsimple_t</strong> - The SASL callback for username/authname/realm</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_global_listmech.html"><strong>sasl_global_listmech</strong> - Retrieve a list of the supported SASL mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_idle.html"><strong>sasl_idle</strong> - Perform precalculations during an idle period</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_listmech.html"><strong>sasl_listmech</strong> - Retrieve a list of the supported SASL mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_log_t.html"><strong>sasl_log_t</strong> - The SASL logging callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_add_plugin.html"><strong>sasl_server_add_plugin</strong> - add a SASL server plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_done.html"><strong>sasl_server_done</strong> - Cleanup function</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_init.html"><strong>sasl_server_init</strong> - SASL server authentication initialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_new.html"><strong>sasl_server_new</strong> - Create a new server authentication object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_plug_init_t.html"><strong>sasl_server_plug_init_t</strong> - server plug‐in entry point</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_start.html"><strong>sasl_server_start</strong> - Begin an authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_step.html"><strong>sasl_server_step</strong> - Perform a step in the authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_userdb_checkpass_t.html"><strong>sasl_server_userdb_checkpass_t</strong> - Plaintext Password Verification Callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_server_userdb_setpass_t.html"><strong>sasl_server_userdb_setpass_t</strong> - UserDB Plaintext Password Setting Callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_set_alloc.html"><strong>sasl_set_alloc</strong> - set the memory allocation functions used by the SASL library</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_set_mutex.html"><strong>sasl_set_mutex</strong> - set the mutex lock functions used by the SASL library</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_seterror.html"><strong>sasl_seterror</strong> - set the error string</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_setpass.html"><strong>sasl_setpass</strong> - Check a plaintext password</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_setprop.html"><strong>sasl_setprop</strong> - Set a SASL property</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_user_exists.html"><strong>sasl_user_exists</strong> - Check if a user exists on server</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_usererr.html"><strong>sasl_usererr</strong> - Remove information leak about accounts from sasl error codes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_utf8verify.html"><strong>sasl_utf8verify</strong> - Verify a string is valid utf8</a></li>
+<li class="toctree-l4"><a class="reference internal" href="reference/manpages/library/sasl_verifyfile_t.html"><strong>sasl_verifyfile_t</strong> - The SASL file verification</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="auxiliary_properties.html">Auxiliary Properties</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="auxiliary_properties.html#auxiliary-properties-and-the-glue-layer">Auxiliary Properties and the Glue Layer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="auxiliary_properties.html#passwords-and-other-data">Passwords and other Data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="auxiliary_properties.html#sasldb">sasldb</a></li>
+<li class="toctree-l3"><a class="reference internal" href="auxiliary_properties.html#ldapdb">ldapdb</a></li>
+<li class="toctree-l3"><a class="reference internal" href="auxiliary_properties.html#sql">sql</a></li>
+<li class="toctree-l3"><a class="reference internal" href="auxiliary_properties.html#user-canonicalization">User Canonicalization</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="authentication_mechanisms.html">Authentication Mechanisms</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="authentication_mechanisms.html#mechanisms">Mechanisms</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#anonymous">ANONYMOUS</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#cram-md5">CRAM-MD5</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#digest-md5">DIGEST-MD5</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#external">EXTERNAL</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#gs2">GS2</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#gssapi">GSSAPI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#gss-spegno">GSS-SPEGNO</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#kerberos-v4">KERBEROS_V4</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#login">LOGIN</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#ntlm">NTLM</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#otp">OTP</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#passdss">PASSDSS</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#plain">PLAIN</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#scram">SCRAM</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#srp">SRP</a></li>
+<li class="toctree-l4"><a class="reference internal" href="authentication_mechanisms.html#non-sasl-authentication">Non-SASL Authentication</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="authentication_mechanisms.html#summary">Summary</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="pwcheck.html">Pwcheck</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="pwcheck.html#auxprop">Auxprop</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pwcheck.html#auxprop-hashed">Auxprop-hashed</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pwcheck.html#saslauthd">Saslauthd</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pwcheck.html#authdaemon">Authdaemon</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pwcheck.html#alwaystrue">Alwaystrue</a></li>
+<li class="toctree-l3"><a class="reference internal" href="pwcheck.html#auto-transition">Auto Transition</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="faq.html">Frequently Asked Questions</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="faqs/authorize-vs-authenticate.html">What is the difference between an Authorization ID and a Authentication ID?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faqs/crammd5-digestmd5-scram.html">Why do CRAM-MD5, DIGEST-MD5 and SCRAM not work with CyrusSaslauthd?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faqs/openldap-sasl-gssapi.html">How do I configure OpenLDAP +SASL+GSSAPI?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faqs/plaintextpasswords.html">Why does CyrusSasl store plaintext passwords in its databases?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faqs/rfcs.html">RFCs and drafts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faqs/upgrade-saslv2.html">Why am I having a problem running dbconverter-2 to upgrade from SASLv1 to SASLv2?</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="resources.html">Other Documentation &amp; Resources</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../developer.html">Developers</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="appconvert.html">Converting Applications from v1 to v2</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="appconvert.html#tips-for-both-clients-and-servers">Tips for both clients and servers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="appconvert.html#tips-for-clients">Tips for clients</a></li>
+<li class="toctree-l3"><a class="reference internal" href="appconvert.html#tips-for-servers">Tips for Servers</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="developer/programming.html">Application Programmer’s Guide</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#introduction">Introduction</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#about-this-guide">About this Guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#what-is-sasl">What is SASL?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#background">Background</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#how-did-the-world-work-before-sasl">How did the world work before SASL?</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#sasl-to-the-rescue">SASL to the rescue!</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#briefly">Briefly</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#what-is-the-cyrus-sasl-library-good-for">What is the Cyrus SASL library good for?</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#what-does-the-cyrus-sasl-library-do">What does the Cyrus SASL library do?</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#what-doesn-t-the-cyrus-sasl-library-do">What doesn’t the Cyrus SASL library do?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#client-only-section">Client-only Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#a-typical-interaction-from-the-client-s-perspective">A typical interaction from the client’s perspective</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#how-does-this-look-in-code">How does this look in code</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#server-only-section">Server-only Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#a-typical-interaction-from-the-server-s-perspective">A typical interaction from the server’s perspective</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#id1">How does this look in code?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#common-section">Common Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#callbacks-and-interactions">Callbacks and Interactions</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#security-layers">Security layers</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#example-applications-that-come-with-the-cyrus-sasl-library">Example applications that come with the Cyrus SASL library</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#sample-client-and-sample-server"><cite>sample-client</cite> and <cite>sample-server</cite></a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#cyrus-imapd-v2-1-0-or-later">Cyrus imapd v2.1.0 or later</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#imtest-from-cyrus-2-1-0-or-later"><cite>imtest</cite>, from Cyrus 2.1.0 or later</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/programming.html#miscellaneous-information">Miscellaneous Information</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#empty-exchanges">Empty exchanges</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/programming.html#idle">Idle</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="developer/plugprog.html">Plugin Programmer’s Guide</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="developer/plugprog.html#introduction">Introduction</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#about-this-guide">About this Guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#what-is-sasl">What is SASL?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/plugprog.html#common-section">Common Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#overview-of-plugin-programming">Overview of Plugin Programming</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#use-of-sasl-utils-t">Use of sasl_utils_t</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#error-reporting">Error Reporting</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#memory-allocation">Memory Allocation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="developer/plugprog.html#client-send-first-server-send-last">Client Send First / Server Send Last</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/plugprog.html#client-plugins">Client Plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="developer/plugprog.html#server-plugins">Server Plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="developer/plugprog.html#user-canonicalization-canon-user-plugins">User Canonicalization (canon_user) Plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="developer/plugprog.html#auxiliary-property-auxprop-plugins">Auxiliary Property (auxprop) Plugins</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="developer/testing.html">Testing</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="developer/testing.html#testing-the-cmu-sasl-library-with-the-included-sample-applications">Testing the CMU SASL Library with the included sample applications</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="developer/testing.html#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="developer/testing.html#running-the-testsuite-application">Running the Testsuite application</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../support.html">Support/Community</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">IMAP</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference external" href="http://www.cyrusimap.org">Cyrus IMAP</a></li>
+</ul>
+
+          
+        
+      </div>
+      &nbsp;
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="../index.html">Cyrus SASL</a>
+      </nav>
+
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          
+          <div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html">Docs v2.1.28</a> &raquo;</li>
+      
+          <li><a href="../setup.html">Setup</a> &raquo;</li>
+      
+    <li>Options</li>
+      <li class="wy-breadcrumbs-aside">
+        
+          
+            <a href="https://github.com/cyrusimap/cyrus-sasl/blob/master/docsrc/sasl/options.rst" class="fa fa-github"> Edit on GitHub</a>
+          
+        
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document">
+            
+  <div class="section" id="options">
+<span id="id1"></span><h1>Options<a class="headerlink" href="#options" title="Permalink to this headline">¶</a></h1>
+<p>This document contains information on what options are used by the
+Cyrus SASL library and bundled mechanisms.  The most commonly used
+options (and those that are therefore most commonly misunderstood
+are <a class="reference internal" href="#cmdoption-arg-pwcheck_method"><code class="xref std std-option docutils literal notranslate"><span class="pre">pwcheck_method</span></code></a> and <a class="reference internal" href="#cmdoption-arg-auxprop_plugin"><code class="xref std std-option docutils literal notranslate"><span class="pre">auxprop_plugin</span></code></a>.  Please ensure
+that you have configured these correctly if things don’t seem to
+be working right.  Additionally, <a class="reference internal" href="#cmdoption-arg-mech_list"><code class="xref std std-option docutils literal notranslate"><span class="pre">mech_list</span></code></a> can be an easy
+way to limit what mechanisms a given application will use.</p>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#sasl-library" id="id3">SASL Library</a></p></li>
+<li><p><a class="reference internal" href="#auxiliary-property-plugin" id="id4">Auxiliary Property Plugin</a></p></li>
+<li><p><a class="reference internal" href="#gssapi" id="id5">GSSAPI</a></p></li>
+<li><p><a class="reference internal" href="#ldapdb" id="id6">LDAPDB</a></p></li>
+<li><p><a class="reference internal" href="#ntlm" id="id7">NTLM</a></p></li>
+<li><p><a class="reference internal" href="#otp" id="id8">OTP</a></p></li>
+<li><p><a class="reference internal" href="#digest-md5" id="id9">Digest-md5</a></p></li>
+<li><p><a class="reference internal" href="#sasldb" id="id10">SASLDB</a></p></li>
+<li><p><a class="reference internal" href="#sql-plugin" id="id11">SQL Plugin</a></p></li>
+<li><p><a class="reference internal" href="#srp" id="id12">SRP</a></p></li>
+<li><p><a class="reference internal" href="#kerberos-v4" id="id13">Kerberos V4</a></p></li>
+</ul>
+</div>
+<div class="section" id="sasl-library">
+<h2><a class="toc-backref" href="#id3">SASL Library</a><a class="headerlink" href="#sasl-library" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-authdaemon_path">
+<span id="cmdoption-arg-authdaemon-path"></span><span class="sig-name descname"><span class="pre">authdaemon_path</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-authdaemon_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Path to Courier-IMAP authdaemond’s unix socket.</p>
+<p>Default: /dev/null</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-auto_transition">
+<span id="cmdoption-arg-auto-transition"></span><span class="sig-name descname"><span class="pre">auto_transition</span></span><span class="sig-prename descclassname"> <span class="pre">[yes|noplain|no]</span></span><a class="headerlink" href="#cmdoption-arg-auto_transition" title="Permalink to this definition">¶</a></dt>
+<dd><p>When set to ‘yes’ or ‘noplain’,
+and when using an auxprop plugin, automatically transition
+users to other mechs when they do a successful plaintext
+authentication.  When set to ‘noplain’, only non-plaintext secrets
+will be written.  <em>Note that the only mechanisms (as currently
+implemented) which don’t use plaintext secrets are
+OTP, SCRAM and SRP.</em></p>
+<p>Default: no</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-canon_user_plugin">
+<span id="cmdoption-arg-canon-user-plugin"></span><span class="sig-name descname"><span class="pre">canon_user_plugin</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;name&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-canon_user_plugin" title="Permalink to this definition">¶</a></dt>
+<dd><p>Name of canon_user plugin to use</p>
+<p>Default: INTERNAL</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-log_level">
+<span id="cmdoption-arg-log-level"></span><span class="sig-name descname"><span class="pre">log_level</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;numeric</span> <span class="pre">log</span> <span class="pre">level&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-log_level" title="Permalink to this definition">¶</a></dt>
+<dd><p><strong>Numeric</strong> Logging Level (see <code class="docutils literal notranslate"><span class="pre">SASL_LOG_*</span></code> in <code class="docutils literal notranslate"><span class="pre">sasl.h</span></code>
+for values and descriptions)</p>
+<p>Default: 1 (SASL_LOG_ERR)</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-mech_list">
+<span id="cmdoption-arg-mech-list"></span><span class="sig-name descname"><span class="pre">mech_list</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;mechanism</span> <span class="pre">list&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-mech_list" title="Permalink to this definition">¶</a></dt>
+<dd><p>Whitespace separated list of mechanisms to allow (e.g. ‘plain
+otp’).  Used to restrict the mechanisms to a subset of the installed
+plugins.</p>
+<p>Default: empty (use all available plugins)</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-plugin_list">
+<span id="cmdoption-arg-plugin-list"></span><span class="sig-name descname"><span class="pre">plugin_list</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-plugin_list" title="Permalink to this definition">¶</a></dt>
+<dd><p>Location of Plugin list (Unsupported)</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-pwcheck_method">
+<span id="cmdoption-arg-pwcheck-method"></span><span class="sig-name descname"><span class="pre">pwcheck_method</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;list</span> <span class="pre">of</span> <span class="pre">mechanisms&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-pwcheck_method" title="Permalink to this definition">¶</a></dt>
+<dd><p>Whitespace separated list of mechanisms used to verify passwords,
+used by sasl_checkpass. Possible values: ‘auxprop’, ‘saslauthd’,
+‘pwcheck’, ‘authdaemond’ [if compiled with –with-authdaemond])
+and ‘alwaystrue’ [if compiled with –enable-alwaystrue])</p>
+<p>Default: auxprop</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-saslauthd_path">
+<span id="cmdoption-arg-saslauthd-path"></span><span class="sig-name descname"><span class="pre">saslauthd_path</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-saslauthd_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Path to saslauthd run directory (<strong>including</strong> the “/mux” named pipe)</p>
+</dd></dl>
+
+</div>
+<div class="section" id="auxiliary-property-plugin">
+<h2><a class="toc-backref" href="#id4">Auxiliary Property Plugin</a><a class="headerlink" href="#auxiliary-property-plugin" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-auxprop_plugin">
+<span id="cmdoption-arg-auxprop-plugin"></span><span class="sig-name descname"><span class="pre">auxprop_plugin</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;list</span> <span class="pre">of</span> <span class="pre">plugin</span> <span class="pre">names&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-auxprop_plugin" title="Permalink to this definition">¶</a></dt>
+<dd><p>Name of auxiliary plugin to use, you may specify a space-separated
+list of plugin names, and the plugins will be queried in order.</p>
+<p>Default: empty - queries all plugins.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="gssapi">
+<h2><a class="toc-backref" href="#id5">GSSAPI</a><a class="headerlink" href="#gssapi" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-keytab">
+<span class="sig-name descname"><span class="pre">keytab</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-keytab" title="Permalink to this definition">¶</a></dt>
+<dd><p>Location of keytab file</p>
+<p>Default: /etc/krb5.keytab (system dependant)</p>
+</dd></dl>
+
+</div>
+<div class="section" id="ldapdb">
+<h2><a class="toc-backref" href="#id6">LDAPDB</a><a class="headerlink" href="#ldapdb" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_uri">
+<span id="cmdoption-arg-ldapdb-uri"></span><span class="sig-name descname"><span class="pre">ldapdb_uri</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;list</span> <span class="pre">of</span> <span class="pre">URIs&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_uri" title="Permalink to this definition">¶</a></dt>
+<dd><p>URI to the LDAP server. You can specify a space-separated list of URIs -
+ldapi:// or ldaps://ldap1/ ldaps://ldap2/</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_id">
+<span id="cmdoption-arg-ldapdb-id"></span><span class="sig-name descname"><span class="pre">ldapdb_id</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;auth</span> <span class="pre">id&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>ldap SASL authentication id</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_mech">
+<span id="cmdoption-arg-ldapdb-mech"></span><span class="sig-name descname"><span class="pre">ldapdb_mech</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;mechanism&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_mech" title="Permalink to this definition">¶</a></dt>
+<dd><p>LDAP SASL mechanism for authentication.</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_pw">
+<span id="cmdoption-arg-ldapdb-pw"></span><span class="sig-name descname"><span class="pre">ldapdb_pw</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;password&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_pw" title="Permalink to this definition">¶</a></dt>
+<dd><p>LDAP password for SASL authentication id</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_rc">
+<span id="cmdoption-arg-ldapdb-rc"></span><span class="sig-name descname"><span class="pre">ldapdb_rc</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;filename&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_rc" title="Permalink to this definition">¶</a></dt>
+<dd><p>The filename specified here will be put into the server’s LDAPRC
+environment variable, and libldap-specific config options may be set
+in that ldaprc file.</p>
+<p>The main purpose behind this option is to allow
+a client TLS certificate to be configured, so that SASL/EXTERNAL may
+be used between the SASL server and the LDAP server. This is the most
+optimal way to use this plugin when the servers are on separate machines.</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_starttls">
+<span id="cmdoption-arg-ldapdb-starttls"></span><span class="sig-name descname"><span class="pre">ldapdb_starttls</span></span><span class="sig-prename descclassname"> <span class="pre">[try|demand]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_starttls" title="Permalink to this definition">¶</a></dt>
+<dd><p>Use StartTLS.  This option may be set to ‘try’ or ‘demand’.
+When set to “try” any failure in StartTLS is ignored.
+When set to “demand” then any failure aborts the connection.</p>
+<p>Default: none</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ldapdb_canon_attr">
+<span id="cmdoption-arg-ldapdb-canon-attr"></span><span class="sig-name descname"><span class="pre">ldapdb_canon_attr</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;user's</span> <span class="pre">canonical</span> <span class="pre">name&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ldapdb_canon_attr" title="Permalink to this definition">¶</a></dt>
+<dd><p>Use the value of the specified attribute as the user’s
+canonical name. The attribute will be looked up in the user’s LDAP
+entry. This setting must be configured in order to use LDAPDB as
+a canonuser plugin.</p>
+<p>Default: none</p>
+</dd></dl>
+
+<div class="section" id="notes-on-ldapdb">
+<h3>Notes on LDAPDB<a class="headerlink" href="#notes-on-ldapdb" title="Permalink to this headline">¶</a></h3>
+<p>Unlike other LDAP-enabled plugins for other services that are common
+on the web, this plugin does not require you to configure DN search
+patterns to map usernames to LDAP DNs. This plugin requires SASL name
+mapping to be configured on the target slapd. This approach keeps the
+LDAP-specific configuration details in one place, the slapd.conf, and
+makes the configuration of remote services much simpler.</p>
+<p>This plugin is not for use with slapd itself. When OpenLDAP is
+built with SASL support, slapd uses its own internal auxprop and
+canonuser module.</p>
+<p>By default, without configuring anything else, slapd will fail to load
+the ldapdb module when it’s present. This is as it should be. If you
+don’t like the “auxpropfunc: error -7” message that is sent to syslog
+by slapd, you can stop it by creating /usr/lib/sasl2/slapd.conf with:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">auxprop_plugin</span><span class="p">:</span> <span class="n">slapd</span>
+</pre></div>
+</div>
+<p>which will force the SASL library to ignore all other auxprop modules.</p>
+</div>
+<div class="section" id="examples">
+<h3>Examples<a class="headerlink" href="#examples" title="Permalink to this headline">¶</a></h3>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldapdb_uri</span><span class="p">:</span> <span class="n">ldap</span><span class="p">:</span><span class="o">//</span><span class="n">ldap</span><span class="o">.</span><span class="n">example</span><span class="o">.</span><span class="n">com</span>
+<span class="n">ldapdb_id</span><span class="p">:</span> <span class="n">root</span>
+<span class="n">ldapdb_pw</span><span class="p">:</span> <span class="n">secret</span>
+<span class="n">ldapdb_mech</span><span class="p">:</span> <span class="n">DIGEST</span><span class="o">-</span><span class="n">MD5</span>
+<span class="n">ldapdb_canon_attr</span><span class="p">:</span> <span class="n">uid</span>
+</pre></div>
+</div>
+<p>The LDAP server must be configured to map the SASL authcId “root” into a DN
+that has proxy authorization privileges to every account that is allowed to
+login to this server. (See the OpenLDAP Admin Guide section 10 for
+details.)</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ldapdb_uri</span><span class="p">:</span> <span class="n">ldapi</span><span class="p">:</span><span class="o">//</span>
+<span class="n">ldapdb_mech</span><span class="p">:</span> <span class="n">EXTERNAL</span>
+</pre></div>
+</div>
+<p>This configuration assumes an LDAP server is on the same server that is
+using SASL and the underlying OS is *NIX based (ldapi:// requires UNIX domain
+sockets).  This is fast and secure, and needs no username or password to be
+stored.  The slapd.conf will need to map these usernames to LDAP DNs:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>sasl-regexp uidNumber=(.*)\\+gidNumber=(.*),cn=peercred,cn=external,cn=auth
+    ldap:///dc=example,dc=com??sub?(&amp;(uidNumber=$1)(gidNumber=$2))
+
+
+sasl-regexp uid=(.*),cn=external,cn=auth
+    ldap:///dc=example,dc=com??sub?(uid=$1)
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="ntlm">
+<h2><a class="toc-backref" href="#id7">NTLM</a><a class="headerlink" href="#ntlm" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ntlm_server">
+<span id="cmdoption-arg-ntlm-server"></span><span class="sig-name descname"><span class="pre">ntlm_server</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;list</span> <span class="pre">of</span> <span class="pre">server</span> <span class="pre">names&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-ntlm_server" title="Permalink to this definition">¶</a></dt>
+<dd><p>Comma separated list of servernames (WinNT, Win2K, Samba, etc) to
+which authentication will be proxied.</p>
+<p>Default: empty - perform authentication internally</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-ntlm_v2">
+<span id="cmdoption-arg-ntlm-v2"></span><span class="sig-name descname"><span class="pre">ntlm_v2</span></span><span class="sig-prename descclassname"> <span class="pre">[yes|no]</span></span><a class="headerlink" href="#cmdoption-arg-ntlm_v2" title="Permalink to this definition">¶</a></dt>
+<dd><p>(Client) Send NTLMv2 responses to the server.</p>
+<p>Default: no (send NTLMv1)</p>
+</dd></dl>
+
+</div>
+<div class="section" id="otp">
+<h2><a class="toc-backref" href="#id8">OTP</a><a class="headerlink" href="#otp" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-opiekeys">
+<span class="sig-name descname"><span class="pre">opiekeys</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-opiekeys" title="Permalink to this definition">¶</a></dt>
+<dd><p>Location of the opiekeys file</p>
+<p>Default: /etc/opiekeys</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-otp_mda">
+<span id="cmdoption-arg-otp-mda"></span><span class="sig-name descname"><span class="pre">otp_mda</span></span><span class="sig-prename descclassname"> <span class="pre">[md4</span> <span class="pre">|</span> <span class="pre">md5</span> <span class="pre">|</span> <span class="pre">sha1]</span></span><a class="headerlink" href="#cmdoption-arg-otp_mda" title="Permalink to this definition">¶</a></dt>
+<dd><p>(Without opie) Message digest algorithm for one-time passwords, used by sasl_setpass</p>
+<p>Default: md5</p>
+</dd></dl>
+
+</div>
+<div class="section" id="digest-md5">
+<h2><a class="toc-backref" href="#id9">Digest-md5</a><a class="headerlink" href="#digest-md5" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-reauth_timeout">
+<span id="cmdoption-arg-reauth-timeout"></span><span class="sig-name descname"><span class="pre">reauth_timeout</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;minutes&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-reauth_timeout" title="Permalink to this definition">¶</a></dt>
+<dd><p>Length in time (in minutes) that authentication info will be
+cached for a fast reauth.  A value of 0 will disable reauth.</p>
+<p>Default: 0 - reauth disabled.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="sasldb">
+<h2><a class="toc-backref" href="#id10">SASLDB</a><a class="headerlink" href="#sasldb" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sasldb_path">
+<span id="cmdoption-arg-sasldb-path"></span><span class="sig-name descname"><span class="pre">sasldb_path</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path</span> <span class="pre">to</span> <span class="pre">sasldb</span> <span class="pre">file&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-sasldb_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Path to sasldb file</p>
+<p>Default: /etc/sasldb2 (system dependant)</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sasldb_mapsize">
+<span id="cmdoption-arg-sasldb-mapsize"></span><span class="sig-name descname"><span class="pre">sasldb_mapsize</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;size</span> <span class="pre">in</span> <span class="pre">bytes&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-sasldb_mapsize" title="Permalink to this definition">¶</a></dt>
+<dd><p>For sasldb with LMDB. Size of the memory map used by the DB. This is also the maximum possible
+size of the database, so it must be set to a value large enough to contain
+all the desired user records.</p>
+<p>Default: 1048576 bytes</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sasldb_maxreaders">
+<span id="cmdoption-arg-sasldb-maxreaders"></span><span class="sig-name descname"><span class="pre">sasldb_maxreaders</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;max</span> <span class="pre">threads&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-sasldb_maxreaders" title="Permalink to this definition">¶</a></dt>
+<dd><p>For sasldb with LMDB. Maximum number of threads (or processes) that may concurrently read the
+database.</p>
+<p>Default: 126</p>
+</dd></dl>
+
+<div class="section" id="notes-on-sasldb-with-lmdb">
+<h3>Notes on sasldb with LMDB<a class="headerlink" href="#notes-on-sasldb-with-lmdb" title="Permalink to this headline">¶</a></h3>
+<p>The OpenLDAP LMDB library is an extremely compact, extremely high performance
+B+tree database. The code for it is available in the regular OpenLDAP source
+distributions and it is distributed under the terms of the OpenLDAP Public License.</p>
+<p>Full documentation, plus papers and presentations are available on
+<a class="reference external" href="symas.com/lmdb/">the LMDB page</a>.</p>
+</div>
+</div>
+<div class="section" id="sql-plugin">
+<h2><a class="toc-backref" href="#id11">SQL Plugin</a><a class="headerlink" href="#sql-plugin" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_engine">
+<span id="cmdoption-arg-sql-engine"></span><span class="sig-name descname"><span class="pre">sql_engine</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;name&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-sql_engine" title="Permalink to this definition">¶</a></dt>
+<dd><p>Name of SQL engine to use (possible values: ‘mysql’, ‘pgsql’, ‘sqlite’, ‘sqlite3’).</p>
+<p>Default: mysql</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_hostnames">
+<span id="cmdoption-arg-sql-hostnames"></span><span class="sig-name descname"><span class="pre">sql_hostnames</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;list</span> <span class="pre">of</span> <span class="pre">SQL</span> <span class="pre">servers&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-sql_hostnames" title="Permalink to this definition">¶</a></dt>
+<dd><p>Comma separated list of SQL servers (in host[:port] format).</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_user">
+<span id="cmdoption-arg-sql-user"></span><span class="sig-name descname"><span class="pre">sql_user</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;username&gt;</span></span><a class="headerlink" href="#cmdoption-arg-sql_user" title="Permalink to this definition">¶</a></dt>
+<dd><p>Username to use for authentication to the SQL server.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_passwd">
+<span id="cmdoption-arg-sql-passwd"></span><span class="sig-name descname"><span class="pre">sql_passwd</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;password&gt;</span></span><a class="headerlink" href="#cmdoption-arg-sql_passwd" title="Permalink to this definition">¶</a></dt>
+<dd><p>Password to use for authentication to the SQL server.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_database">
+<span id="cmdoption-arg-sql-database"></span><span class="sig-name descname"><span class="pre">sql_database</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;database</span> <span class="pre">name&gt;</span></span><a class="headerlink" href="#cmdoption-arg-sql_database" title="Permalink to this definition">¶</a></dt>
+<dd><p>Name of the database which contains the auxiliary properties.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_select">
+<span id="cmdoption-arg-sql-select"></span><span class="sig-name descname"><span class="pre">sql_select</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;statement&gt;</span></span><a class="headerlink" href="#cmdoption-arg-sql_select" title="Permalink to this definition">¶</a></dt>
+<dd><p>SELECT statement to use for fetching properties.  This option is
+<strong>required</strong> in order to use the SQL plugin.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_insert">
+<span id="cmdoption-arg-sql-insert"></span><span class="sig-name descname"><span class="pre">sql_insert</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;statement&gt;</span></span><a class="headerlink" href="#cmdoption-arg-sql_insert" title="Permalink to this definition">¶</a></dt>
+<dd><p>INSERT statement to use for creating properties for new users.</p>
+</dd></dl>
+
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-sql_update">
+<span id="cmdoption-arg-sql-update"></span><span class="sig-name descname"><span class="pre">sql_update</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;statement&gt;</span></span><a class="headerlink" href="#cmdoption-arg-sql_update" title="Permalink to this definition">¶</a></dt>
+<dd><p>UPDATE statement to use for modifying properties.</p>
+</dd></dl>
+
+<div class="section" id="notes-on-sql">
+<h3>Notes on SQL<a class="headerlink" href="#notes-on-sql" title="Permalink to this headline">¶</a></h3>
+<p>The sql_insert and sql_update options are
+optional and are only needed if you wish to allow the SASL library
+(e.g., saslpasswd2) and plugins (e.g., OTP) to write properties to the
+SQL server.  If used, both statements MUST be provided so that
+properties can be added, changed and deleted.</p>
+<p>NOTE: The columns for writable properites MUST accept NULL values.</p>
+<p>The SQL statements provided in the sql_select,
+sql_insert and sql_update options can contain
+arguments which will be substituted with the appropriate values.  The
+valid arguments are:</p>
+<dl class="simple">
+<dt>%u</dt><dd><p>Username whose properties are being fetched/stored.</p>
+</dd>
+<dt>%p</dt><dd><p>Name of the property being fetched/stored.  This could
+technically be anything, but SASL authentication will try
+userPassword and cmusaslsecretMECHNAME (where MECHNAME is the
+name of a SASL mechanism).</p>
+</dd>
+<dt>%r</dt><dd><p>Realm to which the user belongs.  This could be the
+kerberos realm, the FQDN of the computer the SASL application is
+running on or whatever is after the &#64; on a username.  (read the
+realm documentation).</p>
+</dd>
+<dt>%v</dt><dd><p>Value of the property being stored (INSERT or
+UPDATE only!). This could technically be anything depending on
+the property itself, but is generally a userPassword.</p>
+</dd>
+</dl>
+<p>Note: DO NOT put quotes around the entire SQL
+statement, but each individual %u, %r and %v argument MUST be
+quoted.</p>
+</div>
+<div class="section" id="id2">
+<h3>Examples<a class="headerlink" href="#id2" title="Permalink to this headline">¶</a></h3>
+<blockquote>
+<div><p><code class="docutils literal notranslate"><span class="pre">sql_select:</span> <span class="pre">SELECT</span> <span class="pre">%p</span> <span class="pre">FROM</span> <span class="pre">user_table</span> <span class="pre">WHERE</span> <span class="pre">username</span> <span class="pre">=</span> <span class="pre">'%u'</span> <span class="pre">and</span> <span class="pre">realm</span> <span class="pre">=</span> <span class="pre">'%r'</span></code></p>
+</div></blockquote>
+<p>would send the following statement to SQL for user “bovik” and
+the default realm for the machine “madoka.surf.org.uk”:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">SELECT</span> <span class="n">userPassword</span> <span class="n">FROM</span> <span class="n">user_table</span> <span class="n">WHERE</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">&#39;bovik&#39;</span> <span class="ow">and</span>
+<span class="n">realm</span> <span class="o">=</span> <span class="s1">&#39;madoka.surf.org.uk&#39;</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sql_insert</span><span class="p">:</span> <span class="n">INSERT</span> <span class="n">INTO</span> <span class="n">user_table</span> <span class="p">(</span><span class="n">username</span><span class="p">,</span> <span class="n">realm</span><span class="p">,</span> <span class="o">%</span><span class="n">p</span><span class="p">)</span> <span class="n">VALUES</span> <span class="p">(</span><span class="s1">&#39;</span><span class="si">%u</span><span class="s1">&#39;</span><span class="p">,</span> <span class="s1">&#39;</span><span class="si">%r</span><span class="s1">&#39;</span><span class="p">,</span> <span class="s1">&#39;%v&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>would generate the following statement to SQL for user “bovik” in
+realm “madoka.surf.org.uk” with userPassword “wert”:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">INSERT</span> <span class="n">INTO</span> <span class="n">user_table</span> <span class="p">(</span><span class="n">username</span><span class="p">,</span> <span class="n">realm</span><span class="p">,</span> <span class="n">userPassword</span><span class="p">)</span> <span class="n">VALUES</span>
+<span class="p">(</span><span class="s1">&#39;bovik&#39;</span><span class="p">,</span> <span class="s1">&#39;madoka.surf.org.uk&#39;</span><span class="p">,</span> <span class="s1">&#39;wert&#39;</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>Note that all substitutions do not have to be used. For instance,</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">SELECT</span> <span class="n">password</span> <span class="n">FROM</span> <span class="n">auth</span> <span class="n">WHERE</span> <span class="n">username</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="si">%u</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>is a valid value for sql_select.</p>
+</div>
+</div>
+<div class="section" id="srp">
+<h2><a class="toc-backref" href="#id12">SRP</a><a class="headerlink" href="#srp" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-srp_mda">
+<span id="cmdoption-arg-srp-mda"></span><span class="sig-name descname"><span class="pre">srp_mda</span></span><span class="sig-prename descclassname"> <span class="pre">[md5</span> <span class="pre">|</span> <span class="pre">sha1</span> <span class="pre">|</span> <span class="pre">rmd160]</span></span><a class="headerlink" href="#cmdoption-arg-srp_mda" title="Permalink to this definition">¶</a></dt>
+<dd><p>Message digest algorithm for SRP calculations</p>
+<p>Default: sha1</p>
+</dd></dl>
+
+</div>
+<div class="section" id="kerberos-v4">
+<h2><a class="toc-backref" href="#id13">Kerberos V4</a><a class="headerlink" href="#kerberos-v4" title="Permalink to this headline">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-arg-srvtab">
+<span class="sig-name descname"><span class="pre">srvtab</span></span><span class="sig-prename descclassname"> <span class="pre">[&lt;path&gt;]</span></span><a class="headerlink" href="#cmdoption-arg-srvtab" title="Permalink to this definition">¶</a></dt>
+<dd><p>Location of the srvtab file</p>
+<p>Default: /etc/srvtab</p>
+</dd></dl>
+
+</div>
+</div>
+
+
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="advanced.html" class="btn btn-neutral float-right" title="Advanced Usage" accesskey="n">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="components.html" class="btn btn-neutral" title="Components" accesskey="p"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 1993-2016, The Cyrus Team.
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> 4.4.0 using a modified <a href="https://readthedocs.org">Read the Docs</a> <a href="https://github.com/snide/sphinx_rtd_theme">theme</a>.
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  
+
+    <script type="text/javascript">
+        var DOCUMENTATION_OPTIONS = {
+            URL_ROOT:'../',
+            VERSION:'2.1.28',
+            COLLAPSE_INDEX:false,
+            FILE_SUFFIX:'.html',
+            HAS_SOURCE:  true
+        };
+    </script>
+      <script type="text/javascript" src="../_static/documentation_options.js"></script>
+      <script type="text/javascript" src="../_static/jquery.js"></script>
+      <script type="text/javascript" src="../_static/underscore.js"></script>
+      <script type="text/javascript" src="../_static/doctools.js"></script>
+
+  
+
+  
+  
+    <script type="text/javascript" src="../_static/js/theme.js"></script>
+  
+
+  
+  
+  <script type="text/javascript">
+<!--      jQuery(function () {
+          SphinxRtdTheme.StickyNav.enable();
+      }); -->
+  </script>
+  
+ 
+
+
+
+</body>
+</html>
