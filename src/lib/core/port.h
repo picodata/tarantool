@@ -37,6 +37,8 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+/** \cond public */
+
 struct obuf;
 struct lua_State;
 struct port;
@@ -131,6 +133,8 @@ struct port {
 void
 port_destroy(struct port *port);
 
+/** \endcond public */
+
 static inline int
 port_dump_msgpack(struct port *port, struct obuf *out)
 {
@@ -155,11 +159,15 @@ port_dump_plain(struct port *port, uint32_t *size)
 	return port->vtab->dump_plain(port, size);
 }
 
+/** \cond public */
+
 static inline const char *
 port_get_msgpack(struct port *port, uint32_t *size)
 {
 	return port->vtab->get_msgpack(port, size);
 }
+
+/** \endcond public */
 
 static inline struct sql_value *
 port_get_vdbemem(struct port *port, uint32_t *size)
