@@ -43,6 +43,7 @@
 #include <stdbool.h>
 #include <stdio.h> /* ssize_t for Apple */
 #include <sys/types.h> /* ssize_t */
+#include <assert.h>
 
 #if defined(__cplusplus)
 extern "C" {
