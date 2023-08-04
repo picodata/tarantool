@@ -646,3 +646,4 @@ coio_write_timeout
 
 fiber_set_name_n
 authenticate
+user_auth_method_name

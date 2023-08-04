@@ -40,6 +40,7 @@
 #include "sequence.h"
 #include "tt_static.h"
 #include "txn.h"
+#include "authentication.h"
 
 struct universe universe;
 static struct user users[BOX_USER_MAX];
@@ -434,6 +435,14 @@ next_tuple:
 	rlist_foreach_entry(creds, &user->credentials_list, in_user)
 		creds->universal_access = new_access;
 	return 0;
+}
+
+const char *
+user_auth_method_name(const char *user_name, uint32_t user_name_len)
+{
+	struct user *user = user_find_by_name(user_name, user_name_len);
+	struct authenticator *auth = user != NULL ? user->def->auth : NULL;
+	return auth != NULL ? auth->method->name : NULL;
 }
 
 /** }}} */
