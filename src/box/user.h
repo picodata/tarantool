@@ -144,6 +144,24 @@ credentials_reset(struct credentials *cr, struct user *new_user)
 	credentials_create(cr, new_user);
 }
 
+/** \cond public */
+
+/**
+ * Get an auth method name used by a user.
+ * Returns method name on success and NULL on error.
+ *
+ * This function is used to determine the authentication method when
+ * authenticating a postgres client. There is an another way to determine auth
+ * method name: export user_find_by_name and extract the name from the name
+ * field of the authenticator contained in the user, but this approach seems to
+ * be more complicated, since we still need to export something, as well as
+ * add definition of user and its internal fields in module.h.
+ */
+const char *
+user_auth_method_name(const char *name, uint32_t name_len);
+
+/** \endcond public */
+
 /**
  * For best performance, all users are maintained in this array.
  * Position in the array is store in user->auth_token and also
