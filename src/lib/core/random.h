@@ -43,8 +43,12 @@ random_init(void);
 void
 random_free(void);
 
+/** \cond public */
+
 void
 random_bytes(char *buf, size_t size);
+
+/** \endcond public */
 
 /**
  * Just 8 random_bytes().

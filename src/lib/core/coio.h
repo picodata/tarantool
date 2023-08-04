@@ -59,9 +59,13 @@ int
 coio_accept(int sfd, struct sockaddr *addr, socklen_t addrlen,
 	    ev_tstamp timeout);
 
+/** \cond public */
+
 ssize_t
 coio_read_ahead_timeout(struct iostream *io, void *buf, size_t sz,
 			size_t bufsiz, ev_tstamp timeout);
+
+/** \endcond public */
 
 static inline void
 coio_timeout_init(ev_tstamp *start, ev_tstamp *delay,
@@ -75,6 +79,8 @@ coio_timeout_update(ev_tstamp *start, ev_tstamp *delay)
 {
 	return evio_timeout_update(loop(), start, delay);
 }
+
+/** \cond public */
 
 /**
  * Reat at least sz bytes, with readahead.
@@ -108,6 +114,8 @@ coio_readn(struct iostream *io, void *buf, size_t sz)
 	return coio_readn_ahead(io, buf, sz, sz);
 }
 
+/** \endcond public */
+
 ssize_t
 coio_readn_ahead_timeout(struct iostream *io, void *buf, size_t sz,
 			 size_t bufsiz, ev_tstamp timeout);
@@ -118,6 +126,8 @@ coio_readn_timeout(struct iostream *io, void *buf, size_t sz, ev_tstamp timeout)
 	return coio_readn_ahead_timeout(io, buf, sz, sz, timeout);
 }
 
+/** \cond public */
+
 ssize_t
 coio_write_timeout(struct iostream *io, const void *buf, size_t sz,
 		   ev_tstamp timeout);
@@ -127,6 +137,8 @@ coio_write(struct iostream *io, const void *buf, size_t sz)
 {
 	coio_write_timeout(io, buf, sz, TIMEOUT_INFINITY);
 }
+
+/** \endcond public */
 
 ssize_t
 coio_writev_timeout(struct iostream *io, struct iovec *iov, int iovcnt,

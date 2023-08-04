@@ -252,11 +252,15 @@ set(api_headers
     ${PROJECT_SOURCE_DIR}/src/lib/core/say.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/fiber.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/fiber_cond.h
+    ${PROJECT_SOURCE_DIR}/src/lib/core/iostream.h
+    ${PROJECT_SOURCE_DIR}/third_party/libev/ev.h
+    ${PROJECT_SOURCE_DIR}/third_party/tarantool_ev.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/coio.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/coio_task.h
     ${PROJECT_SOURCE_DIR}/src/box/ibuf.h
     ${PROJECT_SOURCE_DIR}/src/lua/utils.h
     ${PROJECT_SOURCE_DIR}/src/lua/error.h
+    ${PROJECT_SOURCE_DIR}/src/box/authentication.h
     ${PROJECT_SOURCE_DIR}/src/box/txn.h
     ${PROJECT_SOURCE_DIR}/src/box/tuple.h
     ${PROJECT_SOURCE_DIR}/src/box/key_def.h
@@ -273,6 +277,7 @@ set(api_headers
     ${PROJECT_SOURCE_DIR}/src/lib/core/clock.h
     ${PROJECT_SOURCE_DIR}/src/box/decimal.h
     ${PROJECT_SOURCE_DIR}/src/lua/decimal.h
+    ${PROJECT_SOURCE_DIR}/src/lib/core/random.h
     ${EXTRA_API_HEADERS}
 )
 rebuild_module_api(${api_headers})
