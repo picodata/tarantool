@@ -279,6 +279,9 @@ set(api_headers
     ${PROJECT_SOURCE_DIR}/src/box/decimal.h
     ${PROJECT_SOURCE_DIR}/src/lua/decimal.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/random.h
+    ${PROJECT_SOURCE_DIR}/src/lib/core/port.h
+    ${PROJECT_SOURCE_DIR}/src/box/port.h
+    ${PROJECT_SOURCE_DIR}/src/box/module_cache.h
     ${EXTRA_API_HEADERS}
 )
 rebuild_module_api(${api_headers})
