@@ -106,6 +106,8 @@ struct iostream_vtab {
 	(*writev)(struct iostream *io, const struct iovec *iov, int iovcnt);
 };
 
+/** \cond public */
+
 /**
  * An IO stream implements IO operations over a file descriptor.
  * Can be used to add some data processing transparently to the user.
@@ -174,6 +176,8 @@ plain_iostream_create(struct iostream *io, int fd);
  */
 void
 iostream_close(struct iostream *io);
+
+/** \endcond public */
 
 /**
  * Destroys a stream without closing fd. The stream fd is set to -1.

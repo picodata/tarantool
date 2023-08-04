@@ -636,3 +636,13 @@ lcpipe_flush_input
 lcpipe_new
 lcpipe_push
 lcpipe_push_now
+
+# picodata postgres protocol
+plain_iostream_create
+iostream_close
+coio_readn_ahead
+coio_read_ahead_timeout
+coio_write_timeout
+
+fiber_set_name_n
+authenticate
