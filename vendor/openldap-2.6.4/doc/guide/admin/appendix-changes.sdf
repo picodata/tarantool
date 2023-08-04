@@ -1,0 +1,26 @@
+# $OpenLDAP$
+# Copyright 2007-2022 The OpenLDAP Foundation, All Rights Reserved.
+# COPYING RESTRICTIONS APPLY, see COPYRIGHT.
+
+H1: Changes Since Previous Release
+
+The following sections attempt to summarize the new features and changes in OpenLDAP
+software since the 2.5.x release and the OpenLDAP Admin Guide.
+
+H2: New Features and Enhancements in 2.6
+
+H3: New features in slapd
+
+slapd now supports logging directly to a file, bypassing syslog.
+
+H3: New features in lloadd
+
+lloadd now supports additional balancing mechansims
+
+H2: Obsolete Features Removed From 2.6
+
+These features were strongly deprecated in 2.5 and removed in 2.6.
+
+H3: back-ndb
+
+The experimental and incomplete back-ndb backend was removed.
