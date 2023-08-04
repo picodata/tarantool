@@ -156,10 +156,14 @@ EV_CPP(extern "C" {)
 
 /*****************************************************************************/
 
+/** \cond public */
+
 #ifndef EV_TSTAMP_T
 # define EV_TSTAMP_T double
 #endif
 typedef EV_TSTAMP_T ev_tstamp;
+
+/** \endcond public */
 
 #include <string.h> /* for memmove */
 
@@ -875,4 +879,3 @@ EV_API_DECL void ev_async_send     (EV_P_ ev_async *w) EV_NOEXCEPT;
 EV_CPP(})
 
 #endif
-
