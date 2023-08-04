@@ -754,9 +754,13 @@ strtolower(char *s);
 char *
 strtolowerdup(const char *s);
 
+/** \cond public */
+
 #if !defined(__cplusplus) && !defined(static_assert)
 # define static_assert _Static_assert
 #endif
+
+/** \endcond public */
 
 /** Asserts that a global variable has a given type. */
 #define STATIC_ASSERT_VAR_TYPE(var, type)				\
