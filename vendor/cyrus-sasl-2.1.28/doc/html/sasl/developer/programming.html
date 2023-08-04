@@ -1,0 +1,1340 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Application Programmer’s Guide &mdash; Cyrus SASL 2.1.28 documentation</title>
+  
+
+  
+  
+
+  
+
+  
+  
+    
+
+  
+
+  
+  
+    <link rel="stylesheet" href="../../_static/css/theme.css" type="text/css" />
+  
+
+  
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../../_static/css/theme.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../../_static/graphviz.css" type="text/css" />
+  
+    <link rel="stylesheet" href="../../_static/cyrus.css" type="text/css" />
+  
+
+  
+        <link rel="index" title="Index"
+              href="../../genindex.html"/>
+        <link rel="search" title="Search" href="../../search.html"/>
+    <link rel="top" title="Cyrus SASL 2.1.28 documentation" href="../../index.html"/>
+        <link rel="up" title="Developers" href="../../developer.html"/>
+        <link rel="next" title="Plugin Programmer’s Guide" href="plugprog.html"/>
+        <link rel="prev" title="Converting Applications from v1 to v2" href="../appconvert.html"/> 
+
+  
+  
+  
+
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  
+  
+<div class="pageheader">
+  <ul>
+    <li><a href="../../index.html">Home</a></li>
+    <li><a href="http://www.cyrusimap.org">Cyrus IMAP</a></li>
+    <li><a href="../../download.html">Download</a></li>
+    <li><a href="../../contribute.html">Contribute</a></li>
+  </ul>
+  <div>
+    <a href="../../index.html">
+      <h1>Cyrus SASL</h1>
+      <!-- <img src="../../_static/logo.gif" alt="CYRUS SASL" /> -->
+    </a>
+  </div>
+</div>
+<div style="clear: both;"></div>
+
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-nav-search">
+        
+
+        
+ 
+          <a href="../../index.html">
+ 
+
+        
+          <h1>Cyrus SASL</h1>
+        
+        </a>
+
+        
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+        
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+        
+          
+          
+              <p class="caption" role="heading"><span class="caption-text">Cyrus SASL</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../download.html">Download</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../getsasl.html">Get SASL</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../installation.html">Installation</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#quick-install-guide">Quick install guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#detailed-installation-guide">Detailed installation guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#supported-platforms">Supported platforms</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../release-notes/index.html">Release Notes</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../release-notes/index.html#supported-product-series">Supported Product Series</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../release-notes/index.html#series-2-1">Series 2.1</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../release-notes/index.html#older-versions">Older Versions</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../release-notes/index.html#series-2-2-0">Series 2: 2.0</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../release-notes/index.html#series-1">Series 1</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../../packager.html">Note for Packagers</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart guide</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart.html#features">Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart.html#typical-installation">Typical Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart.html#configuration">Configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../concepts.html">Concepts</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#sasl">SASL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#sasl-authentication-mechanisms">SASL Authentication Mechanisms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#security-layers">Security Layers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#channel-binding">Channel Binding</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#realms">Realms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#protocols">Protocols</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#cyrus-sasl">Cyrus SASL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#the-glue-library">The Glue Library</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#auxiliary-properties">Auxiliary Properties</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../concepts.html#plugins">Plugins</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../setup.html">Setup</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../installation.html">Installation</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../installation.html#quick-install-guide">Quick install guide</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#tarball-installation">Tarball installation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#unix-package-installation">Unix package Installation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#configuration">Configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../installation.html#detailed-installation-guide">Detailed installation guide</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#requirements">Requirements</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#build-configuration">Build Configuration</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#building-and-installation">Building and Installation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#compilation-hints">Compilation Hints</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../installation.html#application-configuration">Application Configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../installation.html#supported-platforms">Supported platforms</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../upgrading.html">Upgrading from v1 to v2</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../upgrading.html#backwards-compatibility">Backwards Compatibility</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../upgrading.html#coexistence-with-saslv1">Coexistence with SASLv1</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../upgrading.html#database-upgrades">Database Upgrades</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../upgrading.html#errors-on-migration">Errors on migration</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../components.html">Components</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../components.html#the-application">The Application</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../components.html#the-sasl-glue-layer">The SASL Glue Layer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../components.html#plugins">Plugins</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../components.html#plugins-general">Plugins: General</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../components.html#plugins-sasl-mechanisms">Plugins: SASL Mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../components.html#plugins-auxiliary-property">Plugins: Auxiliary Property</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../components.html#plugins-username-canonicalization">Plugins: Username Canonicalization</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../components.html#password-verification-services">Password Verification Services</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../options.html">Options</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#sasl-library">SASL Library</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#auxiliary-property-plugin">Auxiliary Property Plugin</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#gssapi">GSSAPI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#ldapdb">LDAPDB</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../options.html#notes-on-ldapdb">Notes on LDAPDB</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../options.html#examples">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#ntlm">NTLM</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#otp">OTP</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#digest-md5">Digest-md5</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#sasldb">SASLDB</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../options.html#notes-on-sasldb-with-lmdb">Notes on sasldb with LMDB</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#sql-plugin">SQL Plugin</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../options.html#notes-on-sql">Notes on SQL</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../options.html#id2">Examples</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#srp">SRP</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../options.html#kerberos-v4">Kerberos V4</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../advanced.html">Advanced Usage</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../advanced.html#notes-for-advanced-usage-of-libsasl">Notes for Advanced Usage of libsasl</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../advanced.html#using-cyrus-sasl-as-a-static-library">Using Cyrus SASL as a static library</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../operations.html">Operations</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="../sysadmin.html">System Administrators</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../sysadmin.html#what-sasl-is">What SASL is</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#authentication-and-authorization-identifiers">Authentication and authorization identifiers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#realms">Realms</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../sysadmin.html#how-sasl-works">How SASL works</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#the-plain-mechanism-sasl-checkpass-and-plaintext-passwords">The PLAIN mechanism, <code class="docutils literal notranslate"><span class="pre">sasl_checkpass()</span></code>, and plaintext passwords</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#shared-secrets-mechanisms">Shared secrets mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#kerberos-mechanisms">Kerberos mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#the-otp-mechanism">The OTP mechanism</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../sysadmin.html#auxiliary-properties">Auxiliary Properties</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../sysadmin.html#how-to-set-configuration-options">How to set configuration options</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#the-default-configuration-file">The default configuration file</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../sysadmin.html#application-configuration">Application configuration</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../sysadmin.html#troubleshooting">Troubleshooting</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../manpages.html">Man pages</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../manpages.html#library-files">(3) Library Files</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl.html"><strong>SASL</strong> - SASL Authentication Library</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_authorize_t.html"><strong>sasl_authorize_t</strong> - The SASL authorization callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_auxprop.html"><strong>sasl_auxprop</strong> - How to work with SASL auxiliary properties</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_auxprop_add_plugin.html"><strong>sasl_auxprop_add_plugin</strong> - add a SASL auxiliary property plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_auxprop_getctx.html"><strong>sasl_auxprop_getctx</strong> - Acquire an auxiliary property context</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_auxprop_request.html"><strong>sasl_auxprop_request</strong> - Request auxiliary properties from SASL</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_callbacks.html"><strong>sasl_callbacks</strong> - How to work with SASL callbacks</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_canon_user_t.html"><strong>sasl_canon_user_t</strong> - Application-supplied user canonicalization function</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_canonuser_add_plugin.html"><strong>sasl_canonuser_add_plugin</strong> - add a SASL user canonicalization plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_chalprompt_t.html"><strong>sasl_chalprompt_t</strong> - Realm acquisition callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_checkapop.html"><strong>sasl_checkapop</strong> - Check an APOP challenge/response</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_checkpass.html"><strong>sasl_checkpass</strong> - Check a plaintext password</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_add_plugin.html"><strong>sasl_client_add_plugin</strong> - add a SASL client plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_done.html"><strong>sasl_client_done</strong> - Cleanup function</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_init.html"><strong>sasl_client_init</strong> - SASL client authentication initialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_new.html"><strong>sasl_client_new</strong> - Create a new client authentication object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_plug_init_t.html"><strong>sasl_client_plug_init_t</strong> - client plug‐in entry point</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_start.html"><strong>sasl_client_start</strong> - Begin an authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_client_step.html"><strong>sasl_client_step</strong> - Perform a step in the authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_decode.html"><strong>sasl_decode</strong> - Decode data received</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_decode64.html"><strong>sasl_decode64</strong> - Decode base64 string</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_dispose.html"><strong>sasl_dispose</strong> - Dispose of a SASL connection object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_done.html"><strong>sasl_done</strong> - Dispose of a SASL connection object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_encode.html"><strong>sasl_encode</strong> - Encode data for transport to authenticated host</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_encode64.html"><strong>sasl_encode64</strong> - Encode base64 string</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_encodev.html"><strong>sasl_encodev</strong> - Encode data for transport to authenticated host</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_erasebuffer.html"><strong>sasl_erasebuffer</strong> - erase buffer</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_errdetail.html"><strong>sasl_errdetail</strong> - Retrieve  detailed information about an error</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_errors.html"><strong>sasl_errors</strong> - SASL error codes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_errstring.html"><strong>sasl_errstring</strong> - Translate a SASL return code to a human-readable form</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getcallback_t.html"><strong>sasl_getcallback_t</strong> - callback function to lookup a sasl_callback_t for a connection</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getconfpath_t.html"><strong>sasl_getconfpath_t</strong> - The SASL callback to indicate location of the config files</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getopt_t.html"><strong>sasl_getopt_t</strong> - The SASL get option callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getpath_t.html"><strong>sasl_getpath_t</strong> - The SASL callback to indicate location of the mechanism drivers</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getprop.html"><strong>sasl_getprop</strong> - Get a SASL property</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getrealm_t.html"><strong>sasl_getrealm_t</strong> - Realm Acquisition Callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getsecret_t.html"><strong>sasl_getsecret_t</strong> - The SASL callback for secrets (passwords)</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_getsimple_t.html"><strong>sasl_getsimple_t</strong> - The SASL callback for username/authname/realm</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_global_listmech.html"><strong>sasl_global_listmech</strong> - Retrieve a list of the supported SASL mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_idle.html"><strong>sasl_idle</strong> - Perform precalculations during an idle period</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_listmech.html"><strong>sasl_listmech</strong> - Retrieve a list of the supported SASL mechanisms</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_log_t.html"><strong>sasl_log_t</strong> - The SASL logging callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_add_plugin.html"><strong>sasl_server_add_plugin</strong> - add a SASL server plugin</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_done.html"><strong>sasl_server_done</strong> - Cleanup function</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_init.html"><strong>sasl_server_init</strong> - SASL server authentication initialization</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_new.html"><strong>sasl_server_new</strong> - Create a new server authentication object</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_plug_init_t.html"><strong>sasl_server_plug_init_t</strong> - server plug‐in entry point</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_start.html"><strong>sasl_server_start</strong> - Begin an authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_step.html"><strong>sasl_server_step</strong> - Perform a step in the authentication negotiation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_userdb_checkpass_t.html"><strong>sasl_server_userdb_checkpass_t</strong> - Plaintext Password Verification Callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_server_userdb_setpass_t.html"><strong>sasl_server_userdb_setpass_t</strong> - UserDB Plaintext Password Setting Callback</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_set_alloc.html"><strong>sasl_set_alloc</strong> - set the memory allocation functions used by the SASL library</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_set_mutex.html"><strong>sasl_set_mutex</strong> - set the mutex lock functions used by the SASL library</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_seterror.html"><strong>sasl_seterror</strong> - set the error string</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_setpass.html"><strong>sasl_setpass</strong> - Check a plaintext password</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_setprop.html"><strong>sasl_setprop</strong> - Set a SASL property</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_user_exists.html"><strong>sasl_user_exists</strong> - Check if a user exists on server</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_usererr.html"><strong>sasl_usererr</strong> - Remove information leak about accounts from sasl error codes</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_utf8verify.html"><strong>sasl_utf8verify</strong> - Verify a string is valid utf8</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../reference/manpages/library/sasl_verifyfile_t.html"><strong>sasl_verifyfile_t</strong> - The SASL file verification</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../auxiliary_properties.html">Auxiliary Properties</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../auxiliary_properties.html#auxiliary-properties-and-the-glue-layer">Auxiliary Properties and the Glue Layer</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../auxiliary_properties.html#passwords-and-other-data">Passwords and other Data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../auxiliary_properties.html#sasldb">sasldb</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../auxiliary_properties.html#ldapdb">ldapdb</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../auxiliary_properties.html#sql">sql</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../auxiliary_properties.html#user-canonicalization">User Canonicalization</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../authentication_mechanisms.html">Authentication Mechanisms</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../authentication_mechanisms.html#mechanisms">Mechanisms</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#anonymous">ANONYMOUS</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#cram-md5">CRAM-MD5</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#digest-md5">DIGEST-MD5</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#external">EXTERNAL</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#gs2">GS2</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#gssapi">GSSAPI</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#gss-spegno">GSS-SPEGNO</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#kerberos-v4">KERBEROS_V4</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#login">LOGIN</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#ntlm">NTLM</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#otp">OTP</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#passdss">PASSDSS</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#plain">PLAIN</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#scram">SCRAM</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#srp">SRP</a></li>
+<li class="toctree-l4"><a class="reference internal" href="../authentication_mechanisms.html#non-sasl-authentication">Non-SASL Authentication</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="../authentication_mechanisms.html#summary">Summary</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../pwcheck.html">Pwcheck</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../pwcheck.html#auxprop">Auxprop</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../pwcheck.html#auxprop-hashed">Auxprop-hashed</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../pwcheck.html#saslauthd">Saslauthd</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../pwcheck.html#authdaemon">Authdaemon</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../pwcheck.html#alwaystrue">Alwaystrue</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../pwcheck.html#auto-transition">Auto Transition</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../faq.html">Frequently Asked Questions</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../faqs/authorize-vs-authenticate.html">What is the difference between an Authorization ID and a Authentication ID?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../faqs/crammd5-digestmd5-scram.html">Why do CRAM-MD5, DIGEST-MD5 and SCRAM not work with CyrusSaslauthd?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../faqs/openldap-sasl-gssapi.html">How do I configure OpenLDAP +SASL+GSSAPI?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../faqs/plaintextpasswords.html">Why does CyrusSasl store plaintext passwords in its databases?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../faqs/rfcs.html">RFCs and drafts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../faqs/upgrade-saslv2.html">Why am I having a problem running dbconverter-2 to upgrade from SASLv1 to SASLv2?</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="../resources.html">Other Documentation &amp; Resources</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current"><a class="reference internal" href="../../developer.html">Developers</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../appconvert.html">Converting Applications from v1 to v2</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="../appconvert.html#tips-for-both-clients-and-servers">Tips for both clients and servers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../appconvert.html#tips-for-clients">Tips for clients</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../appconvert.html#tips-for-servers">Tips for Servers</a></li>
+</ul>
+</li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Application Programmer’s Guide</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#introduction">Introduction</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#about-this-guide">About this Guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#what-is-sasl">What is SASL?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#background">Background</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#how-did-the-world-work-before-sasl">How did the world work before SASL?</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#sasl-to-the-rescue">SASL to the rescue!</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#briefly">Briefly</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#what-is-the-cyrus-sasl-library-good-for">What is the Cyrus SASL library good for?</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#what-does-the-cyrus-sasl-library-do">What does the Cyrus SASL library do?</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#what-doesn-t-the-cyrus-sasl-library-do">What doesn’t the Cyrus SASL library do?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#client-only-section">Client-only Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#a-typical-interaction-from-the-client-s-perspective">A typical interaction from the client’s perspective</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#how-does-this-look-in-code">How does this look in code</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#server-only-section">Server-only Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#a-typical-interaction-from-the-server-s-perspective">A typical interaction from the server’s perspective</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#id1">How does this look in code?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#common-section">Common Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#callbacks-and-interactions">Callbacks and Interactions</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#security-layers">Security layers</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#example-applications-that-come-with-the-cyrus-sasl-library">Example applications that come with the Cyrus SASL library</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#sample-client-and-sample-server"><cite>sample-client</cite> and <cite>sample-server</cite></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#cyrus-imapd-v2-1-0-or-later">Cyrus imapd v2.1.0 or later</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#imtest-from-cyrus-2-1-0-or-later"><cite>imtest</cite>, from Cyrus 2.1.0 or later</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#miscellaneous-information">Miscellaneous Information</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#empty-exchanges">Empty exchanges</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#idle">Idle</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="plugprog.html">Plugin Programmer’s Guide</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="plugprog.html#introduction">Introduction</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#about-this-guide">About this Guide</a></li>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#what-is-sasl">What is SASL?</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="plugprog.html#common-section">Common Section</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#overview-of-plugin-programming">Overview of Plugin Programming</a></li>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#use-of-sasl-utils-t">Use of sasl_utils_t</a></li>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#error-reporting">Error Reporting</a></li>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#memory-allocation">Memory Allocation</a></li>
+<li class="toctree-l4"><a class="reference internal" href="plugprog.html#client-send-first-server-send-last">Client Send First / Server Send Last</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="plugprog.html#client-plugins">Client Plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="plugprog.html#server-plugins">Server Plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="plugprog.html#user-canonicalization-canon-user-plugins">User Canonicalization (canon_user) Plugins</a></li>
+<li class="toctree-l3"><a class="reference internal" href="plugprog.html#auxiliary-property-auxprop-plugins">Auxiliary Property (auxprop) Plugins</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="testing.html">Testing</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="testing.html#testing-the-cmu-sasl-library-with-the-included-sample-applications">Testing the CMU SASL Library with the included sample applications</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="testing.html#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="testing.html#running-the-testsuite-application">Running the Testsuite application</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../support.html">Support/Community</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">IMAP</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference external" href="http://www.cyrusimap.org">Cyrus IMAP</a></li>
+</ul>
+
+          
+        
+      </div>
+      &nbsp;
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="../../index.html">Cyrus SASL</a>
+      </nav>
+
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          
+          <div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html">Docs v2.1.28</a> &raquo;</li>
+      
+          <li><a href="../../developer.html">Developers</a> &raquo;</li>
+      
+    <li>Application Programmer’s Guide</li>
+      <li class="wy-breadcrumbs-aside">
+        
+          
+            <a href="https://github.com/cyrusimap/cyrus-sasl/blob/master/docsrc/sasl/developer/programming.rst" class="fa fa-github"> Edit on GitHub</a>
+          
+        
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document">
+            
+  <div class="section" id="application-programmer-s-guide">
+<span id="programming"></span><h1>Application Programmer’s Guide<a class="headerlink" href="#application-programmer-s-guide" title="Permalink to this headline">¶</a></h1>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>NOTE: This is a work in progress. Any contributions would be
+<em>very</em> appreciated.</p>
+</div>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#introduction" id="id2">Introduction</a></p>
+<ul>
+<li><p><a class="reference internal" href="#about-this-guide" id="id3">About this Guide</a></p></li>
+<li><p><a class="reference internal" href="#what-is-sasl" id="id4">What is SASL?</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#background" id="id5">Background</a></p>
+<ul>
+<li><p><a class="reference internal" href="#how-did-the-world-work-before-sasl" id="id6">How did the world work before SASL?</a></p></li>
+<li><p><a class="reference internal" href="#sasl-to-the-rescue" id="id7">SASL to the rescue!</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#briefly" id="id8">Briefly</a></p>
+<ul>
+<li><p><a class="reference internal" href="#what-is-the-cyrus-sasl-library-good-for" id="id9">What is the Cyrus SASL library good for?</a></p></li>
+<li><p><a class="reference internal" href="#what-does-the-cyrus-sasl-library-do" id="id10">What does the Cyrus SASL library do?</a></p></li>
+<li><p><a class="reference internal" href="#what-doesn-t-the-cyrus-sasl-library-do" id="id11">What doesn’t the Cyrus SASL library do?</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#client-only-section" id="id12">Client-only Section</a></p>
+<ul>
+<li><p><a class="reference internal" href="#a-typical-interaction-from-the-client-s-perspective" id="id13">A typical interaction from the client’s perspective</a></p></li>
+<li><p><a class="reference internal" href="#how-does-this-look-in-code" id="id14">How does this look in code</a></p>
+<ul>
+<li><p><a class="reference internal" href="#initialize-the-library" id="id15">1. Initialize the library</a></p></li>
+<li><p><a class="reference internal" href="#make-a-new-sasl-connection" id="id16">2. Make a new SASL connection</a></p></li>
+<li><p><a class="reference internal" href="#get-the-mechanism-list" id="id17">3. Get the mechanism list</a></p></li>
+<li><p><a class="reference internal" href="#start-authentication" id="id18">4. Start authentication</a></p></li>
+<li><p><a class="reference internal" href="#check-results" id="id19">5. Check Results</a></p></li>
+<li><p><a class="reference internal" href="#authentication-successful" id="id20">6. Authentication Successful</a></p></li>
+<li><p><a class="reference internal" href="#cleaning-up" id="id21">7. Cleaning up</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#server-only-section" id="id22">Server-only Section</a></p>
+<ul>
+<li><p><a class="reference internal" href="#a-typical-interaction-from-the-server-s-perspective" id="id23">A typical interaction from the server’s perspective</a></p></li>
+<li><p><a class="reference internal" href="#id1" id="id24">How does this look in code?</a></p>
+<ul>
+<li><p><a class="reference internal" href="#initialization" id="id25">Initialization</a></p></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#common-section" id="id26">Common Section</a></p>
+<ul>
+<li><p><a class="reference internal" href="#callbacks-and-interactions" id="id27">Callbacks and Interactions</a></p></li>
+<li><p><a class="reference internal" href="#security-layers" id="id28">Security layers</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#example-applications-that-come-with-the-cyrus-sasl-library" id="id29">Example applications that come with the Cyrus SASL library</a></p>
+<ul>
+<li><p><a class="reference internal" href="#sample-client-and-sample-server" id="id30"><cite>sample-client</cite> and <cite>sample-server</cite></a></p></li>
+<li><p><a class="reference internal" href="#cyrus-imapd-v2-1-0-or-later" id="id31">Cyrus imapd v2.1.0 or later</a></p></li>
+<li><p><a class="reference internal" href="#imtest-from-cyrus-2-1-0-or-later" id="id32"><cite>imtest</cite>, from Cyrus 2.1.0 or later</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#miscellaneous-information" id="id33">Miscellaneous Information</a></p>
+<ul>
+<li><p><a class="reference internal" href="#empty-exchanges" id="id34">Empty exchanges</a></p></li>
+<li><p><a class="reference internal" href="#idle" id="id35">Idle</a></p></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="introduction">
+<h2><a class="toc-backref" href="#id2">Introduction</a><a class="headerlink" href="#introduction" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="about-this-guide">
+<h3><a class="toc-backref" href="#id3">About this Guide</a><a class="headerlink" href="#about-this-guide" title="Permalink to this headline">¶</a></h3>
+<p>This guide gives a tutorial on the use of the Cyrus SASL library
+for a client or server application. It complies with versions
+including and after 2.0.0. The following pages should only be
+considered a guide, not the final word on programming with the
+Cyrus SASL library. Consult the header files in the distribution in
+the case of ambiguities.</p>
+</div>
+<div class="section" id="what-is-sasl">
+<h3><a class="toc-backref" href="#id4">What is SASL?</a><a class="headerlink" href="#what-is-sasl" title="Permalink to this headline">¶</a></h3>
+<p>SASL stands for Simple Authentication Security Layer and is
+defined in <span class="target" id="index-0"></span><a class="rfc reference external" href="https://datatracker.ietf.org/doc/html/rfc2222.html"><strong>RFC 2222</strong></a>. That document is very difficult to understand however and
+it should be unnecessary to consult it.</p>
+</div>
+</div>
+<div class="section" id="background">
+<h2><a class="toc-backref" href="#id5">Background</a><a class="headerlink" href="#background" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="how-did-the-world-work-before-sasl">
+<h3><a class="toc-backref" href="#id6">How did the world work before SASL?</a><a class="headerlink" href="#how-did-the-world-work-before-sasl" title="Permalink to this headline">¶</a></h3>
+<p>Before SASL, when a new protocol was written which required
+authentication (users proving who they are to an entity), the
+protocol had to allow explicitly for each individual authentication
+mechanism. There had to be a distinct way to say “I want to log in
+with Kerberos V4”. There had to be another distinct way to say “I
+want to log in with CRAM-MD5”. There had to be yet a different way
+to say “I want to log in anonymously,” and so on. This was
+not ideal for both the protocol and application writers.</p>
+<p>Additionally, many programmers were not very familiar with
+security, so the protocol did support many mechanisms, or worse,
+they were supported incorrectly. Moreover, when a new
+authentication method was invented the protocol needed to be
+modified to support that mechanism.</p>
+<p>This system also was not ideal for application writer. She had
+to have a special case for each mechanism she wished her
+application to support. Also, the mechanisms were difficult to
+implement. Even with a good library, an understanding of how the
+mechanism worked was still necessary. Finally if an application
+used more than one protocol (for example a mail client might use
+IMAP, POP, and SMTP) then “Kerberos V4 for IMAP”, “Kerberos V4 for
+POP”, “Kerberos V4 for SMTP”, “CRAM MD5 for IMAP”, “CRAM-MD5 for
+POP”, etc… would need to be written. This could quickly create a
+huge number of different mechanism-protocol pairs to implement.</p>
+</div>
+<div class="section" id="sasl-to-the-rescue">
+<h3><a class="toc-backref" href="#id7">SASL to the rescue!</a><a class="headerlink" href="#sasl-to-the-rescue" title="Permalink to this headline">¶</a></h3>
+<p>SASL hopefully solves all these problems. In practice it makes
+many of them easier to deal with.</p>
+<p>Protocol designers simply have to support SASL (in particular
+<span class="target" id="index-1"></span><a class="rfc reference external" href="https://datatracker.ietf.org/doc/html/rfc2222.html"><strong>RFC 2222</strong></a>). Consequently, any mechanism that supports SASL (just
+about anything you would want to use does now) is supported by the
+protocol. If a new authentication mechanism is invented the
+protocol automatically supports it without any modifications.</p>
+<p>Application writers, instead of having to support every
+mechanism for every protocol, only need to support SASL for every
+protocol. Application writers do not need to understand the
+authentication mechanisms at all: the SASL library handles all
+that. Also with the Cyrus SASL library if a new mechanism is
+invented you do not have rewrite your application at all. You may
+not even have to restart your application if it is a long running
+process. This is because the Cyrus SASL library loads each
+mechanism from a shared library. Simply copying a shared library
+into a directory will magically make your application support a new
+mechanism.</p>
+<p>Cyrus SASL version 2 supports a much improved API over version
+1, that allows for much smarter and faster memory allocation for
+the mechanisms as well as the applications. It is also provides for
+several new types of plugins to allow for greater overall
+flexibility. Unfortunately, though similar, this new API is
+completely incompatible with the old API, and applications will
+need to be rewritten.</p>
+</div>
+</div>
+<div class="section" id="briefly">
+<h2><a class="toc-backref" href="#id8">Briefly</a><a class="headerlink" href="#briefly" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="what-is-the-cyrus-sasl-library-good-for">
+<h3><a class="toc-backref" href="#id9">What is the Cyrus SASL library good for?</a><a class="headerlink" href="#what-is-the-cyrus-sasl-library-good-for" title="Permalink to this headline">¶</a></h3>
+<p>The Cyrus SASL library is good for applications that wish to use
+protocols that support SASL authentication. An non-exhaustive list
+of these are: IMAP, SMTP, ACAP, and LDAP. Also if you are making a
+proprietary system and wish to support authentication it is a good
+way of supporting many different authentication types.</p>
+</div>
+<div class="section" id="what-does-the-cyrus-sasl-library-do">
+<h3><a class="toc-backref" href="#id10">What does the Cyrus SASL library do?</a><a class="headerlink" href="#what-does-the-cyrus-sasl-library-do" title="Permalink to this headline">¶</a></h3>
+<p>From a client point of view, the Cyrus SASL library, given a
+list of mechanisms the server supports it will decide the best
+mechanism to use and tell you what to send to the server at each
+step of the authentication. From a server perspective, it handles
+authentication requests from clients.</p>
+</div>
+<div class="section" id="what-doesn-t-the-cyrus-sasl-library-do">
+<h3><a class="toc-backref" href="#id11">What doesn’t the Cyrus SASL library do?</a><a class="headerlink" href="#what-doesn-t-the-cyrus-sasl-library-do" title="Permalink to this headline">¶</a></h3>
+<p>The Cyrus SASL library is neither network nor protocol aware. It
+is up to the application to send the data over the wire as well as
+to send the data in the protocol specific manner. With IMAP this
+means putting it in the form: <code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">[base64'ed</span> <span class="pre">data]\\r\\n</span></code>. LDAP
+just sends data in binary via bind requests. The Cyrus SASL library
+has utility base64 encode and decode routines to help with
+this.</p>
+</div>
+</div>
+<div class="section" id="client-only-section">
+<h2><a class="toc-backref" href="#id12">Client-only Section</a><a class="headerlink" href="#client-only-section" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="a-typical-interaction-from-the-client-s-perspective">
+<h3><a class="toc-backref" href="#id13">A typical interaction from the client’s perspective</a><a class="headerlink" href="#a-typical-interaction-from-the-client-s-perspective" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li><p>A client makes a few calls to initialize SASL.</p></li>
+<li><p>Every time the client application makes a new connection it
+should make a new context that is kept for the life of the
+connection.</p></li>
+<li><p>Ask the server for the list of supported mechanisms</p></li>
+<li><p>Feed this list to the library</p></li>
+<li><p>Start the authentication with the mechanism the library
+chose</p></li>
+<li><p>The server will return some bytes</p></li>
+<li><p>Give these to the library</p></li>
+<li><p>The library returns some bytes to the application</p></li>
+<li><p>Application sends these bytes over the network</p></li>
+<li><p>Repeat the last 4 steps until the server tells you that the
+authentication is completed</p></li>
+</ul>
+</div>
+<div class="section" id="how-does-this-look-in-code">
+<h3><a class="toc-backref" href="#id14">How does this look in code</a><a class="headerlink" href="#how-does-this-look-in-code" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="initialize-the-library">
+<h4><a class="toc-backref" href="#id15">1. Initialize the library</a><a class="headerlink" href="#initialize-the-library" title="Permalink to this headline">¶</a></h4>
+<p>This is done once, using <a class="reference internal" href="../reference/manpages/library/sasl_client_init.html#std-saslman-sasl_client_init-3">sasl_client_init(3)</a>.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="n">result</span><span class="p">;</span>
+
+<span class="cm">/* attempt to start sasl</span>
+<span class="cm"> * See the section on Callbacks and Interactions for an</span>
+<span class="cm"> * explanation of the variable callbacks</span>
+<span class="cm"> */</span>
+
+<span class="n">result</span><span class="o">=</span><span class="n">sasl_client_init</span><span class="p">(</span><span class="n">callbacks</span><span class="p">);</span>
+
+    <span class="cm">/* check to see if that worked */</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_OK</span><span class="p">)</span> <span class="cm">/* [failure] */</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="make-a-new-sasl-connection">
+<h4><a class="toc-backref" href="#id16">2. Make a new SASL connection</a><a class="headerlink" href="#make-a-new-sasl-connection" title="Permalink to this headline">¶</a></h4>
+<p>For every network connection, make a new SASL connection, using
+<a class="reference internal" href="../reference/manpages/library/sasl_client_new.html#std-saslman-sasl_client_new-3">sasl_client_new(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="cm">/* The SASL context kept for the life of the connection */</span>
+<span class="n">sasl_conn_t</span> <span class="o">*</span><span class="n">conn</span><span class="p">;</span>
+
+
+<span class="cm">/* client new connection */</span>
+<span class="n">result</span><span class="o">=</span><span class="n">sasl_client_new</span><span class="p">(</span><span class="s">&quot;imap&quot;</span><span class="p">,</span>     <span class="cm">/* The service we are using */</span>
+           <span class="n">serverFQDN</span><span class="p">,</span> <span class="cm">/* The fully qualified domain</span>
+<span class="cm">                                      name of the server we&#39;re</span>
+<span class="cm">                                      connecting to */</span>
+           <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="cm">/* Local and remote IP</span>
+<span class="cm">                                      address strings</span>
+<span class="cm">                                      (NULL disables mechanisms</span>
+<span class="cm">                                       which require this info)*/</span>
+                       <span class="nb">NULL</span><span class="p">,</span>       <span class="cm">/* connection-specific</span>
+<span class="cm">                                      callbacks */</span>
+           <span class="mi">0</span><span class="p">,</span>          <span class="cm">/* security flags */</span>
+           <span class="o">&amp;</span><span class="n">conn</span><span class="p">);</span>     <span class="cm">/* allocated on success */</span>
+
+<span class="cm">/* check to see if that worked */</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_OK</span><span class="p">)</span> <span class="cm">/* [failure] */</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="get-the-mechanism-list">
+<h4><a class="toc-backref" href="#id17">3. Get the mechanism list</a><a class="headerlink" href="#get-the-mechanism-list" title="Permalink to this headline">¶</a></h4>
+<p>Next get the list of SASL mechanisms the server supports. This is
+usually done through a capability command. Format the list as a
+single string separated by spaces. Feed this string into SASL to
+begin the authentication process.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span> <span class="n">sasl_interact_t</span> <span class="o">*</span><span class="n">client_interact</span><span class="o">=</span><span class="nb">NULL</span><span class="p">;</span>
+ <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">out</span><span class="p">,</span> <span class="o">*</span><span class="n">mechusing</span><span class="p">;</span>
+ <span class="kt">unsigned</span> <span class="n">outlen</span><span class="p">;</span>
+
+ <span class="k">do</span> <span class="p">{</span>
+
+   <span class="n">result</span><span class="o">=</span><span class="n">sasl_client_start</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span>      <span class="cm">/* the same context from</span>
+<span class="cm">                                          above */</span>
+            <span class="n">mechlist</span><span class="p">,</span>  <span class="cm">/* the list of mechanisms</span>
+<span class="cm">                          from the server */</span>
+            <span class="o">&amp;</span><span class="n">client_interact</span><span class="p">,</span> <span class="cm">/* filled in if an</span>
+<span class="cm">                                 interaction is needed */</span>
+            <span class="o">&amp;</span><span class="n">out</span><span class="p">,</span>      <span class="cm">/* filled in on success */</span>
+            <span class="o">&amp;</span><span class="n">outlen</span><span class="p">,</span>   <span class="cm">/* filled in on success */</span>
+            <span class="o">&amp;</span><span class="n">mechusing</span><span class="p">);</span>
+
+   <span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">==</span><span class="n">SASL_INTERACT</span><span class="p">)</span>
+   <span class="p">{</span>
+      <span class="cm">/* [deal with the interactions. See interactions section below] */</span>
+   <span class="p">}</span>
+
+
+<span class="p">}</span> <span class="k">while</span> <span class="p">(</span><span class="n">result</span><span class="o">==</span><span class="n">SASL_INTERACT</span><span class="p">);</span> <span class="cm">/* the mechanism may ask us to fill</span>
+<span class="cm">                                    in things many times. result is</span>
+<span class="cm">                                    SASL_CONTINUE on success */</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_CONTINUE</span><span class="p">)</span> <span class="cm">/* [failure] */</span>
+</pre></div>
+</div>
+<p>Note that you do not need to worry about the allocation and freeing
+of the output buffer <cite>out</cite>. This is all handled inside the
+mechanism. It is important to note, however, that the output buffer
+is not valid after the next call to <a class="reference internal" href="../reference/manpages/library/sasl_client_start.html#std-saslman-sasl_client_start-3">sasl_client_start(3)</a> or
+<a class="reference internal" href="../reference/manpages/library/sasl_client_step.html#std-saslman-sasl_client_step-3">sasl_client_step(3)</a>.</p>
+<p>If this is successful send the protocol specific command to
+start the authentication process. This may or may not allow for
+initial data to be sent (see the documentation of the protocol to
+see).</p>
+</div>
+<div class="section" id="start-authentication">
+<h4><a class="toc-backref" href="#id18">4. Start authentication</a><a class="headerlink" href="#start-authentication" title="Permalink to this headline">¶</a></h4>
+<ul>
+<li><p>For IMAP this might look like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="n">tag</span><span class="p">}</span> <span class="s2">&quot;AUTHENTICATE&quot;</span> <span class="p">{</span><span class="n">mechusing</span><span class="p">}</span>\<span class="n">r</span>\<span class="n">n</span>
+<span class="n">A01</span> <span class="n">AUTHENTICATE</span> <span class="n">KERBEROS_V4</span>\<span class="n">r</span>\<span class="n">n</span>
+</pre></div>
+</div>
+</li>
+<li><p>SMTP looks like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="s2">&quot;AUTH&quot;</span> <span class="p">{</span><span class="n">mechusing</span><span class="p">}[</span> <span class="p">{</span><span class="n">out</span> <span class="n">base64</span> <span class="n">encoded</span><span class="p">}]</span>
+<span class="n">AUTH</span> <span class="n">DIGEST</span><span class="o">-</span><span class="n">MD5</span> <span class="n">GHGJJGDDFDKHGHJG</span><span class="o">=</span>
+</pre></div>
+</div>
+</li>
+</ul>
+</div>
+<div class="section" id="check-results">
+<span id="client-authentication-step"></span><h4><a class="toc-backref" href="#id19">5. Check Results</a><a class="headerlink" href="#check-results" title="Permalink to this headline">¶</a></h4>
+<p>Read what the server sent back. It can be one of three
+things:</p>
+<ol class="arabic simple">
+<li><p>Authentication failure. Authentication process is halted. This
+might look like <code class="docutils literal notranslate"><span class="pre">A01</span> <span class="pre">NO</span> <span class="pre">Authentication</span> <span class="pre">failure</span></code> in IMAP or
+<code class="docutils literal notranslate"><span class="pre">501</span> <span class="pre">Failed</span></code> in SMTP. Either retry the authentication or
+abort.</p></li>
+<li><p>Authentication success. We’re now successfully authenticated.
+This might look like <code class="docutils literal notranslate"><span class="pre">A01</span> <span class="pre">OK</span> <span class="pre">Authenticated</span> <span class="pre">successful</span></code> in
+IMAP or <code class="docutils literal notranslate"><span class="pre">235</span> <span class="pre">Authentication</span> <span class="pre">successful</span></code> in SMTP.
+Go <a class="reference internal" href="#client-authentication-success"><span class="std std-ref">here</span></a>.</p></li>
+<li><p>Another step in the authentication process is necessary. This
+might look like <code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">HGHDS1HAFJ=</span></code> in IMAP or <code class="docutils literal notranslate"><span class="pre">334</span>
+<span class="pre">PENCeUxFREJoU0NnbmhNWitOMjNGNndAZWx3b29kLmlubm9zb2Z0LmNvbT4=</span></code>
+in SMTP. Note it could be an empty string such as <code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">\r\n</span></code>
+in IMAP.</p></li>
+</ol>
+<p>Convert the continuation data to binary format (for example, this
+may include base64 decoding it). Perform another step in the
+authentication using <a class="reference internal" href="../reference/manpages/library/sasl_client_step.html#std-saslman-sasl_client_step-3">sasl_client_step(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">do</span> <span class="p">{</span>
+  <span class="n">result</span><span class="o">=</span><span class="n">sasl_client_step</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span>  <span class="cm">/* our context */</span>
+          <span class="n">in</span><span class="p">,</span>    <span class="cm">/* the data from the server */</span>
+          <span class="n">inlen</span><span class="p">,</span> <span class="cm">/* its length */</span>
+          <span class="o">&amp;</span><span class="n">client_interact</span><span class="p">,</span>  <span class="cm">/* this should be</span>
+<span class="cm">                                unallocated and NULL */</span>
+          <span class="o">&amp;</span><span class="n">out</span><span class="p">,</span>     <span class="cm">/* filled in on success */</span>
+          <span class="o">&amp;</span><span class="n">outlen</span><span class="p">);</span> <span class="cm">/* filled in on success */</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">==</span><span class="n">SASL_INTERACT</span><span class="p">)</span>
+  <span class="p">{</span>
+     <span class="cm">/* [deal with the interactions. See below] */</span>
+  <span class="p">}</span>
+
+
+<span class="p">}</span> <span class="k">while</span> <span class="p">(</span><span class="n">result</span><span class="o">==</span><span class="n">SASL_INTERACT</span> <span class="o">||</span> <span class="n">result</span> <span class="o">==</span> <span class="n">SASL_CONTINUE</span><span class="p">);</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_OK</span><span class="p">)</span> <span class="cm">/* [failure] */</span>
+</pre></div>
+</div>
+<p>Format the output (variable out of length outlen) in the protocol
+specific manner and send it across the network to the server.</p>
+<p>Go <a class="reference internal" href="#client-authentication-step"><span class="std std-ref">back to check results</span></a> (this process
+repeats until authentication either succeeds or fails.</p>
+</div>
+<div class="section" id="authentication-successful">
+<span id="client-authentication-success"></span><h4><a class="toc-backref" href="#id20">6. Authentication Successful</a><a class="headerlink" href="#authentication-successful" title="Permalink to this headline">¶</a></h4>
+<p>Before we’re done we need to call <a class="reference internal" href="../reference/manpages/library/sasl_client_step.html#std-saslman-sasl_client_step-3">sasl_client_step(3)</a> one more
+time to make sure the server isn’t trying to fool us. Some
+protocols include data along with the last step. If so this data
+should be used here. If not use a length of zero.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">result</span><span class="o">=</span><span class="n">sasl_client_step</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span>  <span class="cm">/* our context */</span>
+        <span class="n">in</span><span class="p">,</span>    <span class="cm">/* the data from the server */</span>
+        <span class="n">inlen</span><span class="p">,</span> <span class="cm">/* it&#39;s length */</span>
+        <span class="o">&amp;</span><span class="n">client_interact</span><span class="p">,</span>  <span class="cm">/* this should be unallocated and NULL */</span>
+        <span class="o">&amp;</span><span class="n">out</span><span class="p">,</span>     <span class="cm">/* filled in on success */</span>
+        <span class="o">&amp;</span><span class="n">outlen</span><span class="p">);</span> <span class="cm">/* filled in on success */</span>
+
+<span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_OK</span><span class="p">)</span> <span class="cm">/* [failure] */</span>
+</pre></div>
+</div>
+<p>Congratulations. You have successfully authenticated to the
+server.</p>
+<p>Don’t throw away the SASL connection object (sasl_conn_t *) yet
+though. If a security layer was negotiated you will need it to
+encode and decode the data sent over the network.</p>
+</div>
+<div class="section" id="cleaning-up">
+<h4><a class="toc-backref" href="#id21">7. Cleaning up</a><a class="headerlink" href="#cleaning-up" title="Permalink to this headline">¶</a></h4>
+<p>When you are finally done with connection to server, dispose of
+SASL connection using <a class="reference internal" href="../reference/manpages/library/sasl_dispose.html#std-saslman-sasl_dispose-3">sasl_dispose(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">sasl_dispose</span><span class="p">(</span><span class="o">&amp;</span><span class="n">conn</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>If you are done with SASL forever (application quitting for
+example), use <a class="reference internal" href="../reference/manpages/library/sasl_client_done.html#std-saslman-sasl_client_done-3">sasl_client_done(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">sasl_client_done</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>Or if your application is both a SASL client and a SASL server,
+use <a class="reference internal" href="../reference/manpages/library/sasl_done.html#std-saslman-sasl_done-3">sasl_done(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">sasl_done</span><span class="p">();</span>
+</pre></div>
+</div>
+<p>But note that applications should be using
+<a class="reference internal" href="../reference/manpages/library/sasl_client_done.html#std-saslman-sasl_client_done-3">sasl_client_done(3)</a>/<a class="reference internal" href="../reference/manpages/library/sasl_server_done.html#std-saslman-sasl_server_done-3">sasl_server_done(3)</a> whenever possible.</p>
+</div>
+</div>
+</div>
+<div class="section" id="server-only-section">
+<h2><a class="toc-backref" href="#id22">Server-only Section</a><a class="headerlink" href="#server-only-section" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="a-typical-interaction-from-the-server-s-perspective">
+<h3><a class="toc-backref" href="#id23">A typical interaction from the server’s perspective</a><a class="headerlink" href="#a-typical-interaction-from-the-server-s-perspective" title="Permalink to this headline">¶</a></h3>
+<p>The server makes a few Cyrus SASL calls for initialization. When it
+gets a new connection it should make a new context for that
+connection immediately. The client may then request a list of
+mechanisms the server supports. The client also may request to
+authenticate at some point. The client will specify the mechanism
+it wishes to use. The server should negotiate this authentication
+and keep around the context afterwards for encoding and decoding
+the layers.</p>
+</div>
+<div class="section" id="id1">
+<h3><a class="toc-backref" href="#id24">How does this look in code?</a><a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h3>
+<div class="section" id="initialization">
+<h4><a class="toc-backref" href="#id25">Initialization</a><a class="headerlink" href="#initialization" title="Permalink to this headline">¶</a></h4>
+<p>This is done once, using <a class="reference internal" href="../reference/manpages/library/sasl_server_init.html#std-saslman-sasl_server_init-3">sasl_server_init(3)</a>.
+The application name is used for reading configuration information.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="n">result</span><span class="p">;</span>
+
+<span class="cm">/* Initialize SASL */</span>
+<span class="n">result</span><span class="o">=</span><span class="n">sasl_server_init</span><span class="p">(</span><span class="n">callbacks</span><span class="p">,</span>      <span class="cm">/* Callbacks supported */</span>
+                        <span class="s">&quot;TestServer&quot;</span><span class="p">);</span>  <span class="cm">/* Name of the application */</span>
+</pre></div>
+</div>
+<p><a class="reference internal" href="../reference/manpages/library/sasl_server_new.html#std-saslman-sasl_server_new-3">sasl_server_new(3)</a> should be called for each new connection. It should
+be called when the socket is accepted.</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">sasl_conn_t</span> <span class="o">*</span><span class="n">conn</span><span class="p">;</span>
+<span class="kt">int</span> <span class="n">result</span><span class="p">;</span>
+
+<span class="cm">/* Make a new context for this connection */</span>
+<span class="n">result</span><span class="o">=</span><span class="n">sasl_server_new</span><span class="p">(</span><span class="s">&quot;smtp&quot;</span><span class="p">,</span> <span class="cm">/* Registered name of service */</span>
+        <span class="nb">NULL</span><span class="p">,</span> <span class="cm">/* my fully qualified domain name;</span>
+<span class="cm">                NULL says use gethostname() */</span>
+        <span class="nb">NULL</span><span class="p">,</span> <span class="cm">/* The user realm used for password</span>
+<span class="cm">                lookups; NULL means default to serverFQDN</span>
+<span class="cm">                Note: This does not affect Kerberos */</span>
+        <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="cm">/* IP Address information strings */</span>
+        <span class="nb">NULL</span><span class="p">,</span>   <span class="cm">/* Callbacks supported only for this connection */</span>
+        <span class="mi">0</span><span class="p">,</span>  <span class="cm">/* security flags (security layers are enabled</span>
+<span class="cm">               using security properties, separately) */</span>
+        <span class="o">&amp;</span><span class="n">conn</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>When a client requests the list of mechanisms supported by the
+server, use <a class="reference internal" href="../reference/manpages/library/sasl_listmech.html#std-saslman-sasl_listmech-3">sasl_listmech(3)</a>. This particular call might
+produce the string: <code class="docutils literal notranslate"><span class="pre">{PLAIN,</span> <span class="pre">KERBEROS_V4,</span> <span class="pre">CRAM-MD5,</span> <span class="pre">DIGEST-MD5}</span></code></p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">result</span><span class="o">=</span><span class="n">sasl_listmech</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span>  <span class="cm">/* The context for this connection */</span>
+         <span class="nb">NULL</span><span class="p">,</span>  <span class="cm">/* not supported */</span>
+         <span class="s">&quot;{&quot;</span><span class="p">,</span>   <span class="cm">/* What to prepend the string with */</span>
+         <span class="s">&quot;, &quot;</span><span class="p">,</span>  <span class="cm">/* What to separate mechanisms with */</span>
+         <span class="s">&quot;}&quot;</span><span class="p">,</span>   <span class="cm">/* What to append to the string */</span>
+         <span class="o">&amp;</span><span class="n">result_string</span><span class="p">,</span> <span class="cm">/* The produced string. */</span>
+                     <span class="o">&amp;</span><span class="n">string_length</span><span class="p">,</span> <span class="cm">/* length of the string */</span>
+                     <span class="o">&amp;</span><span class="n">number_of_mechanisms</span><span class="p">);</span> <span class="cm">/* Number of mechanisms in</span>
+<span class="cm">                                            the string */</span>
+</pre></div>
+</div>
+<p>When a client requests to authenticate, use <a class="reference internal" href="../reference/manpages/library/sasl_server_start.html#std-saslman-sasl_server_start-3">sasl_server_start(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="n">result</span><span class="p">;</span>
+<span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">out</span><span class="p">;</span>
+<span class="kt">unsigned</span> <span class="n">outlen</span><span class="p">;</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">sasl_server_start</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="cm">/* context */</span>
+             <span class="n">mechanism_client_chose</span><span class="p">,</span>
+             <span class="n">clientin</span><span class="p">,</span>    <span class="cm">/* the optional string the client gave us */</span>
+             <span class="n">clientinlen</span><span class="p">,</span> <span class="cm">/* and it&#39;s length */</span>
+             <span class="o">&amp;</span><span class="n">out</span><span class="p">,</span> <span class="cm">/* The output of the library.</span>
+<span class="cm">                      Might not be NULL terminated */</span>
+             <span class="o">&amp;</span><span class="n">outlen</span><span class="p">);</span>
+
+<span class="k">if</span> <span class="p">((</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_OK</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_CONTINUE</span><span class="p">))</span>
+  <span class="cm">/* failure. Send protocol specific message that says authentication failed */</span>
+<span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">==</span><span class="n">SASL_OK</span><span class="p">)</span>
+  <span class="cm">/* authentication succeeded. Send client the protocol specific message</span>
+<span class="cm">   to say that authentication is complete */</span>
+<span class="k">else</span>
+  <span class="cm">/* send data &#39;out&#39; with length &#39;outlen&#39; over the network in protocol</span>
+<span class="cm">   specific format */</span>
+</pre></div>
+</div>
+<p>When a response is returned by the client. <code class="docutils literal notranslate"><span class="pre">clientin</span></code> is the
+data from the client decoded from protocol specific format to a
+string of bytes of length <code class="docutils literal notranslate"><span class="pre">clientinlen</span></code>. This step may occur
+zero or more times. An application must be able to deal with it
+occurring an arbitrary number of times, using <a class="reference internal" href="../reference/manpages/library/sasl_server_step.html#std-saslman-sasl_server_step-3">sasl_server_step(3)</a>:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span> <span class="n">result</span><span class="p">;</span>
+
+<span class="n">result</span><span class="o">=</span><span class="n">sasl_server_step</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span>
+                        <span class="n">clientin</span><span class="p">,</span>      <span class="cm">/* what the client gave */</span>
+                        <span class="n">clientinlen</span><span class="p">,</span>   <span class="cm">/* it&#39;s length */</span>
+                        <span class="o">&amp;</span><span class="n">out</span><span class="p">,</span>          <span class="cm">/* allocated by library on success.</span>
+<span class="cm">                                          Might not be NULL terminated */</span>
+                        <span class="o">&amp;</span><span class="n">outlen</span><span class="p">);</span>
+
+<span class="k">if</span> <span class="p">((</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_OK</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="p">(</span><span class="n">result</span><span class="o">!=</span><span class="n">SASL_CONTINUE</span><span class="p">))</span>
+    <span class="cm">/* failure. Send protocol specific message that says authentication failed */</span>
+<span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">result</span><span class="o">==</span><span class="n">SASL_OK</span><span class="p">)</span>
+    <span class="cm">/* authentication succeeded. Send client the protocol specific message</span>
+<span class="cm">       to say that authentication is complete */</span>
+<span class="k">else</span>
+    <span class="cm">/* send data &#39;out&#39; with length &#39;outlen&#39; over the network in protocol</span>
+<span class="cm">        specific format */</span>
+</pre></div>
+</div>
+<p>This continues until authentication succeeds. When the connection
+is concluded, make a call to <a class="reference internal" href="../reference/manpages/library/sasl_dispose.html#std-saslman-sasl_dispose-3">sasl_dispose(3)</a>, as with the
+client connection.</p>
+</div>
+</div>
+</div>
+<div class="section" id="common-section">
+<h2><a class="toc-backref" href="#id26">Common Section</a><a class="headerlink" href="#common-section" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="callbacks-and-interactions">
+<span id="callbacks"></span><h3><a class="toc-backref" href="#id27">Callbacks and Interactions</a><a class="headerlink" href="#callbacks-and-interactions" title="Permalink to this headline">¶</a></h3>
+<p>When the application starts and calls <a class="reference internal" href="../reference/manpages/library/sasl_client_init.html#std-saslman-sasl_client_init-3">sasl_client_init(3)</a> you must
+specify for what data you support callbacks and/or interactions.</p>
+<p>These are for the library getting information needed for
+authentication from the application. This is needed for things like
+authentication name and password. If you do not declare supporting
+a callback you will not be able to use mechanisms that need that
+data.</p>
+<p>A <em>callback</em> is for when you have the information before you
+start the authentication. The SASL library calls a function you
+specify and your function fills in the requested information. For
+example if you had the userid of the user already for some reason.</p>
+<p>An <em>interaction</em> is usually for things you support but will need to ask the user
+for (e.g. password). <a class="reference internal" href="../reference/manpages/library/sasl_client_start.html#std-saslman-sasl_client_start-3">sasl_client_start(3)</a> or
+<a class="reference internal" href="../reference/manpages/library/sasl_client_step.html#std-saslman-sasl_client_step-3">sasl_client_step(3)</a> will return <a class="reference internal" href="../reference/manpages/library/sasl_errors.html#c.SASL_INTERACT" title="SASL_INTERACT"><code class="xref c c-macro docutils literal notranslate"><span class="pre">SASL_INTERACT</span></code></a>.  This will
+be a list of sasl_interact_t’s which contain a human readable string you can
+prompt the user with, a possible computer readable string, and a default result.
+The nice thing about interactions is you get them all at once so if you had a
+GUI application you could bring up a dialog box asking for authentication name
+and password together instead of one at a time.</p>
+<p>Any memory that is given to the SASL library for the purposes of
+callbacks and interactions must persist until the exchange
+completes in either success or failure. That is, the data must
+persist until <a class="reference internal" href="../reference/manpages/library/sasl_client_start.html#std-saslman-sasl_client_start-3">sasl_client_start(3)</a> or
+<a class="reference internal" href="../reference/manpages/library/sasl_client_step.html#std-saslman-sasl_client_step-3">sasl_client_step(3)</a> returns something other than
+<a class="reference internal" href="../reference/manpages/library/sasl_errors.html#c.SASL_INTERACT" title="SASL_INTERACT"><code class="xref c c-macro docutils literal notranslate"><span class="pre">SASL_INTERACT</span></code></a> or <a class="reference internal" href="../reference/manpages/library/sasl_errors.html#c.SASL_CONTINUE" title="SASL_CONTINUE"><code class="xref c c-macro docutils literal notranslate"><span class="pre">SASL_CONTINUE</span></code></a>.</p>
+<dl class="simple">
+<dt>Memory management</dt><dd><p>As in the rest of the SASLv2 API,
+whoever allocates the memory is responsible for freeing it. In
+almost all cases this should be fairly easy to manage, however a
+slight exception where the interaction sasl_interact_t structure is
+allocated and freed by the library, while the results are allocated
+and freed by the application. As noted above, however, the
+results may not be freed until after the exchange completes, in
+either success or failure.</p>
+</dd>
+</dl>
+<p>For a detailed description of what each of the callback types
+are see the sasl.h file. Here are some brief explanations:</p>
+<dl class="simple">
+<dt>SASL_CB_AUTHNAME</dt><dd><p>the name of the user authenticating</p>
+</dd>
+<dt>SASL_CB_USER</dt><dd><p>the name of the user acting for. (for example
+postman delivering mail for tmartin might have an AUTHNAME of
+postman and a USER of tmartin)</p>
+</dd>
+<dt>SASL_CB_PASS</dt><dd><p>password for AUTHNAME</p>
+</dd>
+<dt>SASL_CB_GETREALM</dt><dd><p>Realm of the server</p>
+</dd>
+</dl>
+<p>An example of a way to handle callbacks:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="cm">/* callbacks we support. This is a global variable at the</span>
+<span class="cm">    top of the program */</span>
+ <span class="k">static</span> <span class="n">sasl_callback_t</span> <span class="n">callbacks</span><span class="p">[]</span> <span class="o">=</span> <span class="p">{</span>
+ <span class="p">{</span>
+   <span class="n">SASL_CB_GETREALM</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span>  <span class="cm">/* we&#39;ll just use an interaction if this comes up */</span>
+ <span class="p">},</span> <span class="p">{</span>
+   <span class="n">SASL_CB_USER</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span>      <span class="cm">/* we&#39;ll just use an interaction if this comes up */</span>
+ <span class="p">},</span> <span class="p">{</span>
+   <span class="n">SASL_CB_AUTHNAME</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">getauthname_func</span><span class="p">,</span> <span class="nb">NULL</span> <span class="cm">/* A mechanism should call getauthname_func</span>
+<span class="cm">                                                if it needs the authentication name */</span>
+ <span class="p">},</span> <span class="p">{</span>
+   <span class="n">SASL_CB_PASS</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">getsecret_func</span><span class="p">,</span> <span class="nb">NULL</span>      <span class="cm">/* Call getsecret_func if need secret */</span>
+ <span class="p">},</span> <span class="p">{</span>
+   <span class="n">SASL_CB_LIST_END</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="nb">NULL</span>
+ <span class="p">}</span>
+ <span class="p">};</span>
+
+
+ <span class="k">static</span> <span class="kt">int</span> <span class="nf">getsecret_func</span><span class="p">(</span><span class="n">sasl_conn_t</span> <span class="o">*</span><span class="n">conn</span><span class="p">,</span>
+   <span class="kt">void</span> <span class="o">*</span><span class="n">context</span> <span class="n">__attribute__</span><span class="p">((</span><span class="n">unused</span><span class="p">)),</span>
+   <span class="kt">int</span> <span class="n">id</span><span class="p">,</span>
+   <span class="n">sasl_secret_t</span> <span class="o">**</span><span class="n">psecret</span><span class="p">)</span>
+ <span class="p">{</span>
+    <span class="cm">/* [ask the user for their secret] */</span>
+
+    <span class="cm">/* [allocate psecret and insert the secret] */</span>
+
+   <span class="k">return</span> <span class="n">SASL_OK</span><span class="p">;</span>
+ <span class="p">}</span>
+
+ <span class="k">static</span> <span class="kt">int</span> <span class="nf">getauthname_func</span><span class="p">(</span><span class="kt">void</span> <span class="o">*</span><span class="n">context</span><span class="p">,</span>
+                             <span class="kt">int</span> <span class="n">id</span><span class="p">,</span>
+                             <span class="k">const</span> <span class="kt">char</span> <span class="o">**</span><span class="n">result</span><span class="p">,</span>
+                             <span class="kt">unsigned</span> <span class="o">*</span><span class="n">len</span><span class="p">)</span>
+ <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">id</span><span class="o">!=</span><span class="n">SASL_CB_AUTHNAME</span><span class="p">)</span> <span class="k">return</span> <span class="n">SASL_FAIL</span><span class="p">;</span>
+
+    <span class="cm">/* [fill in result and len] */</span>
+
+    <span class="k">return</span> <span class="n">SASL_OK</span><span class="p">;</span>
+  <span class="p">}</span>
+</pre></div>
+</div>
+<p>in the main program somewhere</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">sasl_client_init</span><span class="p">(</span><span class="n">callbacks</span><span class="p">);</span>
+</pre></div>
+</div>
+</div>
+<div class="section" id="security-layers">
+<h3><a class="toc-backref" href="#id28">Security layers</a><a class="headerlink" href="#security-layers" title="Permalink to this headline">¶</a></h3>
+<p>All is well and good to securely authenticate, but if you don’t
+have some sort of integrity or privacy layer, anyone can hijack
+your TCP session after authentication. If your application has
+indicated that it can support a security layer, one might be
+negotiated.</p>
+<p>To set that you support a security layer, set a security
+property structure with <code class="docutils literal notranslate"><span class="pre">max_ssf</span></code> set to a non-zero
+number:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="n">sasl_security_properties_t</span> <span class="n">secprops</span><span class="p">;</span>
+
+<span class="n">secprops</span><span class="p">.</span><span class="n">min_ssf</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="n">secprops</span><span class="p">.</span><span class="n">max_ssf</span> <span class="o">=</span> <span class="mi">256</span><span class="p">;</span>
+<span class="n">secprops</span><span class="p">.</span><span class="n">maxbufsize</span> <span class="o">=</span> <span class="cm">/* SEE BELOW */</span><span class="p">;</span>
+
+<span class="n">secprops</span><span class="p">.</span><span class="n">property_names</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+<span class="n">secprops</span><span class="p">.</span><span class="n">property_values</span> <span class="o">=</span> <span class="nb">NULL</span><span class="p">;</span>
+<span class="n">secprops</span><span class="p">.</span><span class="n">security_flags</span> <span class="o">=</span> <span class="n">SASL_SEC_NOANONYMOUS</span><span class="p">;</span> <span class="cm">/* as appropriate */</span>
+
+<span class="n">sasl_setprop</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">SASL_SEC_PROPS</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">secprops</span><span class="p">);</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">secprops</span></code> variable will be copied during the call to
+<code class="docutils literal notranslate"><span class="pre">sasl_setprop</span></code>, so you may free its memory immediately. The
+SSF stands for “security strength factor” and is a
+rough indication of how secure the connection is. A connection
+supplying only integrity with no privacy would have an SSF of 1. A
+connection secured by 56-bit DES would have an SSF of 56.</p>
+<p>To require a security layer, set <code class="docutils literal notranslate"><span class="pre">min_ssf</span></code> to the minimum
+acceptable security layer strength.</p>
+<p>After authentication is successful, you can determine whether or
+not a security layer has been negotiated by looking at the SASL_SSF
+property:</p>
+<div class="highlight-C notranslate"><div class="highlight"><pre><span></span><span class="k">const</span> <span class="kt">int</span> <span class="o">*</span><span class="n">ssfp</span><span class="p">;</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">sasl_getprop</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">SASL_SSF</span><span class="p">,</span> <span class="p">(</span><span class="k">const</span> <span class="o">**</span><span class="p">)</span> <span class="o">&amp;</span><span class="n">ssfp</span><span class="p">);</span>
+<span class="k">if</span> <span class="p">(</span><span class="n">result</span> <span class="o">!=</span> <span class="n">SASL_OK</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* ??? */</span>
+<span class="p">}</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">*</span><span class="n">ssfp</span> <span class="o">&amp;</span><span class="n">gt</span><span class="p">;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* yay, we have a security layer! */</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>If a security layer has been negotiated, your application must
+make use of the <a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a> and <a class="reference internal" href="../reference/manpages/library/sasl_decode.html#std-saslman-sasl_decode-3">sasl_decode(3)</a>
+calls. All output must be passed through <a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a>
+before being written to the wire; all input must be passed through
+<a class="reference internal" href="../reference/manpages/library/sasl_decode.html#std-saslman-sasl_decode-3">sasl_decode(3)</a> before being looked at by the application.
+Your application must also be prepared to deal with
+<a class="reference internal" href="../reference/manpages/library/sasl_decode.html#std-saslman-sasl_decode-3">sasl_decode(3)</a> not returning any data in the rare case that
+the peer application did something strange (by splitting a single
+SASL blob into two seperate TCP packets).</p>
+<p>The only subtlety dealing with security layers is the maximum size
+of data that can be passed through <a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a> or
+<a class="reference internal" href="../reference/manpages/library/sasl_decode.html#std-saslman-sasl_decode-3">sasl_decode(3)</a>. This must be limited to make sure that only
+a finite amount of data needs to be buffered. The simple rules to
+follow:</p>
+<ul class="simple">
+<li><p>Before starting authentication, set <code class="docutils literal notranslate"><span class="pre">maxbufsize</span></code> in your
+security properties to be the buffer size that you pass to the
+<code class="docutils literal notranslate"><span class="pre">read()</span></code> system call&amp;mdash;that is, the amount of data
+you’re prepared to read at any one time.</p></li>
+<li><p>After authentication finishes, use <a class="reference internal" href="../reference/manpages/library/sasl_getprop.html#std-saslman-sasl_getprop-3">sasl_getprop(3)</a> to
+retrieve the <code class="docutils literal notranslate"><span class="pre">SASL_MAXOUTBUF</span></code> value, and call
+<a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a> with chunks of data of that size or less.
+<a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a> will throw an error if you call it with a
+larger chunk of data, so be careful!</p></li>
+</ul>
+<dl class="simple">
+<dt>Memory management</dt><dd><p>As usual, whoever allocates the memory
+must free it. The SASL library will keep the data returned from
+<a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a> until the next call to <a class="reference internal" href="../reference/manpages/library/sasl_encode.html#std-saslman-sasl_encode-3">sasl_encode(3)</a>
+on that connection. (<a class="reference internal" href="../reference/manpages/library/sasl_decode.html#std-saslman-sasl_decode-3">sasl_decode(3)</a> results persist until the
+next call to <a class="reference internal" href="../reference/manpages/library/sasl_decode.html#std-saslman-sasl_decode-3">sasl_decode(3)</a> on that connection.) The
+application must not attempt to free the memory returned from either
+function.</p>
+</dd>
+<dt>Internally</dt><dd><ul class="simple">
+<li><p>your application sets SASL_SEC_PROPS with the buffer size X of
+the amount of data it will be using to read() from the socket.</p></li>
+<li><p>libsasl passes this number to the mechanism.</p></li>
+<li><p>the mechanism passes this number to the other side. the other
+side gives the corresponding read() size to our side.</p></li>
+<li><p>the mechanism subtracts the overhead of the layers from the
+size retrieved from the other side and returns it to the
+libsasl.</p></li>
+<li><p>libsasl then returns (via SASL_MAXOUTBUF) this number as the
+maximum amount of plaintext material that can be encoded at any one
+time, Y.</p></li>
+<li><p>sasl_encode() enforces the restriction of the length Y.</p></li>
+</ul>
+</dd>
+</dl>
+</div>
+</div>
+<div class="section" id="example-applications-that-come-with-the-cyrus-sasl-library">
+<h2><a class="toc-backref" href="#id29">Example applications that come with the Cyrus SASL library</a><a class="headerlink" href="#example-applications-that-come-with-the-cyrus-sasl-library" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="sample-client-and-sample-server">
+<h3><a class="toc-backref" href="#id30"><cite>sample-client</cite> and <cite>sample-server</cite></a><a class="headerlink" href="#sample-client-and-sample-server" title="Permalink to this headline">¶</a></h3>
+<p>The sample client and server included with this distribution were
+initially written to help debug mechanisms. They base64 encode all
+the data and print it out on standard output.</p>
+<p>Make sure that you set the IP addresses, the username, the
+authenticate name, and anything else on the command line (some
+mechanisms depend on these being present).</p>
+<p>Also, sometimes you will receive a <code class="docutils literal notranslate"><span class="pre">realm:</span> <span class="pre">Information</span>
+<span class="pre">not</span> <span class="pre">available</span></code> message, or similar; this is due to the fact
+that some mechanisms do not support realms and therefore never set
+it.</p>
+</div>
+<div class="section" id="cyrus-imapd-v2-1-0-or-later">
+<h3><a class="toc-backref" href="#id31">Cyrus imapd v2.1.0 or later</a><a class="headerlink" href="#cyrus-imapd-v2-1-0-or-later" title="Permalink to this headline">¶</a></h3>
+<p>The Cyrus IMAP server now incorporates SASLv2 for all its
+authentication needs. It is a good example of a fairly large server
+application. Also of interest is the prot layer, included in
+libcyrus. This is a stdio-like interface that automatically takes
+care of layers using a simple <code class="docutils literal notranslate"><span class="pre">prot_setsasl()</span></code> call.</p>
+<p>Cyrus imapd also sets a <code class="docutils literal notranslate"><span class="pre">SASL_CB_PROXY_POLICY</span></code> callback,
+which should be of interest to many applications.</p>
+</div>
+<div class="section" id="imtest-from-cyrus-2-1-0-or-later">
+<h3><a class="toc-backref" href="#id32"><cite>imtest</cite>, from Cyrus 2.1.0 or later</a><a class="headerlink" href="#imtest-from-cyrus-2-1-0-or-later" title="Permalink to this headline">¶</a></h3>
+<p><a class="reference external" href="https://www.cyrusimap.org/imap/reference/manpages/usercommands/imtest.html#imap-reference-manpages-usercommands-imtest" title="(in Cyrus IMAP v3.4.3)"><span class="xref std std-ref">imtest(3)</span></a>
+is an application included with Cyrus IMAPd. It is
+a very simple IMAP client, but should be of interest to those
+writing applications. It also uses the prot layer, but it is easy
+to incorporate similar support without using the prot layer.
+Likewise, there are other sample client applications that you can
+look at including
+<a class="reference external" href="https://www.cyrusimap.org/imap/reference/manpages/usercommands/smtptest.html#imap-reference-manpages-usercommands-smtptest" title="(in Cyrus IMAP v3.4.3)"><span class="xref std std-ref">smtptest(3)</span></a>
+and <a class="reference external" href="https://www.cyrusimap.org/imap/reference/manpages/usercommands/pop3test.html#imap-reference-manpages-usercommands-pop3test" title="(in Cyrus IMAP v3.4.3)"><span class="xref std std-ref">pop3test(3)</span></a>
+in the Cyrus IMAPd distribution, respectively.</p>
+</div>
+</div>
+<div class="section" id="miscellaneous-information">
+<h2><a class="toc-backref" href="#id33">Miscellaneous Information</a><a class="headerlink" href="#miscellaneous-information" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="empty-exchanges">
+<h3><a class="toc-backref" href="#id34">Empty exchanges</a><a class="headerlink" href="#empty-exchanges" title="Permalink to this headline">¶</a></h3>
+<p>Some SASL mechanisms intentionally send no data; an application
+should be prepared to either send or receive an empty exchange. The
+SASL profile for the protocol should define how to send an empty
+string; make sure to send an empty string when requested, and when
+receiving an empty string make sure that the <code class="docutils literal notranslate"><span class="pre">inlength</span></code>
+passed in is 0.</p>
+<p>Note especially that the distinction between the empty string “”
+and the lack of a string (NULL) is extremely important in many
+cases (most notably, the client-send first scenario), and the
+application must ensure that it is passing the correct values to
+the SASL library at all times.</p>
+</div>
+<div class="section" id="idle">
+<h3><a class="toc-backref" href="#id35">Idle</a><a class="headerlink" href="#idle" title="Permalink to this headline">¶</a></h3>
+<p>While the implementation and the plugins correctly implement the
+idle calls, none of them currently do anything.</p>
+</div>
+</div>
+</div>
+
+
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="plugprog.html" class="btn btn-neutral float-right" title="Plugin Programmer’s Guide" accesskey="n">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="../appconvert.html" class="btn btn-neutral" title="Converting Applications from v1 to v2" accesskey="p"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 1993-2016, The Cyrus Team.
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> 4.4.0 using a modified <a href="https://readthedocs.org">Read the Docs</a> <a href="https://github.com/snide/sphinx_rtd_theme">theme</a>.
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  
+
+    <script type="text/javascript">
+        var DOCUMENTATION_OPTIONS = {
+            URL_ROOT:'../../',
+            VERSION:'2.1.28',
+            COLLAPSE_INDEX:false,
+            FILE_SUFFIX:'.html',
+            HAS_SOURCE:  true
+        };
+    </script>
+      <script type="text/javascript" src="../../_static/documentation_options.js"></script>
+      <script type="text/javascript" src="../../_static/jquery.js"></script>
+      <script type="text/javascript" src="../../_static/underscore.js"></script>
+      <script type="text/javascript" src="../../_static/doctools.js"></script>
+
+  
+
+  
+  
+    <script type="text/javascript" src="../../_static/js/theme.js"></script>
+  
+
+  
+  
+  <script type="text/javascript">
+<!--      jQuery(function () {
+          SphinxRtdTheme.StickyNav.enable();
+      }); -->
+  </script>
+  
+ 
+
+
+
+</body>
+</html>
