@@ -14,12 +14,7 @@ macro(ldap_build)
     include(ExternalProject)
     ExternalProject_Add(bundled-ldap
         DEPENDS ${LDAP_OPENSSL_DEPS} bundled-sasl
-        URL ${LDAP_URL}
-        URL_MD5 ${LDAP_HASH}
-        PATCH_COMMAND
-            # OpenLDAP builds everything (including MAN pages) unconditionally,
-            # thus we have to patch its sources so as not to install soelim (Groff).
-            sed -i.old "/SUBDIRS/s/clients servers tests doc//" Makefile.in
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/openldap-2.6.4
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             "CC=${CMAKE_C_COMPILER}"
             "CFLAGS=${DEPENDENCY_CFLAGS}"
