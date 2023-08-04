@@ -12,11 +12,17 @@ macro(sasl_build)
     # Reusing approach from BuildLibCURL.cmake
     get_filename_component(OPENSSL_INSTALL_DIR ${OPENSSL_INCLUDE_DIR} DIRECTORY)
 
+    # NB: $(MAKE) will preserve jobserver in Makefiles.
+    if("${CMAKE_GENERATOR}" STREQUAL "Unix Makefiles")
+        set(MAKE_EXECUTABLE "$(MAKE)")
+    else()
+        set(MAKE_EXECUTABLE "make")
+    endif()
+
     include(ExternalProject)
     ExternalProject_Add(bundled-sasl
         DEPENDS ${LDAP_OPENSSL_DEPS}
-        URL ${SASL_URL}
-        URL_MD5 ${SASL_HASH}
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/cyrus-sasl-${SASL_VERSION}
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             "CC=${CMAKE_C_COMPILER}"
             "CFLAGS=${DEPENDENCY_CFLAGS}"
@@ -44,6 +50,13 @@ macro(sasl_build)
 
             --disable-macos-framework
             --disable-sample
+
+        # HACK: prevent `am--refresh` rule from reconfiguring the project.
+        # Further reading: https://stackoverflow.com/a/5745366.
+        BUILD_COMMAND ${MAKE_EXECUTABLE}
+            AUTOCONF=: AUTOHEADER=: AUTOMAKE=: ACLOCAL=: all
+        INSTALL_COMMAND ${MAKE_EXECUTABLE}
+            AUTOCONF=: AUTOHEADER=: AUTOMAKE=: ACLOCAL=: install
     )
 
     unset(OPENSSL_INSTALL_DIR)
