@@ -273,6 +273,7 @@ set(api_headers
     ${PROJECT_SOURCE_DIR}/src/box/iterator_type.h
     ${PROJECT_SOURCE_DIR}/src/box/error.h
     ${PROJECT_SOURCE_DIR}/src/box/lua/tuple.h
+    ${PROJECT_SOURCE_DIR}/src/box/user.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/latch.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/clock.h
     ${PROJECT_SOURCE_DIR}/src/box/decimal.h
