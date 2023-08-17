@@ -72,6 +72,15 @@ output_handlers["yaml"] = function(status, _opts, ...)
     end
 end
 
+local sql_executor = nil
+
+--
+-- Override SQL executor invoked in `\set language sql` mode.
+-- Defaults to `box.execute` if unset.
+local function set_sql_executor(executor)
+    sql_executor = executor
+end
+
 --
 -- Format a Lua value.
 local function format_lua_value(status, internal_opts, value)
@@ -395,7 +404,7 @@ local function local_eval(storage, line)
         return preprocess(storage, command)
     end
     if storage.language == 'sql' then
-        return format(pcall(box.execute, line))
+        return format(pcall(sql_executor or box.execute, line))
     end
     --
     -- Attempt to append 'return ' before the chunk: if the chunk is
@@ -969,4 +978,5 @@ return {
     on_start = on_start;
     on_client_disconnect = on_client_disconnect;
     completion_handler = internal.completion_handler;
+    set_sql_executor = set_sql_executor;
 }
