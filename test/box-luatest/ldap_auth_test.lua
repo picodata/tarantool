@@ -1,3 +1,15 @@
+-- NOTE: this test expects to see `glauth` in $PATH!
+-- It's an LDAP server we use for this test.
+-- You can have it downloaded by CMake during project configuration:
+--
+-- ```shell
+-- cmake -DENABLE_GLAUTH_DOWNLOAD=ON
+-- ```
+--
+-- Although we could enable this test depending on the ability
+-- to execute `glauth`, we'd like to run it unconditionally,
+-- otherwise there's a non-zero chance of LDAP breaking silently.
+
 local net = require('net.box')
 local server = require('luatest.server')
 local t = require('luatest')
