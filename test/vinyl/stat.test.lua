@@ -327,6 +327,10 @@ stat_diff(gstat(), st, 'tx')
 box.commit()
 stat_diff(gstat(), st, 'tx')
 
+-- free tuples pinned by Lua
+_ = nil
+_ = collectgarbage()
+
 -- box.stat.reset
 box.stat.reset()
 istat()

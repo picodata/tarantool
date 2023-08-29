@@ -256,8 +256,9 @@ gstat()
   memory:
     tuple_cache: 0
     tx: 0
-    page_index: 0
     bloom_filter: 0
+    page_index: 0
+    tuple: 0
   disk:
     data_compacted: 0
     data: 0
@@ -1018,6 +1019,13 @@ stat_diff(gstat(), st, 'tx')
 ---
 - commit: 1
 ...
+-- free tuples pinned by Lua
+_ = nil
+---
+...
+_ = collectgarbage()
+---
+...
 -- box.stat.reset
 box.stat.reset()
 ---
@@ -1150,8 +1158,9 @@ gstat()
   memory:
     tuple_cache: 14521
     tx: 0
-    page_index: 1050
     bloom_filter: 140
+    page_index: 1050
+    tuple: 13689
   disk:
     data_compacted: 104299
     data: 104299
