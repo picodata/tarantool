@@ -3110,6 +3110,112 @@ test_box_session_id(struct lua_State *L)
 
 /* }}} Helpers for current session identifier Lua/C API test cases */
 
+static int
+test_box_session_su(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	uint32_t guest_uid = 0;
+	uint32_t orig_uid = 0;
+	uint32_t uid = 0;
+
+	/* Get current session user */
+	int rc = box_session_user_id(&orig_uid);
+	fail_unless(rc == 0);
+
+	/* Switch session to the guest user */
+	const char *guest = "guest";
+	rc = box_user_id_by_name(guest, guest + strlen(guest), &guest_uid);
+	fail_unless(rc == 0);
+	rc = box_session_su(guest_uid);
+	fail_unless(rc == 0);
+	rc = box_session_user_id(&uid);
+	fail_unless(rc == 0);
+	fail_unless(uid == guest_uid);
+
+	/* Switch session back to original user */
+	rc = box_session_su(orig_uid);
+	fail_unless(rc == 0);
+	rc = box_session_user_id(&uid);
+	fail_unless(rc == 0);
+	fail_unless(uid == orig_uid);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
+test_box_session_user_id(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	uint32_t user_id = 42;
+	int rc = box_session_user_id(&user_id);
+	fail_unless(rc == 0);
+	fail_unless(user_id != 42);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
+test_box_effective_user_id(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	/* Effective and session user ids are equal by default */
+	uint32_t fiber_uid = box_effective_user_id();
+	uint32_t session_uid = 0;
+	int rc = box_session_user_id(&session_uid);
+	fail_unless(rc == 0);
+	fail_unless(fiber_uid == session_uid);
+
+	/**
+	 * Switch the session user (effective and session users
+	 * are **not** equal now)
+	 */
+	const char *guest = "guest";
+	rc = box_user_id_by_name(guest, guest + strlen(guest), &session_uid);
+	fail_unless(rc == 0);
+	fiber_uid = box_effective_user_id();
+	rc = box_session_su(session_uid);
+	fail_unless(rc == 0);
+	fail_unless(fiber_uid != session_uid);
+
+	/**
+	 * Switch back to original user (effective and session users
+	 * become equal again)
+	 */
+	rc = box_session_su(fiber_uid);
+	fail_unless(rc == 0);
+	fiber_uid = box_effective_user_id();
+	rc = box_session_user_id(&session_uid);
+	fail_unless(rc == 0);
+	fail_unless(session_uid == fiber_uid);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
+test_box_user_id_by_name(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	uint32_t user_id = 42;
+	const char *guest = "guest";
+	int rc = box_user_id_by_name(guest, guest + strlen(guest), &user_id);
+	fail_unless(rc == 0);
+	fail_unless(user_id != 42);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 /* {{{ Helpers for `box_iproto_send` Lua/C API test cases */
 
 static int
@@ -3265,6 +3371,10 @@ luaopen_module_api(lua_State *L)
 		{"test_key_def_validate_key", test_key_def_validate_key},
 		{"test_key_def_hash", test_key_def_hash},
 		{"test_box_ibuf", test_box_ibuf},
+		{"test_box_session_su", test_box_session_su},
+		{"test_box_session_user_id", test_box_session_user_id},
+		{"test_box_effective_user_id", test_box_effective_user_id},
+		{"test_box_user_id_by_name", test_box_user_id_by_name},
 		{"tuple_validate_def", test_tuple_validate_default},
 		{"tuple_validate_fmt", test_tuple_validate_formatted},
 		{"test_key_def_dup", test_key_def_dup},

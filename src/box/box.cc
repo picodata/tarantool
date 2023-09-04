@@ -3860,6 +3860,56 @@ box_session_id(void)
 }
 
 API_EXPORT int
+box_session_su(uint32_t uid)
+{
+	struct session *session = current_session();
+	if (session == NULL) {
+		diag_set(ClientError, ER_SESSION_CLOSED);
+		return -1;
+	}
+	struct user *user = user_find(uid);
+	if (user == NULL)
+		return -1;
+	if (access_check_session(user) < 0)
+		return -1;
+
+	credentials_reset(&session->credentials, user);
+	fiber_set_user(fiber(), &session->credentials);
+	return 0;
+}
+
+API_EXPORT int
+box_session_user_id(uint32_t *uid)
+{
+	struct session *session = current_session();
+	if (session == NULL) {
+		diag_set(ClientError, ER_SESSION_CLOSED);
+		return -1;
+	}
+	struct user *user = user_find(session->credentials.uid);
+	if (user == NULL)
+		return -1;
+	*uid = user->def->uid;
+	return 0;
+}
+
+API_EXPORT uint32_t
+box_effective_user_id(void)
+{
+	return effective_user()->uid;
+}
+
+API_EXPORT int
+box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid)
+{
+	struct user *user = user_find_by_name(name, name_end - name);
+	if (user == NULL)
+		return -1;
+	*uid = user->def->uid;
+	return 0;
+}
+
+API_EXPORT int
 box_iproto_send(uint64_t sid,
 		const char *header, const char *header_end,
 		const char *body, const char *body_end)
