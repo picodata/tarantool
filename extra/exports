@@ -48,6 +48,7 @@ box_decimal_to_uint64
 box_decimal_trim
 box_decimal_zero
 box_delete
+box_effective_user_id
 box_error_clear
 box_error_code
 box_error_custom_type
@@ -108,6 +109,8 @@ box_sequence_reset
 box_sequence_set
 box_session_id
 box_session_push
+box_session_su
+box_session_user_id
 box_space_id_by_name
 box_truncate
 box_tuple_bsize
@@ -149,6 +152,7 @@ box_txn_set_isolation
 box_txn_set_timeout
 box_update
 box_upsert
+box_user_id_by_name
 clock_monotonic
 clock_monotonic64
 clock_process
