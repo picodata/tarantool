@@ -682,6 +682,46 @@ API_EXPORT uint64_t
 box_session_id(void);
 
 /**
+ * Change the current session user.
+ * \param uid new user identifier
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_session_su(uint32_t uid);
+
+/**
+ * Return the current session user identifier.
+ * Session user can be changed with box_session_su()
+ * or setuid functions.
+ * \param[out] uid pointer to a user identifier
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_session_user_id(uint32_t *uid);
+
+/**
+ * Return the effective user identifier. Effective
+ * user is **not** affected by box_session_su()
+ * or setuid functions.
+ * \retval user identifier
+ */
+API_EXPORT uint32_t
+box_effective_user_id(void);
+
+/**
+ * Return the user identifier by name.
+ * \param name user name
+ * \param name_end end of user name
+ * \param[out] uid pointer to a user identifier
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid);
+
+/**
  * Sends a packet with the given header and body over the IPROTO session's
  * socket.
  *
