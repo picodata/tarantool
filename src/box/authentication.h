@@ -85,8 +85,8 @@ struct auth_method {
 	 */
 	void
 	(*auth_data_prepare)(const struct auth_method *method,
-			     const char *password, int password_len,
-			     const char *user,
+			     const char *password, uint32_t password_len,
+			     const char *user, uint32_t user_len,
 			     const char **auth_data,
 			     const char **auth_data_end);
 	/**
@@ -101,8 +101,8 @@ struct auth_method {
 	 */
 	void
 	(*auth_request_prepare)(const struct auth_method *method,
-				const char *password, int password_len,
-				const char *user,
+				const char *password, uint32_t password_len,
+				const char *user, uint32_t user_len,
 				const char *salt,
 				const char **auth_request,
 				const char **auth_request_end);
@@ -145,6 +145,7 @@ struct auth_method {
 	bool
 	(*authenticate_request)(const struct authenticator *auth,
 				const char *user,
+				uint32_t user_len,
 				const char *salt,
 				const char *auth_request,
 				const char *auth_request_end);
@@ -152,20 +153,22 @@ struct auth_method {
 
 static inline void
 auth_data_prepare(const struct auth_method *method,
-		  const char *password, int password_len, const char *user,
+		  const char *password, uint32_t password_len,
+		  const char *user, uint32_t user_len,
 		  const char **auth_data, const char **auth_data_end)
 {
 	method->auth_data_prepare(method, password, password_len,
-				  user, auth_data, auth_data_end);
+				  user, user_len, auth_data, auth_data_end);
 }
 
 static inline void
 auth_request_prepare(const struct auth_method *method,
-		     const char *password, int password_len,
-		     const char *user, const char *salt,
+		     const char *password, uint32_t password_len,
+		     const char *user, uint32_t user_len, const char *salt,
 		     const char **auth_request, const char **auth_request_end)
 {
-	method->auth_request_prepare(method, password, password_len, user, salt,
+	method->auth_request_prepare(method, password, password_len,
+				     user, user_len, salt,
 				     auth_request, auth_request_end);
 }
 
@@ -199,12 +202,12 @@ authenticator_delete(struct authenticator *auth)
  */
 static inline bool
 authenticate_request(const struct authenticator *auth,
-		     const char *user, const char *salt,
+		     const char *user, uint32_t user_len, const char *salt,
 		     const char *auth_request, const char *auth_request_end)
 {
 	assert(auth->method->auth_request_check(auth->method, auth_request,
 						auth_request_end) == 0);
-	return auth->method->authenticate_request(auth, user, salt,
+	return auth->method->authenticate_request(auth, user, user_len, salt,
 						  auth_request,
 						  auth_request_end);
 }
@@ -220,7 +223,8 @@ authenticate_request(const struct authenticator *auth,
  */
 bool
 authenticate_password(const struct authenticator *auth,
-		      const char *password, int password_len, const char *user);
+		      const char *password, uint32_t password_len,
+		      const char *user, uint32_t user_len);
 
 /** \cond public */
 

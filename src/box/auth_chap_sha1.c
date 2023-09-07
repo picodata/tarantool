@@ -81,7 +81,7 @@ xor(unsigned char *to, unsigned const char *left,
  */
 static void
 scramble_prepare(void *out, const void *salt, const void *password,
-		 int password_len)
+		 uint32_t password_len)
 {
 	unsigned char hash1[SCRAMBLE_SIZE];
 	SHA1(password, password_len, hash1);
@@ -121,7 +121,7 @@ scramble_check(const void *scramble, const void *salt, const void *hash2)
  * @post out contains base64_encode(sha1(sha1(password)), 0)
  */
 static void
-password_prepare(const char *password, int len, char *out, int out_len)
+password_prepare(const char *password, uint32_t len, char *out, int out_len)
 {
 	unsigned char hash2[SCRAMBLE_SIZE];
 	SHA1((unsigned char *)password, len, hash2);
@@ -140,13 +140,16 @@ auth_chap_sha1_delete(struct auth_method *method)
 /** auth_method::auth_data_prepare */
 static void
 auth_chap_sha1_data_prepare(const struct auth_method *method,
-			    const char *password, int password_len,
+			    const char *password,
+			    uint32_t password_len,
 			    const char *user,
+			    uint32_t user_len,
 			    const char **auth_data,
 			    const char **auth_data_end)
 {
 	(void)method;
 	(void)user;
+	(void)user_len;
 	struct region *region = &fiber()->gc;
 	size_t size = mp_sizeof_str(SCRAMBLE_BASE64_SIZE);
 	char *p = xregion_alloc(region, size);
@@ -159,14 +162,17 @@ auth_chap_sha1_data_prepare(const struct auth_method *method,
 /** auth_method::auth_request_prepare */
 static void
 auth_chap_sha1_request_prepare(const struct auth_method *method,
-			       const char *password, int password_len,
+			       const char *password,
+			       uint32_t password_len,
 			       const char *user,
+			       uint32_t user_len,
 			       const char *salt,
 			       const char **auth_request,
 			       const char **auth_request_end)
 {
 	(void)method;
 	(void)user;
+	(void)user_len;
 	struct region *region = &fiber()->gc;
 	size_t size = mp_sizeof_str(SCRAMBLE_SIZE);
 	char *p = xregion_alloc(region, size);
@@ -251,11 +257,13 @@ auth_chap_sha1_authenticator_delete(struct authenticator *auth_)
 static bool
 auth_chap_sha1_authenticate_request(const struct authenticator *auth_,
 				    const char *user,
+				    uint32_t user_len,
 				    const char *salt,
 				    const char *auth_request,
 				    const char *auth_request_end)
 {
 	(void)user;
+	(void)user_len;
 	const struct auth_chap_sha1_authenticator *auth =
 		(const struct auth_chap_sha1_authenticator *)auth_;
 	uint32_t scramble_len;

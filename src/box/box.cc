@@ -5684,3 +5684,32 @@ box_free(void)
 	/* session_free(); */
 	/* user_cache_free(); */
 }
+
+API_EXPORT int
+box_auth_data_prepare(const char *method_name, const char *method_name_end,
+		      const char *password, const char *password_end,
+		      const char *user_name, const char *user_name_end,
+		      box_tuple_t **result)
+{
+	assert(method_name != NULL);
+	assert(method_name_end != NULL);
+	assert(password != NULL);
+	assert(password_end != NULL);
+	assert(user_name != NULL);
+	assert(user_name_end != NULL);
+
+	size_t method_len = method_name_end - method_name;
+	const struct auth_method *auth = auth_method_by_name(
+				method_name, method_len);
+	if (auth == NULL) {
+		diag_set(ClientError, ER_UNKNOWN_AUTH_METHOD,
+			 tt_cstr(method_name, method_len));
+		return -1;
+	}
+
+	const char *data, *data_end;
+	auth_data_prepare(auth, password, password_end - password, user_name,
+			  user_name_end - user_name, &data, &data_end);
+	*result = (box_tuple_t *)data;
+	return 0;
+}

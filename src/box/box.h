@@ -456,6 +456,26 @@ typedef void
 (*iproto_handler_destroy_t)(void *ctx);
 
 /**
+ * Return authentication data string packed into a tuple.
+ *
+ * \param method_name pointer to the authentication method name
+ * \param method_name_end pointer to the end of the authentication method name
+ * \param password pointer to password data
+ * \param password_end pointer to the end of the password data
+ * \param user_name pointer to the user name
+ * \param user_name_end pointer to the end of the user name
+ * \param[out] result a pointer to a tuple with authentication data
+ *             (must be freed with box_tuple_unref())
+ * \retval -1 on error
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_auth_data_prepare(const char *method_name, const char *method_name_end,
+		      const char *password, const char *password_end,
+		      const char *user_name, const char *user_name_end,
+		      box_tuple_t **result);
+
+/**
  * Return a tuple from stored C procedure.
  *
  * Returned tuple is automatically reference counted by Tarantool.
