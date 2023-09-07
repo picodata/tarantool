@@ -1,4 +1,4 @@
-/*
+/*auth
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright 2010-2023, Tarantool AUTHORS, please see AUTHORS file.
@@ -33,7 +33,7 @@ struct auth_ldap_authenticator {
 
 /** Try to format a proper LDAP Distinguished Name (DN). */
 static int
-format_dn(const char *fmt, const char *user, char *buf, size_t len)
+format_dn(const char *fmt, const char *user, uint32_t user_len, char *buf, size_t len)
 {
 	/** Magic should be replaced with the actual user */
 	const char *magic = "$USER";
@@ -45,8 +45,7 @@ format_dn(const char *fmt, const char *user, char *buf, size_t len)
 
 	size_t prefix_len = suffix - fmt;
 	suffix += strlen(magic);
-	size_t suffix_len = strlen(suffix),
-	       user_len = strlen(user);
+	size_t suffix_len = strlen(suffix);
 
 	if (strstr(suffix, magic) != NULL) {
 		say_error("TT_LDAP_DN_FMT contains more than one $USER");
@@ -77,6 +76,7 @@ coio_ldap_check_password(va_list ap)
 	const char *password = va_arg(ap, const char *);
 	uint32_t password_len = va_arg(ap, uint32_t);
 	const char *user = va_arg(ap, const char *);
+	uint32_t user_len = va_arg(ap, uint32_t);
 
 	/**
 	 * This should point to the LDAP authentication server.
@@ -94,7 +94,7 @@ coio_ldap_check_password(va_list ap)
 	LDAP *ldp = NULL;
 
 	char dn[512];
-	if (format_dn(dn_fmt, user, dn, sizeof(dn)) != 0)
+	if (format_dn(dn_fmt, user, user_len, dn, sizeof(dn)) != 0)
 		goto cleanup;
 
 	/**
@@ -155,13 +155,16 @@ auth_ldap_delete(struct auth_method *method)
 /** auth_method::auth_data_prepare */
 static void
 auth_ldap_data_prepare(const struct auth_method *method,
-		       const char *password, int password_len,
+		       const char *password,
+		       uint32_t password_len,
 		       const char *user,
+		       uint32_t user_len,
 		       const char **auth_data,
 		       const char **auth_data_end)
 {
 	(void)method;
 	(void)user;
+	(void)user_len;
 	(void)password;
 	(void)password_len;
 	struct region *region = &fiber()->gc;
@@ -175,14 +178,17 @@ auth_ldap_data_prepare(const struct auth_method *method,
 /** auth_method::auth_request_prepare */
 static void
 auth_ldap_request_prepare(const struct auth_method *method,
-			  const char *password, int password_len,
+			  const char *password,
+			  uint32_t password_len,
 			  const char *user,
+			  uint32_t user_len,
 			  const char *salt,
 			  const char **auth_request,
 			  const char **auth_request_end)
 {
 	(void)method;
 	(void)user;
+	(void)user_len;
 	(void)salt;
 	struct region *region = &fiber()->gc;
 	size_t size = mp_sizeof_str(password_len);
@@ -245,6 +251,7 @@ auth_ldap_authenticator_delete(struct authenticator *auth_)
 static bool
 auth_ldap_authenticate_request(const struct authenticator *auth,
 			       const char *user,
+			       uint32_t user_len,
 			       const char *salt,
 			       const char *auth_request,
 			       const char *auth_request_end)
@@ -282,7 +289,7 @@ auth_ldap_authenticate_request(const struct authenticator *auth,
 
 	ret = coio_call(coio_ldap_check_password,
 			password, password_len,
-			user, url, dn_fmt);
+			user, user_len, url, dn_fmt);
 fail:
 	return ret == 0;
 }

@@ -56,12 +56,14 @@ struct auth_md5_authenticator {
  */
 static void
 client_password_prepare(char *client_pass,
-			const void *password, size_t password_len,
+			const void *password,
+			uint32_t password_len,
 			const char *user,
+			uint32_t user_len,
 			const char *salt)
 {
 	char shadow_pass[MD5_PASSWD_LEN];
-	md5_encrypt(password, password_len, user, strlen(user), shadow_pass);
+	md5_encrypt(password, password_len, user, user_len, shadow_pass);
 	md5_encrypt(shadow_pass + strlen("md5"), MD5_PASSWD_LEN - strlen("md5"),
 		    salt, MD5_SALT_LEN, client_pass);
 }
@@ -96,8 +98,10 @@ auth_md5_delete(struct auth_method *method)
 /** auth_method::auth_data_prepare */
 static void
 auth_md5_data_prepare(const struct auth_method *method,
-		      const char *password, int password_len,
+		      const char *password,
+		      uint32_t password_len,
 		      const char *user,
+		      uint32_t user_len,
 		      const char **auth_data,
 		      const char **auth_data_end)
 {
@@ -109,14 +113,16 @@ auth_md5_data_prepare(const struct auth_method *method,
 	*auth_data_end = p + size;
 	char *shadow_pass = mp_encode_strl(p, MD5_PASSWD_LEN);
 
-	md5_encrypt(password, password_len, user, strlen(user), shadow_pass);
+	md5_encrypt(password, password_len, user, user_len, shadow_pass);
 }
 
 /** auth_method::auth_request_prepare */
 static void
 auth_md5_request_prepare(const struct auth_method *method,
-			 const char *password, int password_len,
+			 const char *password,
+			 uint32_t password_len,
 			 const char *user,
+			 uint32_t user_len,
 			 const char *salt,
 			 const char **auth_request,
 			 const char **auth_request_end)
@@ -128,8 +134,8 @@ auth_md5_request_prepare(const struct auth_method *method,
 	*auth_request = p;
 	*auth_request_end = p + size;
 	char *client_password = mp_encode_strl(p, MD5_PASSWD_LEN);
-	client_password_prepare(client_password,
-				password, password_len, user, salt);
+	client_password_prepare(client_password, password, password_len,
+				user, user_len, salt);
 }
 
 /** auth_method::auth_request_check */
@@ -206,11 +212,13 @@ auth_md5_authenticator_delete(struct authenticator *auth_)
 static bool
 auth_md5_authenticate_request(const struct authenticator *auth_,
 			      const char *user,
+			      uint32_t user_len,
 			      const char *salt,
 			      const char *auth_request,
 			      const char *auth_request_end)
 {
 	(void)user;
+	(void)user_len;
 	const struct auth_md5_authenticator *auth =
 		(const struct auth_md5_authenticator *)auth_;
 	uint32_t client_pass_len;
