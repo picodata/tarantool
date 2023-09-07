@@ -712,10 +712,15 @@ netbox_encode_auth(struct lua_State *L, struct ibuf *ibuf, uint64_t sync,
 	(void)salt_len;
 	if (password == NULL)
 		password = "";
+	if (user == NULL)
+		user = "";
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *auth_request, *auth_request_end;
-	auth_request_prepare(method, password, strlen(password), user, salt,
+	uint32_t password_len = strnlen(password, UINT32_MAX);
+	uint32_t user_len = strnlen(user, UINT32_MAX);
+	auth_request_prepare(method, password, password_len,
+			     user, user_len, salt,
 			     &auth_request, &auth_request_end);
 	struct mpstream stream;
 	mpstream_init(&stream, ibuf, ibuf_reserve_cb, ibuf_alloc_cb,

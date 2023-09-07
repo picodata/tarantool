@@ -746,8 +746,9 @@ applier_connect(struct applier *applier)
 		diag_raise();
 	const char *auth_request, *auth_request_end;
 	assert(greeting.salt_len >= AUTH_SALT_SIZE);
-	auth_request_prepare(method, password, strlen(password),
-			     uri->login, greeting.salt,
+	auth_request_prepare(method, password, strnlen(password, UINT32_MAX),
+			     uri->login, strnlen(uri->login, UINT32_MAX),
+			     greeting.salt,
 			     &auth_request, &auth_request_end);
 	xrow_encode_auth(&row, uri->login, strlen(uri->login),
 			 method->name, strlen(method->name),
