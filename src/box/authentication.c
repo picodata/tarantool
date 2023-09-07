@@ -36,7 +36,8 @@ static struct mh_strnptr_t *auth_methods = NULL;
 
 bool
 authenticate_password(const struct authenticator *auth,
-		      const char *password, int password_len, const char *user)
+		      const char *password, uint32_t password_len,
+		      const char *user, uint32_t user_len)
 {
 	/*
 	 * We don't really need to zero the salt here, because any salt would
@@ -48,10 +49,11 @@ authenticate_password(const struct authenticator *auth,
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *auth_request, *auth_request_end;
-	auth_request_prepare(auth->method, password, password_len, user, salt,
+	auth_request_prepare(auth->method, password, password_len,
+			     user, user_len, salt,
 			     &auth_request, &auth_request_end);
-	bool ret = authenticate_request(auth, user, salt, auth_request,
-					auth_request_end);
+	bool ret = authenticate_request(auth, user, user_len, salt,
+					auth_request, auth_request_end);
 	region_truncate(region, region_svp);
 	return ret;
 }
@@ -110,7 +112,8 @@ authenticate(const char *user_name, uint32_t user_name_len,
 		return -1;
 	if (user == NULL || user->def->auth == NULL ||
 	    user->def->auth->method != method ||
-	    !authenticate_request(user->def->auth, user->def->name, salt,
+	    !authenticate_request(user->def->auth, user->def->name,
+				  strnlen(user->def->name, UINT32_MAX), salt,
 				  auth_request, auth_request_end)) {
 		auth_res.is_authenticated = false;
 		if (session_run_on_auth_triggers(&auth_res) != 0)
@@ -158,7 +161,8 @@ auth_method_register(struct auth_method *method)
 {
 	struct mh_strnptr_t *h = auth_methods;
 	const char *name = method->name;
-	uint32_t name_len = strlen(name);
+	uint32_t name_len = strnlen(name, UINT32_MAX);
+	assert(name_len > 0);
 	uint32_t name_hash = mh_strn_hash(name, name_len);
 	struct mh_strnptr_node_t n = {name, name_len, name_hash, method};
 	struct mh_strnptr_node_t prev;
