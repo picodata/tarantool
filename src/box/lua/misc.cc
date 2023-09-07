@@ -287,7 +287,8 @@ lbox_prepare_auth(lua_State *L)
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *auth_data, *auth_data_end;
-	auth_data_prepare(method, password, password_len, user,
+	auth_data_prepare(method, password, password_len,
+			  user, user_len,
 			  &auth_data, &auth_data_end);
 	luamp_decode(L, luaL_msgpack_default, &auth_data);
 	assert(auth_data == auth_data_end);
