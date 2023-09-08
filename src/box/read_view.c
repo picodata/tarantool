@@ -280,3 +280,139 @@ read_view_foreach(read_view_foreach_f cb, void *arg)
 	}
 	return true;
 }
+
+/**
+ * See read_view_opts::filter_arg.
+ */
+struct read_view_user_filer_arg {
+	/* See box_read_view_open_for_given_spaces. */
+	struct space_index_id *space_index_ids;
+	/* See box_read_view_open_for_given_spaces. */
+	uint32_t space_index_ids_count;
+};
+
+/**
+ * See read_view_opts::filter_space.
+ */
+static bool
+read_view_user_space_filter(struct space *space, void *a)
+{
+	struct read_view_user_filer_arg *arg = a;
+	for (uint32_t i = 0; i < arg->space_index_ids_count; i++)
+		if (space_id(space) == arg->space_index_ids[i].space_id)
+			return true;
+	return false;
+}
+
+/**
+ * See read_view_opts::filter_index.
+ */
+static bool
+read_view_user_index_filter(struct space *space, struct index *index, void *a)
+{
+	struct read_view_user_filer_arg *arg = a;
+	for (uint32_t i = 0; i < arg->space_index_ids_count; i++) {
+		if (space_id(space) != arg->space_index_ids[i].space_id)
+			continue;
+		if (index->def->iid == arg->space_index_ids[i].index_id)
+			return true;
+	}
+	return false;
+}
+
+API_EXPORT box_read_view_t *
+box_read_view_open_for_given_spaces(const char *name,
+				    struct space_index_id *space_index_ids,
+				    uint32_t space_index_ids_count,
+				    uint64_t flags)
+{
+	struct read_view_opts rv_opts;
+	read_view_opts_create(&rv_opts);
+	rv_opts.name = name;
+
+	/*
+	 * The user chooses spaces explicitly by ids,
+	 * so they may choose to add data-temporary spaces.
+	 */
+	rv_opts.enable_data_temporary_spaces = true;
+
+	if (flags & BOX_READ_VIEW_FIELD_NAMES)
+		rv_opts.enable_field_names = true;
+
+	struct read_view_user_filer_arg arg;
+	arg.space_index_ids = space_index_ids;
+	arg.space_index_ids_count = space_index_ids_count;
+	rv_opts.filter_arg = &arg;
+	rv_opts.filter_space = read_view_user_space_filter;
+	rv_opts.filter_index = read_view_user_index_filter;
+
+	box_read_view_t *rv = xcalloc(1, sizeof(box_read_view_t));
+	if (read_view_open(rv, &rv_opts) != 0) {
+		free(rv);
+		return NULL;
+	}
+
+	return rv;
+}
+
+API_EXPORT void
+box_read_view_close(box_read_view_t *rv)
+{
+	read_view_close(rv);
+	free(rv);
+}
+
+API_EXPORT int
+box_read_view_iterator_all(box_read_view_t *rv,
+			   uint32_t space_id, uint32_t index_id,
+			   box_read_view_iterator_t **iter)
+{
+	struct space_read_view *space_rv;
+	read_view_foreach_space(space_rv, rv) {
+		if (space_rv->id != space_id)
+			continue;
+
+		struct index_read_view *index_rv =
+			space_read_view_index(space_rv, index_id);
+		if (index_rv == NULL) {
+			/* Index is not in the read view. */
+			*iter = NULL;
+			return 0;
+		}
+
+		box_read_view_iterator_t *it =
+			xcalloc(1, sizeof(box_read_view_iterator_t));
+		if (index_read_view_create_iterator(index_rv, ITER_ALL,
+						    NULL, 0, it) != 0) {
+			free(it);
+			return -1;
+		}
+
+		*iter = it;
+		return 0;
+	}
+
+	/* Space is not in the read view. */
+	*iter = NULL;
+	return 0;
+}
+
+API_EXPORT int
+box_read_view_iterator_next_raw(box_read_view_iterator_t *iterator,
+				const char **data, uint32_t *size)
+{
+	struct read_view_tuple result;
+	int res = index_read_view_iterator_next_raw(iterator, &result);
+	if (res == 0) {
+		*data = result.data;
+		*size = result.size;
+	}
+	return res;
+}
+
+API_EXPORT void
+box_read_view_iterator_free(box_read_view_iterator_t *iterator)
+{
+	index_read_view_iterator_destroy(iterator);
+	free(iterator);
+}
