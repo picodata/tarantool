@@ -3384,6 +3384,246 @@ test_box_auth_data_prepare(struct lua_State *L)
 	return 1;
 }
 
+#define CHECK_STREQ(expected, data, len) do {					\
+	fail_unless(strlen(expected) == (len));					\
+	fail_unless(memcmp(expected, data, len) == 0);				\
+} while (0)
+
+static int
+test_box_read_view(struct lua_State *L)
+{
+	int rc;
+	const char *data;
+	uint32_t size;
+	box_tuple_t *t;
+
+	/*
+	 * Preparation.
+	 */
+	const char code[] =
+		"local s1 = box.schema.space.create('test_box_read_view_s1')\n"
+		"s1:create_index('pk')\n"
+		"s1:put{16}\n"
+		"s1:put{32}\n"
+		"s1:put{48}\n"
+		"\n"
+		"local s2 = box.schema.space.create('test_box_read_view_s2')\n"
+		"s2:format({{'id', 'unsigned'}, {'val', 'string'}})\n"
+		"s2:create_index('pk')\n"
+		"s2:create_index('val', {parts = {'val'}})\n"
+		"s2:put{1, 'c'}\n"
+		"s2:put{2, 'b'}\n"
+		"s2:put{3, 'a'}\n"
+		"\n"
+		"local s3 = box.schema.space.create('test_box_read_view_s3')\n"
+		"s3:create_index('pk')\n"
+		"s3:put{1}\n"
+		"s3:put{2}\n"
+		"s3:put{3}\n"
+		"\n"
+		"local s4 = box.schema.space.create("
+		"    'test_box_read_view_s4', { engine = 'vinyl' }\n"
+		")\n"
+		"s4:create_index('pk')\n"
+		"s4:put{16}\n"
+		"s4:put{32}\n"
+		"s4:put{48}\n"
+		"\n"
+		"return s1.id, s2.id, s3.id, s4.id\n";
+	rc = luaL_loadbuffer(L, code, sizeof(code) - 1, __func__);
+	fail_unless(rc == 0);
+	rc = lua_pcall(L, 0, 4, 0);
+	fail_unless(rc == 0);
+	uint32_t s1_id = lua_tointeger(L, -4);
+	uint32_t s2_id = lua_tointeger(L, -3);
+	uint32_t s3_id = lua_tointeger(L, -2);
+	uint32_t s4_id = lua_tointeger(L, -1);
+
+	/* Space doesn't exist */
+	uint32_t sX_id = 69420;
+	{
+		char key[64];
+		char *key_end = key;
+		key_end = mp_encode_array(key_end, 1);
+		key_end = mp_encode_uint(key_end, sX_id);
+		box_index_get(BOX_SPACE_ID, 0, key, key_end, &t);
+		fail_unless(t == NULL);
+	}
+
+	/*
+	 * Open read view.
+	 */
+	struct space_index_id space_index_ids[] = {
+		{s1_id, 0},
+		/* Unknown index is ignored. */
+		{s3_id, 1337},
+		/* Unknown space is ignored. */
+		{sX_id, 0},
+		{s4_id, 0},
+		{s2_id, 1},
+	};
+	box_read_view_t *rv;
+	rv = box_read_view_open_for_given_spaces(__func__,
+						 space_index_ids,
+						 lengthof(space_index_ids), 0);
+	fail_unless(rv != NULL);
+
+	/*
+	 * Space index is in the read view.
+	 */
+	box_read_view_iterator_t *it;
+	rc = box_read_view_iterator_all(rv, s1_id, 0, &it);
+	fail_unless(rc == 0);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x10", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x20", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x30", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(data == NULL);
+
+	box_read_view_iterator_free(it);
+
+	/*
+	 * Space is in the read view, but index doesn't.
+	 */
+	rc = box_read_view_iterator_all(rv, s1_id, 1, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	rc = box_read_view_iterator_all(rv, s2_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	/*
+	 * Space index is in the read view. Non-primary index.
+	 */
+	rc = box_read_view_iterator_all(rv, s2_id, 1, &it);
+	fail_unless(rc == 0);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x92\x03\xa1\x61", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x92\x02\xa1\x62", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x92\x01\xa1\x63", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(data == NULL);
+
+	box_read_view_iterator_free(it);
+
+	/*
+	 * Space is not in the read view.
+	 */
+	rc = box_read_view_iterator_all(rv, s3_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	rc = box_read_view_iterator_all(rv, s3_id, 1337, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	rc = box_read_view_iterator_all(rv, sX_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	/*
+	 * Space is modified but read view is not.
+	 */
+	{
+		static const char key[] = "\x91\x20";
+		box_delete(s1_id, 0, key, key + sizeof(key) - 1, &t);
+		fail_unless(t != NULL);
+	}
+	{
+		static const char key[] = "\x91\x40";
+		box_insert(s1_id, key, key + sizeof(key) - 1, &t);
+		fail_unless(t != NULL);
+	}
+	{
+		static const char key[] = "\x92\x30\x45";
+		box_replace(s1_id, key, key + sizeof(key) - 1, &t);
+		fail_unless(t != NULL);
+	}
+	{
+		box_iterator_t *it;
+		ssize_t len;
+		char buf[64];
+		buf[0] = 0x90;
+		it = box_index_iterator(s1_id, 0, ITER_ALL, buf, buf + 1);
+
+		box_iterator_next(it, &t);
+		len = box_tuple_to_buf(t, buf, sizeof(buf));
+		CHECK_STREQ("\x91\x10", buf, len);
+
+		box_iterator_next(it, &t);
+		len = box_tuple_to_buf(t, buf, sizeof(buf));
+		CHECK_STREQ("\x92\x30\x45", buf, len);
+
+		box_iterator_next(it, &t);
+		len = box_tuple_to_buf(t, buf, sizeof(buf));
+		CHECK_STREQ("\x91\x40", buf, len);
+
+		box_iterator_next(it, &t);
+		fail_unless(t == NULL);
+
+		box_iterator_free(it);
+	}
+
+	/*
+	 * Read view is not modified.
+	 */
+	rc = box_read_view_iterator_all(rv, s1_id, 0, &it);
+	fail_unless(rc == 0);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x10", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x20", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x30", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(data == NULL);
+
+	box_read_view_iterator_free(it);
+
+	/*
+	 * Vinyl spaces don't support read views.
+	 */
+
+	rc = box_read_view_iterator_all(rv, s4_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	/*
+	 * Close read view.
+	 */
+	box_read_view_close(rv);
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
 LUA_API int
 luaopen_module_api(lua_State *L)
 {
@@ -3446,6 +3686,7 @@ luaopen_module_api(lua_State *L)
 		{"box_iproto_send", test_box_iproto_send},
 		{"box_iproto_override_set", test_box_iproto_override_set},
 		{"box_iproto_override_reset", test_box_iproto_override_reset},
+		{"test_box_read_view", test_box_read_view},
 		{NULL, NULL}
 	};
 	luaL_register(L, "module_api", lib);
