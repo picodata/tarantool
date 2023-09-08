@@ -219,6 +219,105 @@ read_view_foreach_f(struct read_view *rv, void *arg);
 bool
 read_view_foreach(read_view_foreach_f cb, void *arg);
 
+/** \cond public */
+
+typedef struct index_read_view_iterator box_read_view_iterator_t;
+typedef struct read_view box_read_view_t;
+
+/**
+ * Flags supported by \link box_read_view_open_for_given_spaces \endlink.
+ */
+enum box_read_view_flags {
+	BOX_READ_VIEW_FIELD_NAMES = 0x0001,
+};
+
+struct space_index_id {
+	uint32_t space_id;
+	uint32_t index_id;
+};
+
+/**
+ * Open a read view on the spaces and indexes specified by the given parameters.
+ *
+ * \param name                   Read view name. Will be copied
+ *                               so memory may be reused immediately.
+ *
+ * \param space_index_ids        Array of pairs (space id, index id) which
+ *                               should be added to the read view.
+ * \param space_index_ids_count  Number of elements in \a space_index_ids
+ *
+ * \param flags                  Read view flags. Must be a disjunction of
+ *                               enum \link box_read_view_flags \endlink values
+ *                               or 0.
+ *
+ * \retval NULL                  On error (check box_error_last()).
+ * \retval read view		 Otherwise.
+ *
+ * \sa box_read_view_iterator()
+ * \sa box_read_view_close()
+ */
+box_read_view_t *
+box_read_view_open_for_given_spaces(const char *name,
+				    struct space_index_id *space_index_ids,
+				    uint32_t space_index_ids_count,
+				    uint64_t flags);
+
+/**
+ * Close the read view and dispose off any resources taken up by it.
+ *
+ * \sa box_read_view_open_for_given_spaces()
+ */
+void
+box_read_view_close(box_read_view_t *rv);
+
+/**
+ * Create an iterator over all the tuples in the read view of the given index.
+ *
+ * \param rv         Read view returned by box_read_view_open_for_given_spaces()
+ * \param space_id   Space identifier
+ * \param index_id   Index identifier
+ * \param[out] iter  Iterator or NULL if the given index is not in the read view
+ *
+ * \retval -1        On error (check box_error_last())
+ * \retval 0         Otherwise. Index not existing is not an error
+ *
+ * \sa box_read_view_iterator_next()
+ * \sa box_read_view_iterator_free()
+ */
+int
+box_read_view_iterator_all(box_read_view_t *rv,
+			   uint32_t space_id, uint32_t index_id,
+			   box_read_view_iterator_t **iter);
+
+/**
+ * Retrieve the next item from the \a iterator.
+ *
+ * \param iterator      An iterator returned by box_read_view_iterator()
+ * \param[out] data     A pointer to the raw tuple data
+ *			or NULL if there's no more data
+ * \param[out] size     Size of the returned tuple data
+ *
+ * \retval -1           On error (check box_error_last() for details)
+ * \retval 0            On success. The end of data is not an error
+ *
+ * \sa box_read_view_iterator()
+ * \sa box_read_view_iterator_free()
+ */
+int
+box_read_view_iterator_next_raw(box_read_view_iterator_t *iterator,
+				const char **data, uint32_t *size);
+
+/**
+ * Destroy and deallocate the read view iterator.
+ *
+ * \sa box_read_view_iterator()
+ * \sa box_read_view_iterator_free()
+ */
+void
+box_read_view_iterator_free(box_read_view_iterator_t *iterator);
+
+/** \endcond public */
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
