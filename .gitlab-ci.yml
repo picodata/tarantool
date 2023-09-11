@@ -40,6 +40,7 @@ test_mac-m1:
     tags: [mac-dev-m1]
     script:
       - ulimit -n 10240
+      - sudo mkdir -p /private/tmp/t
       - sudo chown -R $(id -u) /private/tmp/t
       - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk build
