@@ -32,6 +32,11 @@ g.before_all(function(cg)
     cg.check_json = function(expected_msg)
         local s = cg.sock:recv(1024)
         t.assert(s)
+        -- HACK: test-run.py sets OMP_NUM_THREADS which changes the 1st msg.
+        if s:find("Use cfg option 'memtx_sort_threads' instead.") then
+            s = cg.sock:recv(1024)
+            t.assert(s)
+        end
         local hdr, body = unpack(s:split(': ', 1))
         t.assert_str_matches(
             hdr, '<%d+>%a+%s+%d%d?%s+%d%d:%d%d:%d%d%s+tt%[' .. cg.pid .. '%]')
