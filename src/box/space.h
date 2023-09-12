@@ -470,6 +470,10 @@ space_index_def(struct space *space, int n);
 /**
  * Check whether or not the current user can be granted
  * the requested access to the space.
+ * @param space Space to run access check against
+ * @param access Requested access
+ * @retval 0 on success when access is granted
+ * @retval -1 on error (check box_error_last())
  */
 int
 access_check_space(struct space *space, user_access_t access);
