@@ -663,8 +663,90 @@ local function test_box_iproto_override(test, module)
     module.box_iproto_override_reset(box.iproto.type.PING)
 end
 
+local function test_box_access_check_space(test)
+    test:plan(9)
+
+    local user_name = "box_access_check_space_test_user"
+    box.schema.user.create(user_name, {password = 'foobar'})
+
+    local space_name = "test_box_access_check_space_ffi"
+    box.schema.space.create(space_name)
+
+    ffi = require('ffi')
+    ffi.cdef('int box_access_check_space(uint32_t space_id, uint16_t access);')
+    local function test_access_check(test, access, expected_ret, expected_msg)
+        box.error.clear()
+        local r = ffi.C.box_access_check_space(box.space[space_name].id, access)
+        local e = tostring(box.error.last())
+        test:plan(2)
+        test:is(r, expected_ret, "return value");
+        test:like(e, expected_msg, "error message");
+    end
+
+    box.session.su(user_name, function()
+        test:test("no access - read fails",
+            test_access_check, box.priv.R,
+            -1, "Read access to space .+ is denied for user .+"
+        )
+
+        test:test("no access - write fails",
+            test_access_check, box.priv.W,
+            -1, "Write access to space .+ is denied for user .+"
+        )
+    end)
+
+    box.schema.user.grant(user_name, 'read', 'space', space_name)
+
+    box.session.su(user_name, function()
+        test:test("grant read - read ok",
+            test_access_check, box.priv.R,
+            0, "nil"
+        )
+
+        test:test("grant read - write fails",
+            test_access_check, box.priv.W,
+            -1, "Write access to space .+ is denied for user .+"
+        )
+    end)
+
+    box.schema.user.grant(user_name, 'write', 'space', space_name)
+
+    box.session.su(user_name, function()
+        test:test("grant rw - read ok",
+            test_access_check, box.priv.R,
+            0, "nil"
+        )
+
+        test:test("grant rw - write ok",
+            test_access_check, box.priv.W,
+            0, "nil"
+        )
+
+        -- Execute accesses can't be granted to a space. This case is
+        -- artificial, but access check still fails.
+        test:test("grant rw - execute access check fails",
+            test_access_check, box.priv.X,
+            -1, "Execute access to space .+ is denied for user .+"
+        )
+    end)
+
+    box.schema.user.revoke(user_name, 'read', 'space', space_name)
+
+    box.session.su(user_name, function()
+        test:test("grant write - read fails",
+            test_access_check, box.priv.R,
+            -1, "Read access to space .+ is denied for user .+"
+        )
+
+        test:test("grant write - write ok",
+            test_access_check, box.priv.W,
+            0, "nil"
+        )
+    end)
+end
+
 require('tap').test("module_api", function(test)
-    test:plan(56)
+    test:plan(57)
     local status, module = pcall(require, 'module_api')
     test:is(status, true, "module")
     test:ok(status, "module is loaded")
@@ -701,6 +783,7 @@ require('tap').test("module_api", function(test)
     test:test("box_session_id_matches", test_box_session_id_matches, module)
     test:test("box_iproto_send", test_box_iproto_send, module)
     test:test("box_iproto_override", test_box_iproto_override, module)
+    test:test("box_access_check_space", test_box_access_check_space)
 
     space:drop()
 end)
