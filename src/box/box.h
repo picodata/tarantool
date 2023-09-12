@@ -743,6 +743,21 @@ API_EXPORT int
 box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid);
 
 /**
+ * Run access check for the current user against
+ * specified space and access type.
+ * While it is possible to pass bitmask in access
+ * parameter this function is intended to be used
+ * with only one permission at a time.
+ * Most relevant access types are read and write.
+ * \param space_id space id
+ * \param access type of access. See valid options in priv_type enum.
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_access_check_space(uint32_t space_id, uint16_t access);
+
+/**
  * Sends a packet with the given header and body over the IPROTO session's
  * socket.
  *
