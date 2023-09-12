@@ -3978,6 +3978,15 @@ box_info_lsn(void)
 	}
 }
 
+API_EXPORT int
+box_access_check_space(uint32_t space_id, uint16_t access)
+{
+	struct space *space = space_cache_find(space_id);
+	if (space == NULL)
+		return -1;
+	return access_check_space(space, access);
+}
+
 static inline void
 box_register_replica(uint32_t id, const struct tt_uuid *uuid)
 {
