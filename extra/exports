@@ -12,6 +12,7 @@
 base64_bufsize
 base64_decode
 base64_encode
+box_access_check_space
 box_auth_data_prepare
 box_dd_version_id
 box_decimal_abs
