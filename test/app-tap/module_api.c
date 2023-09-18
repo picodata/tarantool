@@ -3333,7 +3333,8 @@ test_box_auth_data_prepare(struct lua_State *L)
 {
 	size_t region_svp = box_region_used();
 
-	box_tuple_t *auth_data = NULL;
+	const char *auth_data = NULL;
+	const char *auth_data_end = NULL;
 	const char *empty = "";
 	const char *password = "password";
 	const char *user = "user";
@@ -3344,36 +3345,39 @@ test_box_auth_data_prepare(struct lua_State *L)
 	int rc = box_auth_data_prepare(md5, md5 + strlen(md5),
 				       password, password + strlen(password),
 				       user, user + strlen(user),
-				       &auth_data);
+				       &auth_data, &auth_data_end);
 	fail_unless(rc == 0);
 	char *hash = (char *)mp_decode_str((const char **)(&auth_data), &len);
 	const char *md5_hash = "md54d45974e13472b5a0be3533de4666414";
 	fail_unless(len == strlen(md5_hash));
 	fail_unless(strncmp(hash, md5_hash, len) == 0);
+	fail_unless(hash + len == auth_data_end);
 
 	/* Check chap-sha1 */
 	const char *chap_sha1 = "chap-sha1";
 	rc = box_auth_data_prepare(chap_sha1, chap_sha1 + strlen(chap_sha1),
 				   password, password + strlen(password),
 				   empty, empty + 0,
-				   &auth_data);
+				   &auth_data, &auth_data_end);
 	fail_unless(rc == 0);
 	hash = (char *)mp_decode_str((const char **)(&auth_data), &len);
 	const char *sha1_hash = "JHDAwG3uQv0WGLuZAFrcouydHhk=";
 	fail_unless(len == strlen(sha1_hash));
 	fail_unless(strncmp(hash, sha1_hash, len) == 0);
+	fail_unless(hash + len == auth_data_end);
 
 	/* Check ldap */
 	const char *ldap = "ldap";
 	rc = box_auth_data_prepare(ldap, ldap + strlen(ldap),
 				   empty, empty + 0,
 				   empty, empty + 0,
-				   &auth_data);
+				   &auth_data, &auth_data_end);
 	fail_unless(rc == 0);
 	hash = (char *)mp_decode_str((const char **)(&auth_data), &len);
 	const char *ldap_hash = "";
 	fail_unless(len == strlen(ldap_hash));
 	fail_unless(strncmp(hash, ldap_hash, len) == 0);
+	fail_unless(hash + len == auth_data_end);
 
 	box_region_truncate(region_svp);
 	lua_pushboolean(L, 1);
