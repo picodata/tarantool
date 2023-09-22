@@ -91,6 +91,7 @@ coverage:
     - cp -r debian-picodata debian
     - mkdir -p ~/.docker
     - echo $DOCKER_AUTH_RO > ~/.docker/config.json
+    - git clone https://github.com/packpack/packpack.git packpack
   timeout: 2h
   dependencies: []
 
@@ -98,7 +99,6 @@ build-sources:
   stage: pack
   extends: .pack
   script:
-    - git clone https://github.com/packpack/packpack.git packpack
     - OS=centos DIST=7 BUILDDIR=$PWD/build_sources packpack/packpack tarball
   artifacts:
     paths:
@@ -118,7 +118,6 @@ build-package-altlinux:
   stage: pack
   extends: .pack
   script:
-    - git clone https://github.com/packpack/packpack.git packpack
     - DOCKER_REPO=docker-picodata.binary.picodata.io/packpack/alt DOCKER_IMAGE=p9 BUILDDIR=$PWD/build_rpm/ packpack/packpack
     - DOCKER_REPO=docker-picodata.binary.picodata.io/packpack/alt DOCKER_IMAGE=p10 BUILDDIR=$PWD/build_rpm/ packpack/packpack
   artifacts:
@@ -158,11 +157,19 @@ build-package-astralinux:
   stage: pack
   extends: .pack
   script:
-    - git clone https://github.com/packpack/packpack.git packpack
     - DOCKER_REPO=docker-picodata.binary.picodata.io/packpack/astra DOCKER_IMAGE=orel-2.12 BUILDDIR=$PWD/build_astra packpack/packpack
   artifacts:
     paths:
       - build_astra/*.deb
+
+build-package-rosa:
+  stage: pack
+  extends: .pack
+  script:
+    - DOCKER_REPO=docker-picodata.binary.picodata.io/packpack/rosa  DOCKER_IMAGE=chrome BUILDDIR=$PWD/build_rosa packpack/packpack
+  artifacts:
+    paths:
+      - build_rosa/*.rpm
 
 build-package-macos-arm:
   stage: pack
@@ -236,16 +243,20 @@ sign-rpm-packages:
   script:
     - echo "$GPG_KEY_KDY" | base64 -d > build_rpm/kdy.asc
     - echo "$GPG_KEY_KDY" | base64 -d > build_redos/kdy.asc
+    - echo "$GPG_KEY_KDY" | base64 -d > build_rosa/kdy.asc
     - docker run --rm -e KEY_FILE=kdy.asc -v $PWD/build_rpm:/build docker-picodata.binary.picodata.io/rpmsign:centos7
     - docker run --rm -e KEY_FILE=kdy.asc -v $PWD/build_redos:/build docker-picodata.binary.picodata.io/rpmsign:centos7
+    - docker run --rm -e KEY_FILE=kdy.asc -v $PWD/build_rosa:/build docker-picodata.binary.picodata.io/rpmsign:centos7
   artifacts:
     paths:
       - build_rpm/tarantool*.rpm
       - build_redos/tarantool*.rpm
+      - build_rosa/tarantool*.rpm
   dependencies:
     - build-package-centos
     - build-package-altlinux
     - build-package-redos
+    - build-package-rosa
 
 sign-astralinux-packages:
   stage: sign
@@ -326,6 +337,12 @@ deploy-packages:
     - ssh -o stricthostkeychecking=no ansible@picodata.io "reprepro --keepunreferencedfiles -b /data/nginx/www/packrepo/tarantool-picodata/astra -C main includedeb orel ~/.deb/tnt-astra/tarantool*_signed.deb; rm -rf ~/.deb/tnt-astra"
     - echo "Astralinux packets successfully deployed."
     - echo
+    # ROSA linux
+    - echo "Deploying ROSA linux packet..."
+    - scp -o stricthostkeychecking=no build_rosa/tarantool*-rosa*.rpm ansible@picodata.io:/data/nginx/www/packrepo/tarantool-picodata/rosa/chrome/x86_64/
+    - ssh -o stricthostkeychecking=no ansible@picodata.io "cd /data/nginx/www/packrepo/tarantool-picodata/rosa/chrome/ && createrepo --update x86_64 && gpg --no-tty --yes -u kdy@picodata.io --detach-sign --armor x86_64/repodata/repomd.xml"
+    - echo "ROSA linux packets successfully deployed."
+    - echo
     - echo "Application successfully deployed."
   dependencies:
     - build-sources
@@ -371,13 +388,16 @@ check-deployment-rpm:
   parallel:
     matrix:
       - BASE_IMAGE: centos:7
-        PACKAGE: el/7/x86_64/picodata-release-1.1.1.0-1.el7.x86_64.rpm
+        PACKAGE: el/7/x86_64/picodata-release-1.1.2.0-1.el7.x86_64.rpm
         GIT_FETCH_PARAM: depth
       - BASE_IMAGE: rockylinux:8
-        PACKAGE: el/8/x86_64/picodata-release-1.1.1.0-1.el8.x86_64.rpm
+        PACKAGE: el/8/x86_64/picodata-release-1.1.2.0-1.el8.x86_64.rpm
         GIT_FETCH_PARAM: deepen
       - BASE_IMAGE: packpack/packpack:redos-7.3
-        PACKAGE: redos/7/x86_64/picodata-release-1.1.1.0-1.el7.x86_64.rpm
+        PACKAGE: redos/7/x86_64/picodata-release-1.1.2.0-1.el7.x86_64.rpm
+        GIT_FETCH_PARAM: deepen
+      - BASE_IMAGE: docker-picodata.binary.picodata.io/packpack/rosa:chrome
+        PACKAGE: rosa/chrome/x86_64/picodata-release-1.1.2.0-1-rosa2021.1.x86_64.rpm
         GIT_FETCH_PARAM: deepen
   before_script:
     - yum install -y git

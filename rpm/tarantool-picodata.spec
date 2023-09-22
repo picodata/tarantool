@@ -1,5 +1,5 @@
 # Enable systemd for on RHEL >= 7 and Fedora >= 15
-%if (0%{?fedora} >= 15 || 0%{?rhel} >= 7 || 0%{?sle_version} >= 1500 || %{?_build_vendor} == alt)
+%if (0%{?fedora} >= 15 || 0%{?rhel} >= 7 || 0%{?sle_version} >= 1500 || "%{?_build_vendor}" == "alt" || "%{?mandriva_os}" == "linux")
 %bcond_without systemd
 %else
 %bcond_with systemd
@@ -34,10 +34,21 @@ BuildRequires: gcc-c++ >= 4.5
 %endif
 BuildRequires: coreutils
 BuildRequires: sed
+
+%if "%{?mandriva_os}" == "linux"
+BuildRequires: lib64readline-devel
+BuildRequires: lib64openssl-devel
+BuildRequires: lib64icu-devel
+BuildRequires: lib64z-devel
+BuildRequires: lib64systemd-devel
+BuildRequires: lib64gomp-static-devel
+%else
 BuildRequires: readline-devel
 BuildRequires: openssl-devel
 BuildRequires: libicu-devel
 #BuildRequires: msgpuck-devel
+%endif
+
 %if 0%{?fedora} > 0
 # pod2man is needed to build man pages
 BuildRequires: perl-podlators
@@ -50,6 +61,10 @@ BuildRequires: zlib-devel
 Requires: zlib
 
 # for LDAP support
+%if "%{?mandriva_os}" == "linux"
+BuildRequires: lib64sasl2-devel
+BuildRequires: lib64ldap2.4_2-devel
+%endif
 %if 0%{?rhel} >= 7
 BuildRequires: cyrus-sasl-devel
 BuildRequires: openldap-devel
@@ -95,20 +110,20 @@ BuildRequires: libunwind-devel
 #
 %global _enable_debug_package 0
 %global debug_package %{nil}
-%if %{?_build_vendor} != alt
+%if "%{?_build_vendor}" != "alt"
 %global __os_install_post /usr/lib/rpm/brp-compress %{nil}
 %endif
 %global __strip /bin/true
 %endif
 
-%if %{?_build_vendor} == alt
+%if "%{?_build_vendor}" == "alt"
 %global _check_contents_method none
 %endif
 
 # Set dependences for tests.
 BuildRequires: python3
 
-%if %{?_build_vendor} == alt
+%if "%{?_build_vendor}" == "alt"
 BuildRequires: python3-module-six
 BuildRequires: python3-module-gevent
 BuildRequires: python3-module-pyaml
@@ -130,7 +145,7 @@ BuildRequires: tzdata
 %endif
 
 # Install prove to run LuaJIT tests.
-%if %{?_build_vendor} == alt
+%if "%{?_build_vendor}" == "alt"
 BuildRequires: perl-Tapper-TAP-Harness
 %else
 BuildRequires: perl-Test-Harness
@@ -143,7 +158,11 @@ Name: tarantool-picodata
 # Version is updated automaically using git describe --long --always
 Version: 1.7.2.385
 Release: 1%{?dist}
+%if "%{?mandriva_os}" == "linux"
+Group: Databases
+%else
 Group: Applications/Databases
+%endif
 Summary: In-memory database and Lua application server
 License: BSD
 
@@ -241,7 +260,11 @@ C and Lua/C modules.
 make %{?_smp_mflags}
 
 %install
-%if %{?_build_vendor} == alt
+%if "%{?mandriva_os}" == "linux"
+cd build
+%endif
+
+%if "%{?_build_vendor}" == "alt"
 %makeinstall_std
 %else
 %make_install
@@ -251,6 +274,9 @@ rm -rf %{buildroot}%{_datarootdir}/doc/tarantool/
 
 %if "%{getenv:MAKE_CHECK}" != "false"
 %check
+%if "%{?mandriva_os}" == "linux"
+cd build
+%endif
 make test-force
 %endif
 
@@ -287,7 +313,7 @@ fi
 %{_mandir}/man1/tarantool.1*
 %doc README.md
 %{!?_licensedir:%global license %doc}
-%if %{?_build_vendor} == alt
+%if "%{?_build_vendor}" == "alt"
 %doc LICENSE AUTHORS
 %else
 %license LICENSE AUTHORS
