@@ -37,7 +37,7 @@
 #include "assoc.h"
 #include "fiber.h"
 #include "errinj.h"
-#include "coio_file.h"
+#include "coio_task.h"
 #include "info/info.h"
 #include "tuple.h"
 #include "txn.h"
@@ -790,12 +790,19 @@ checkpoint_write_tuple(struct xlog *l, uint32_t space_id, uint32_t group_id,
 struct checkpoint {
 	/** Database read view written to the snapshot file. */
 	struct read_view rv;
+	/** Snapshot writer thread. */
 	struct cord cord;
+	/** True if tx thread is waiting for the snapshot writer thread. */
 	bool waiting_for_snap_thread;
 	/** The vclock of the snapshot file. */
 	struct vclock vclock;
+	/** Snapshot directory. */
 	struct xdir dir;
+	/** New snapshot file. */
+	struct xlog snap;
+	/** Raft request to be written to the snapshot file. */
 	struct raft_request raft;
+	/** Synchro request to be written to the snapshot file. */
 	struct synchro_request synchro_state;
 	/** The limbo confirmed vclock at the moment of checkpoint creation. */
 	struct vclock synchro_vclock;
@@ -893,6 +900,7 @@ checkpoint_new(const char *snap_dirname, uint64_t snap_io_rate_limit)
 	opts.sync_interval = SNAP_SYNC_INTERVAL;
 	opts.free_cache = true;
 	xdir_create(&ckpt->dir, snap_dirname, SNAP, &INSTANCE_UUID, &opts);
+	xlog_clear(&ckpt->snap);
 	vclock_create(&ckpt->vclock);
 	box_raft_checkpoint_local(&ckpt->raft);
 	txn_limbo_checkpoint(&txn_limbo, &ckpt->synchro_state,
@@ -1048,14 +1056,22 @@ checkpoint_f(va_list ap)
 		ckpt->touch = false;
 	}
 
-	struct xlog snap;
-	if (xdir_create_xlog(&ckpt->dir, &snap, &ckpt->vclock) != 0)
+	struct xlog *snap = &ckpt->snap;
+	assert(!xlog_is_open(snap));
+	if (xdir_create_xlog(&ckpt->dir, snap, &ckpt->vclock) != 0) {
+		/*
+		 * We call memtx_engine_abort_checkpoint on failure to discard
+		 * an incomplete xlog file. Clear the xlog object so that it's
+		 * safe to call xlog_discard() on it.
+		 */
+		xlog_clear(snap);
 		return -1;
+	}
 
 	bool is_synchro_written = false;
 	struct mh_i32_t *temp_space_ids = mh_i32_new();
 
-	say_info("saving snapshot `%s'", snap.filename);
+	say_info("saving snapshot `%s'", snap->filename);
 	ERROR_INJECT_SLEEP(ERRINJ_SNAP_WRITE_DELAY);
 	ERROR_INJECT(ERRINJ_SNAP_SKIP_ALL_ROWS, goto done);
 	struct space_read_view *space_rv;
@@ -1074,7 +1090,7 @@ checkpoint_f(va_list ap)
 		 * during checkpoint join.
 		 */
 		if (!is_synchro_written && !space_id_is_system(space_rv->id)) {
-			rc = checkpoint_write_system_data(&snap, &ckpt->raft,
+			rc = checkpoint_write_system_data(snap, &ckpt->raft,
 							  &ckpt->synchro_state);
 			if (rc != 0)
 				break;
@@ -1099,7 +1115,7 @@ checkpoint_f(va_list ap)
 					       space_rv->id,
 					       temp_space_ids))
 				continue;
-			rc = checkpoint_write_tuple(&snap, space_rv->id,
+			rc = checkpoint_write_tuple(snap, space_rv->id,
 						    space_rv->group_id,
 						    result.data, result.size);
 			if (rc != 0)
@@ -1113,19 +1129,19 @@ checkpoint_f(va_list ap)
 	if (rc != 0)
 		goto fail;
 	ERROR_INJECT(ERRINJ_SNAP_WRITE_CORRUPTED_INSERT_ROW, {
-		if (checkpoint_write_corrupted_insert_row(&snap) != 0)
+		if (checkpoint_write_corrupted_insert_row(snap) != 0)
 			goto fail;
 	});
 	ERROR_INJECT(ERRINJ_SNAP_WRITE_MISSING_SPACE_ROW, {
-		if (checkpoint_write_missing_space_row(&snap) != 0)
+		if (checkpoint_write_missing_space_row(snap) != 0)
 			goto fail;
 	});
 	ERROR_INJECT(ERRINJ_SNAP_WRITE_UNKNOWN_ROW_TYPE, {
-		if (checkpoint_write_unknown_row_type(&snap) != 0)
+		if (checkpoint_write_unknown_row_type(snap) != 0)
 			goto fail;
 	});
 	ERROR_INJECT(ERRINJ_SNAP_WRITE_INVALID_SYSTEM_ROW, {
-		if (checkpoint_write_invalid_system_row(&snap) != 0)
+		if (checkpoint_write_invalid_system_row(snap) != 0)
 			goto fail;
 	});
 	/*
@@ -1134,19 +1150,17 @@ checkpoint_f(va_list ap)
 	 * of the checkpoint.
 	 */
 	if (!is_synchro_written &&
-	    checkpoint_write_system_data(&snap, &ckpt->raft,
+	    checkpoint_write_system_data(snap, &ckpt->raft,
 					 &ckpt->synchro_state) != 0)
 		goto fail;
 	goto done;
 done:
-	if (xlog_flush(&snap) < 0)
+	if (xlog_close(snap) != 0)
 		goto fail;
-
-	xlog_close(&snap, false);
 	say_info("done");
 	return 0;
 fail:
-	xlog_close(&snap, false);
+	xlog_discard(snap);
 	return -1;
 }
 
@@ -1196,31 +1210,32 @@ memtx_engine_wait_checkpoint(struct engine *engine,
 	return result;
 }
 
+static ssize_t
+memtx_engine_commit_checkpoint_f(va_list ap)
+{
+	struct xlog *xlog = va_arg(ap, typeof(xlog));
+	if (xlog_materialize(xlog) != 0) {
+		diag_log();
+		panic("failed to commit snapshot");
+	}
+	return 0;
+}
+
 static void
 memtx_engine_commit_checkpoint(struct engine *engine,
 			       const struct vclock *vclock)
 {
 	ERROR_INJECT_TERMINATE(ERRINJ_SNAP_COMMIT_FAIL);
-	(void) vclock;
 	struct memtx_engine *memtx = (struct memtx_engine *)engine;
 
-	/* beginCheckpoint() must have been done */
 	assert(memtx->checkpoint != NULL);
-	/* waitCheckpoint() must have been done. */
 	assert(!memtx->checkpoint->waiting_for_snap_thread);
+	assert(!xlog_is_open(&memtx->checkpoint->snap));
 
 	if (!memtx->checkpoint->touch) {
-		int64_t lsn = vclock_sum(&memtx->checkpoint->vclock);
-		struct xdir *dir = &memtx->checkpoint->dir;
-		/* rename snapshot on completion */
-		char to[PATH_MAX];
-		snprintf(to, sizeof(to), "%s",
-			 xdir_format_filename(dir, lsn, NONE));
-		const char *from = xdir_format_filename(dir, lsn, INPROGRESS);
 		ERROR_INJECT_YIELD(ERRINJ_SNAP_COMMIT_DELAY);
-		int rc = coio_rename(from, to);
-		if (rc != 0)
-			panic("can't rename .snap.inprogress");
+		coio_call(memtx_engine_commit_checkpoint_f,
+			  &memtx->checkpoint->snap);
 	}
 
 	struct vclock last;
@@ -1234,6 +1249,14 @@ memtx_engine_commit_checkpoint(struct engine *engine,
 	memtx->checkpoint = NULL;
 }
 
+static ssize_t
+memtx_engine_abort_checkpoint_f(va_list ap)
+{
+	struct xlog *xlog = va_arg(ap, typeof(xlog));
+	xlog_discard(xlog);
+	return 0;
+}
+
 static void
 memtx_engine_abort_checkpoint(struct engine *engine)
 {
@@ -1241,23 +1264,11 @@ memtx_engine_abort_checkpoint(struct engine *engine)
 	if (memtx->checkpoint == NULL)
 		return;
 
-	/**
-	 * An error in the other engine's first phase.
-	 */
-	if (memtx->checkpoint->waiting_for_snap_thread) {
-		/* wait for memtx-part snapshot completion */
-		if (cord_cojoin(&memtx->checkpoint->cord) != 0)
-			diag_log();
-		memtx->checkpoint->waiting_for_snap_thread = false;
-	}
+	assert(memtx->checkpoint != NULL);
+	assert(!memtx->checkpoint->waiting_for_snap_thread);
+	assert(!xlog_is_open(&memtx->checkpoint->snap));
 
-	/** Remove garbage .inprogress file. */
-	const char *filename =
-		xdir_format_filename(&memtx->checkpoint->dir,
-				     vclock_sum(&memtx->checkpoint->vclock),
-				     INPROGRESS);
-	(void) coio_unlink(filename);
-
+	coio_call(memtx_engine_abort_checkpoint_f, &memtx->checkpoint->snap);
 	checkpoint_delete(memtx->checkpoint);
 	memtx->checkpoint = NULL;
 }

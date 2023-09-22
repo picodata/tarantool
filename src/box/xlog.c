@@ -774,7 +774,7 @@ xdir_add_vclock(struct xdir *xdir, const struct vclock *vclock)
 /* {{{ struct xlog */
 
 int
-xlog_rename(struct xlog *l)
+xlog_materialize(struct xlog *l)
 {
 	char *filename = l->filename;
 	char new_filename[PATH_MAX];
@@ -829,16 +829,20 @@ xlog_clear(struct xlog *l)
 	l->fd = -1;
 }
 
+/**
+ * Frees the write context allocated in xlog_init().
+ * The xlog file must be closed.
+ */
 static void
-xlog_destroy(struct xlog *xlog)
+xlog_free(struct xlog *xlog)
 {
+	assert(xlog->fd < 0);
 	assert(xlog->obuf.slabc == &cord()->slabc);
 	assert(xlog->zbuf.slabc == &cord()->slabc);
 	obuf_destroy(&xlog->obuf);
 	obuf_destroy(&xlog->zbuf);
 	ZSTD_freeCCtx(xlog->zctx);
-	TRASH(xlog);
-	xlog->fd = -1;
+	xlog->zctx = NULL;
 }
 
 int
@@ -886,7 +890,6 @@ xlog_create(struct xlog *xlog, const char *name, int flags,
 	 */
 	xlog->fd = open(xlog->filename, flags, 0644);
 	if (xlog->fd < 0) {
-		say_syserror("open, [%s]", xlog->filename);
 		diag_set(SystemError, "failed to create file '%s'",
 			 xlog->filename);
 		goto err_open;
@@ -913,7 +916,7 @@ err_write:
 	xlog->fd = -1;
 	xlog_remove_file(xlog->filename, 0); /* try to remove incomplete file */
 err_open:
-	xlog_destroy(xlog);
+	xlog_free(xlog);
 err:
 	return -1;
 }
@@ -984,8 +987,9 @@ no_eof:
 	return 0;
 err_read:
 	close(xlog->fd);
+	xlog->fd = -1;
 err_open:
-	xlog_destroy(xlog);
+	xlog_free(xlog);
 err:
 	return -1;
 }
@@ -1039,10 +1043,8 @@ xdir_create_xlog(struct xdir *dir, struct xlog *xlog,
 		return -1;
 
 	/* Rename xlog file */
-	if (dir->suffix != INPROGRESS && xlog_rename(xlog)) {
-		int save_errno = errno;
-		xlog_close(xlog, false);
-		errno = save_errno;
+	if (dir->suffix != INPROGRESS && xlog_materialize(xlog) != 0) {
+		xlog_discard(xlog);
 		return -1;
 	}
 
@@ -1516,30 +1518,41 @@ sync_cb(eio_req *req)
 	return 0;
 }
 
-int
+/**
+ * Syncs an xlog object to disk.
+ *
+ * If the sync_is_async flag is set in xlog_opts, fsync is called
+ * asynchronously, without checking the result.
+ *
+ * Returns 0 on success. On failure, sets diag returns -1.
+ */
+static int
 xlog_sync(struct xlog *l)
 {
 	if (l->opts.sync_is_async) {
 		int fd = dup(l->fd);
 		if (fd == -1) {
-			say_syserror("%s: dup() failed", l->filename);
+			diag_set(SystemError, "failed to duplicate fd %d",
+				 l->fd);
 			return -1;
 		}
 		eio_fsync(fd, 0, sync_cb, (void *) (intptr_t) fd);
 	} else if (fsync(l->fd) < 0) {
-		say_syserror("%s: fsync failed", l->filename);
+		diag_set(SystemError, "failed to sync file '%s'", l->filename);
 		return -1;
 	}
 	return 0;
 }
 
+/**
+ * Writes the EOF marker to the xlog file.
+ *
+ * Returns 0 on success. On failure, sets diag returns -1.
+ */
 static int
 xlog_write_eof(struct xlog *l)
 {
-	ERROR_INJECT(ERRINJ_WAL_WRITE_EOF, {
-		diag_set(ClientError, ER_INJECTION, "xlog write injection");
-		return -1;
-	});
+	ERROR_INJECT(ERRINJ_WAL_WRITE_EOF, return 0);
 
 	/*
 	 * Free disk space preallocated with xlog_fallocate().
@@ -1547,40 +1560,40 @@ xlog_write_eof(struct xlog *l)
 	 * we'll get "data after eof marker" error on recovery.
 	 */
 	if (l->allocated > 0 && ftruncate(l->fd, l->offset) < 0) {
-		diag_set(SystemError, "ftruncate() failed");
+		diag_set(SystemError, "failed to truncate file '%s'",
+			 l->filename);
 		return -1;
 	}
 
 	if (fio_writen(l->fd, &eof_marker, sizeof(eof_marker)) < 0) {
-		diag_set(SystemError, "write() failed");
+		diag_set(SystemError, "failed to write to file '%s'",
+			 l->filename);
 		return -1;
 	}
 	return 0;
 }
 
 int
-xlog_close(struct xlog *l, bool reuse_fd)
+xlog_close_reuse_fd(struct xlog *l, int *fd)
 {
-	int rc = xlog_write_eof(l);
-	if (rc < 0)
-		say_error("%s: failed to write EOF marker: %s", l->filename,
-			  diag_last_error(diag_get())->errmsg);
+	assert(l->fd >= 0);
+	int rc = xlog_flush(l) < 0 ? -1 : 0;
+	if (rc == 0)
+		rc = xlog_write_eof(l);
+	if (rc == 0)
+		rc = xlog_sync(l);
+	*fd = l->fd;
+	l->fd = -1;
+	xlog_free(l);
+	return rc;
+}
 
-	/*
-	 * Sync the file before closing, since
-	 * otherwise we can end up with a partially
-	 * written file in case of a crash.
-	 * We sync even if file open O_SYNC, simplify code for low cost
-	 */
-	xlog_sync(l);
-
-	if (!reuse_fd) {
-		rc = close(l->fd);
-		if (rc < 0)
-			say_syserror("%s: close() failed", l->filename);
-	}
-
-	xlog_destroy(l);
+int
+xlog_close(struct xlog *l)
+{
+	int fd;
+	int rc = xlog_close_reuse_fd(l, &fd);
+	close(fd);
 	return rc;
 }
 
@@ -1590,7 +1603,7 @@ xlog_discard(struct xlog *l)
 	if (l->fd >= 0) {
 		close(l->fd);
 		l->fd = -1;
-		xlog_destroy(l);
+		xlog_free(l);
 	}
 	if (l->filename[0] != '\0') {
 		assert(l->is_inprogress);
