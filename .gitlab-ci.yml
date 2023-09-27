@@ -6,11 +6,11 @@ variables:
 stages:
   - test
   - build
+  - docker
   - pack
   - sign
   - deploy
   - check-deployment
-  - docker
 
 .test:
     stage: test
