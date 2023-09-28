@@ -190,7 +190,7 @@ check_index(uint32_t space_id, uint32_t index_id,
 	*space = space_cache_find(space_id);
 	if (*space == NULL)
 		return -1;
-	if (access_check_space(*space, PRIV_R) != 0)
+	if (access_check_space(*space, BOX_PRIVILEGE_READ) != 0)
 		return -1;
 	*index = index_find(*space, index_id);
 	if (*index == NULL)
