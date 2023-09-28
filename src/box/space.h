@@ -488,7 +488,7 @@ index_name_by_id(struct space *space, uint32_t id);
  * @retval -1 on error (check box_error_last())
  */
 int
-access_check_space(struct space *space, user_access_t access);
+access_check_space(struct space *space, box_user_access_mask_t access);
 
 /**
  * Execute a DML request on the given space.
@@ -710,7 +710,7 @@ space_new_xc(struct space_def *space_def, struct rlist *key_list)
 }
 
 static inline void
-access_check_space_xc(struct space *space, user_access_t access)
+access_check_space_xc(struct space *space, box_user_access_mask_t access)
 {
 	if (access_check_space(space, access) != 0)
 		diag_raise();

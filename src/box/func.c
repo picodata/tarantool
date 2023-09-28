@@ -557,20 +557,23 @@ func_access_check(struct func *func)
 	 * checks. No special check for ADMIN user is necessary
 	 * since ADMIN has universal access.
 	 */
-	if ((credentials->universal_access & (PRIV_X | PRIV_U)) ==
-	    (PRIV_X | PRIV_U))
+	if ((credentials->universal_access &
+		(BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE)) ==
+	    (BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE))
 		return 0;
-	user_access_t access = PRIV_X | PRIV_U;
+	box_user_access_mask_t access =
+		BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE;
 	/* Check access for all functions. */
 	access &= ~entity_access_get(SC_FUNCTION)[credentials->auth_token].effective;
-	user_access_t func_access = access & ~credentials->universal_access;
-	if ((func_access & PRIV_U) != 0 ||
+	box_user_access_mask_t func_access =
+		access & ~credentials->universal_access;
+	if ((func_access & BOX_PRIVILEGE_USAGE) != 0 ||
 	    (func->def->uid != credentials->uid &&
 	     func_access & ~func->access[credentials->auth_token].effective)) {
 		/* Access violation, report error. */
 		struct user *user = user_find(credentials->uid);
 		if (user != NULL) {
-			diag_set(AccessDeniedError, priv_name(PRIV_X),
+			diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_EXECUTE),
 				 schema_object_name(SC_FUNCTION),
 				 func->def->name, user->def->name);
 		}
