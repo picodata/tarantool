@@ -18,7 +18,10 @@ extern "C" {
 
 struct authenticator;
 
-typedef uint16_t user_access_t;
+/** \cond public */
+typedef uint16_t box_user_access_mask_t;
+/** \endcond public */
+
 /**
  * Effective session user. A cache of user data
  * and access stored in session and fiber local storage.
@@ -32,7 +35,7 @@ struct credentials {
 	 * Cached global grants, to avoid an extra look up
 	 * when checking global grants.
 	 */
-	user_access_t universal_access;
+	box_user_access_mask_t universal_access;
 	/** User id of the authenticated user. */
 	uint32_t uid;
 	/**
@@ -43,40 +46,43 @@ struct credentials {
 	struct rlist in_user;
 };
 
-enum priv_type {
+/** \cond public */
+enum box_privilege_type {
 	/* SELECT */
-	PRIV_R = 1,
+	BOX_PRIVILEGE_READ = 1,
 	/* INSERT, UPDATE, UPSERT, DELETE, REPLACE */
-	PRIV_W = 2,
+	BOX_PRIVILEGE_WRITE = 2,
 	/* CALL */
-	PRIV_X = 4,
+	BOX_PRIVILEGE_EXECUTE = 4,
 	/* SESSION */
-	PRIV_S = 8,
+	BOX_PRIVILEGE_SESSION = 8,
 	/* USAGE */
-	PRIV_U = 16,
+	BOX_PRIVILEGE_USAGE = 16,
 	/* CREATE */
-	PRIV_C = 32,
+	BOX_PRIVILEGE_CREATE = 32,
 	/* DROP */
-	PRIV_D = 64,
+	BOX_PRIVILEGE_DROP = 64,
 	/* ALTER */
-	PRIV_A = 128,
+	BOX_PRIVILEGE_ALTER = 128,
 	/* REFERENCE - required by ANSI - not implemented */
-	PRIV_REFERENCE = 256,
+	BOX_PRIVILEGE_REFERENCE = 256,
 	/* TRIGGER - required by ANSI - not implemented */
-	PRIV_TRIGGER = 512,
+	BOX_PRIVILEGE_TRIGGER = 512,
 	/* INSERT - required by ANSI - not implemented */
-	PRIV_INSERT = 1024,
+	BOX_PRIVILEGE_INSERT = 1024,
 	/* UPDATE - required by ANSI - not implemented */
-	PRIV_UPDATE = 2048,
+	BOX_PRIVILEGE_UPDATE = 2048,
 	/* DELETE - required by ANSI - not implemented */
-	PRIV_DELETE = 4096,
+	BOX_PRIVILEGE_DELETE = 4096,
 	/* This is never granted, but used internally. */
-	PRIV_GRANT = 8192,
+	BOX_PRIVILEGE_GRANT = 8192,
 	/* Never granted, but used internally. */
-	PRIV_REVOKE = 16384,
+	BOX_PRIVILEGE_REVOKE = 16384,
 	/* all bits */
-	PRIV_ALL  = ~((user_access_t) 0),
+	BOX_PRIVILEGE_ALL  = ~((box_user_access_mask_t)0),
 };
+
+/** \endcond public */
 
 /**
  * Definition of a privilege
@@ -94,14 +100,14 @@ struct priv_def {
 	 * What is being granted, has been granted, or is being
 	 * revoked.
 	 */
-	user_access_t access;
+	box_user_access_mask_t access;
 	/** To maintain a set of effective privileges. */
 	rb_node(struct priv_def) link;
 };
 
 /* Privilege name for error messages */
 const char *
-priv_name(user_access_t access);
+priv_name(box_user_access_mask_t access);
 
 /**
  * Encapsulates privileges of a user on an object.
@@ -113,14 +119,14 @@ struct access {
 	 * Granted access has been given to a user explicitly
 	 * via some form of a grant.
 	 */
-	user_access_t granted;
+	box_user_access_mask_t granted;
 	/**
 	 * Effective access is a sum of granted access and
 	 * all privileges inherited by a user on this object
 	 * via some role. Since roles may be granted to other
 	 * roles, this may include indirect grants.
 	 */
-	user_access_t effective;
+	box_user_access_mask_t effective;
 };
 
 /**
