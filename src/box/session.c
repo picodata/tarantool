@@ -447,8 +447,9 @@ access_check_session(struct user *user)
 	 * Can't use here access_check_universe
 	 * as current_user is not assigned yet
 	 */
-	if (!(universe.access[user->auth_token].effective & PRIV_S)) {
-		diag_set(AccessDeniedError, priv_name(PRIV_S),
+	if (!(universe.access[user->auth_token].effective &
+		BOX_PRIVILEGE_SESSION)) {
+		diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_SESSION),
 			 schema_object_name(SC_UNIVERSE), "",
 			 user->def->name);
 		return -1;
@@ -457,12 +458,12 @@ access_check_session(struct user *user)
 }
 
 int
-access_check_universe_object(user_access_t access,
+access_check_universe_object(box_user_access_mask_t access,
 			     enum schema_object_type object_type,
 			     const char *object_name)
 {
 	struct credentials *credentials = effective_user();
-	access |= PRIV_U;
+	access |= BOX_PRIVILEGE_USAGE;
 	if ((credentials->universal_access & access) ^ access) {
 		/*
 		 * Access violation, report error.
@@ -491,7 +492,7 @@ access_check_universe_object(user_access_t access,
 }
 
 int
-access_check_universe(user_access_t access)
+access_check_universe(box_user_access_mask_t access)
 {
 	return access_check_universe_object(access, SC_UNIVERSE, "");
 }

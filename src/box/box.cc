@@ -468,7 +468,7 @@ box_process_rw(struct request *request, struct space *space,
 		return -1;
 	assert(iproto_type_is_dml(request->type));
 	rmean_collect(rmean_box, request->type, 1);
-	if (access_check_space(space, PRIV_W) != 0)
+	if (access_check_space(space, BOX_PRIVILEGE_WRITE) != 0)
 		goto rollback;
 	if (txn_begin_stmt(txn, space, request->type) != 0)
 		goto rollback;
@@ -3496,7 +3496,7 @@ box_select(uint32_t space_id, uint32_t index_id,
 	struct space *space = space_cache_find(space_id);
 	if (space == NULL)
 		return -1;
-	if (access_check_space(space, PRIV_R) != 0)
+	if (access_check_space(space, BOX_PRIVILEGE_READ) != 0)
 		return -1;
 	struct index *index = index_find(space, index_id);
 	if (index == NULL)
@@ -4052,7 +4052,7 @@ box_process_fetch_snapshot(struct iostream *io,
 		tnt_raise(ClientError, ER_LOADING);
 
 	/* Check permissions */
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 
 	/* Forbid replication with disabled WAL */
 	if (wal_mode() == WAL_NONE) {
@@ -4123,7 +4123,7 @@ box_process_register(struct iostream *io, const struct xrow_header *header)
 	if (tt_uuid_is_equal(&req.instance_uuid, &INSTANCE_UUID))
 		tnt_raise(ClientError, ER_CONNECTION_TO_SELF);
 
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 	/* We only get register requests from anonymous instances. */
 	struct replica *replica = replica_by_uuid(&req.instance_uuid);
 	if (replica && replica->id != REPLICA_ID_NIL) {
@@ -4146,7 +4146,7 @@ box_process_register(struct iostream *io, const struct xrow_header *header)
 	/* See box_process_join() */
 	box_check_writable_xc();
 	struct space *space = space_cache_find_xc(BOX_CLUSTER_ID);
-	access_check_space_xc(space, PRIV_W);
+	access_check_space_xc(space, BOX_PRIVILEGE_WRITE);
 
 	/* Forbid replication with disabled WAL */
 	if (wal_mode() == WAL_NONE) {
@@ -4265,7 +4265,7 @@ box_process_join(struct iostream *io, const struct xrow_header *header)
 		tnt_raise(ClientError, ER_CONNECTION_TO_SELF);
 
 	/* Check permissions */
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 
 	if (replication_anon) {
 		tnt_raise(ClientError, ER_UNSUPPORTED, "Anonymous replica",
@@ -4282,7 +4282,7 @@ box_process_join(struct iostream *io, const struct xrow_header *header)
 	if (replica == NULL || replica->id == REPLICA_ID_NIL) {
 		box_check_writable_xc();
 		struct space *space = space_cache_find_xc(BOX_CLUSTER_ID);
-		access_check_space_xc(space, PRIV_W);
+		access_check_space_xc(space, BOX_PRIVILEGE_WRITE);
 	}
 
 	/* Forbid replication with disabled WAL */
@@ -4397,7 +4397,7 @@ box_process_subscribe(struct iostream *io, const struct xrow_header *header)
 	}
 
 	/* Check permissions */
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 
 	/* Check replica uuid */
 	struct replica *replica = replica_by_uuid(&req.instance_uuid);

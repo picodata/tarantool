@@ -750,7 +750,7 @@ box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid);
  * with only one permission at a time.
  * Most relevant access types are read and write.
  * \param space_id space id
- * \param access type of access. See valid options in priv_type enum.
+ * \param access type of access. See valid options in box_privilege_type enum.
  * \retval -1 on error (check box_error_last())
  * \retval 0 on success
  */

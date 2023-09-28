@@ -130,44 +130,44 @@ ffi.cdef[[
                    struct port *port, int64_t iterator, uint64_t offset,
                    uint64_t limit);
 
-    enum priv_type {
-        PRIV_R = 1,
-        PRIV_W = 2,
-        PRIV_X = 4,
-        PRIV_S = 8,
-        PRIV_U = 16,
-        PRIV_C = 32,
-        PRIV_D = 64,
-        PRIV_A = 128,
-        PRIV_REFERENCE = 256,
-        PRIV_TRIGGER = 512,
-        PRIV_INSERT = 1024,
-        PRIV_UPDATE = 2048,
-        PRIV_DELETE = 4096,
-        PRIV_GRANT = 8192,
-        PRIV_REVOKE = 16384,
-        PRIV_ALL  = 4294967295
+    enum box_privilege_type {
+        BOX_PRIVILEGE_READ = 1,
+        BOX_PRIVILEGE_WRITE = 2,
+        BOX_PRIVILEGE_EXECUTE = 4,
+        BOX_PRIVILEGE_SESSION = 8,
+        BOX_PRIVILEGE_USAGE = 16,
+        BOX_PRIVILEGE_CREATE = 32,
+        BOX_PRIVILEGE_DROP = 64,
+        BOX_PRIVILEGE_ALTER = 128,
+        BOX_PRIVILEGE_REFERENCE = 256,
+        BOX_PRIVILEGE_TRIGGER = 512,
+        BOX_PRIVILEGE_INSERT = 1024,
+        BOX_PRIVILEGE_UPDATE = 2048,
+        BOX_PRIVILEGE_DELETE = 4096,
+        BOX_PRIVILEGE_GRANT = 8192,
+        BOX_PRIVILEGE_REVOKE = 16384,
+        BOX_PRIVILEGE_ALL  = 4294967295
     };
 
 ]]
 
 box.priv = {
-    ["R"] = builtin.PRIV_R,
-    ["W"] = builtin.PRIV_W,
-    ["X"] = builtin.PRIV_X,
-    ["S"] = builtin.PRIV_S,
-    ["U"] = builtin.PRIV_U,
-    ["C"] = builtin.PRIV_C,
-    ["D"] = builtin.PRIV_D,
-    ["A"] = builtin.PRIV_A,
-    ["REFERENCE"] = builtin.PRIV_REFERENCE,
-    ["TRIGGER"] = builtin.PRIV_TRIGGER,
-    ["INSERT"] = builtin.PRIV_INSERT,
-    ["UPDATE"] = builtin.PRIV_UPDATE,
-    ["DELETE"] = builtin.PRIV_DELETE,
-    ["GRANT"]= builtin.PRIV_GRANT,
-    ["REVOKE"] = builtin.PRIV_REVOKE,
-    ["ALL"] = builtin.PRIV_ALL
+    ["R"] = builtin.BOX_PRIVILEGE_READ,
+    ["W"] = builtin.BOX_PRIVILEGE_WRITE,
+    ["X"] = builtin.BOX_PRIVILEGE_EXECUTE,
+    ["S"] = builtin.BOX_PRIVILEGE_SESSION,
+    ["U"] = builtin.BOX_PRIVILEGE_USAGE,
+    ["C"] = builtin.BOX_PRIVILEGE_CREATE,
+    ["D"] = builtin.BOX_PRIVILEGE_DROP,
+    ["A"] = builtin.BOX_PRIVILEGE_ALTER,
+    ["REFERENCE"] = builtin.BOX_PRIVILEGE_REFERENCE,
+    ["TRIGGER"] = builtin.BOX_PRIVILEGE_TRIGGER,
+    ["INSERT"] = builtin.BOX_PRIVILEGE_INSERT,
+    ["UPDATE"] = builtin.BOX_PRIVILEGE_UPDATE,
+    ["DELETE"] = builtin.BOX_PRIVILEGE_DELETE,
+    ["GRANT"]= builtin.BOX_PRIVILEGE_GRANT,
+    ["REVOKE"] = builtin.BOX_PRIVILEGE_REVOKE,
+    ["ALL"] = builtin.BOX_PRIVILEGE_ALL
 }
 
 local function user_or_role_resolve(user)

@@ -72,13 +72,15 @@ box_schema_version_bump(void)
 
 static int
 access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
-		 enum schema_object_type type, enum priv_type priv_type)
+		 enum schema_object_type type,
+		 enum box_privilege_type priv_type)
 {
 	struct credentials *cr = effective_user();
-	user_access_t has_access = cr->universal_access;
+	box_user_access_mask_t has_access = cr->universal_access;
 
-	user_access_t access = ((PRIV_U | (user_access_t) priv_type) &
-				~has_access);
+	box_user_access_mask_t access = (
+		(BOX_PRIVILEGE_USAGE | (box_user_access_mask_t)priv_type) &
+		 ~has_access);
 	bool is_owner = owner_uid == cr->uid || cr->uid == ADMIN;
 	if (access == 0)
 		return 0; /* Access granted. */
@@ -96,12 +98,12 @@ access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 	 * the owner of the object, but this should be ignored --
 	 * CREATE privilege is required.
 	 */
-	if (access == 0 || (is_owner && !(access & (PRIV_U | PRIV_C))))
+	if (access == 0 || (is_owner && !(access & (BOX_PRIVILEGE_USAGE | BOX_PRIVILEGE_CREATE))))
 		return 0; /* Access granted. */
 	/*
 	 * USAGE can be granted only globally.
 	 */
-	if (!(access & PRIV_U)) {
+	if (!(access & BOX_PRIVILEGE_USAGE)) {
 		/* Check for privileges on a single object. */
 		struct access *object = access_find(type, object_id);
 		if (object != NULL)
@@ -115,9 +117,9 @@ access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 		return -1;
 	const char *object_name;
 	const char *pname;
-	if (access & PRIV_U) {
+	if (access & BOX_PRIVILEGE_USAGE) {
 		object_name = schema_object_name(SC_UNIVERSE);
-		pname = priv_name(PRIV_U);
+		pname = priv_name(BOX_PRIVILEGE_USAGE);
 		name = "";
 	} else {
 		object_name = schema_object_name(type);
@@ -2235,7 +2237,7 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		auto def_guard =
 			make_scoped_guard([=] { space_def_delete(def); });
 		if (access_check_ddl(def->name, def->id, def->uid, SC_SPACE,
-				 PRIV_C) != 0)
+				 BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		RLIST_HEAD(empty_list);
 		struct space *space = space_new(def, &empty_list);
@@ -2292,7 +2294,8 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		}
 	} else if (new_tuple == NULL) { /* DELETE */
 		if (access_check_ddl(old_space->def->name, old_space->def->id,
-				 old_space->def->uid, SC_SPACE, PRIV_D) != 0)
+				 old_space->def->uid, SC_SPACE,
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Verify that the space is empty (has no indexes) */
 		if (old_space->index_count) {
@@ -2394,7 +2397,7 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		auto def_guard =
 			make_scoped_guard([=] { space_def_delete(def); });
 		if (access_check_ddl(def->name, def->id, def->uid, SC_SPACE,
-				 PRIV_A) != 0)
+				 BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		if (def->id != space_id(old_space)) {
 			diag_set(ClientError, ER_ALTER_SPACE,
@@ -2566,9 +2569,10 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 			  "can not add index on a view");
 		return -1;
 	}
-	enum priv_type priv_type = new_tuple ? PRIV_C : PRIV_D;
+	enum box_privilege_type priv_type = (
+		new_tuple ? BOX_PRIVILEGE_CREATE : BOX_PRIVILEGE_DROP);
 	if (old_tuple && new_tuple)
-		priv_type = PRIV_A;
+		priv_type = BOX_PRIVILEGE_ALTER;
 	if (access_check_ddl(old_space->def->name, old_space->def->id,
 			 old_space->def->uid, SC_SPACE, priv_type) != 0)
 		return -1;
@@ -2861,7 +2865,7 @@ on_replace_dd_truncate(struct trigger * /* trigger */, void *event)
 	 * The check should precede initial recovery check to correctly
 	 * handle direct insert into _truncate systable.
 	 */
-	if (access_check_space(old_space, PRIV_W) != 0)
+	if (access_check_space(old_space, BOX_PRIVILEGE_WRITE) != 0)
 		return -1;
 
 	/*
@@ -3132,11 +3136,14 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 		struct user_def *user = user_def_new_from_tuple(new_tuple);
 		if (user == NULL)
 			return -1;
+		if (access_check_ddl(user->name, user->uid, user->owner, user->type,
+				 BOX_PRIVILEGE_CREATE) != 0)
+			return -1;
 		auto def_guard = make_scoped_guard([=] {
 			user_def_delete(user);
 		});
 		if (access_check_ddl(user->name, user->uid, user->owner, user->type,
-				 PRIV_C) != 0)
+				 BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		try {
 			(void) user_cache_replace(user);
@@ -3152,7 +3159,7 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 	} else if (new_tuple == NULL) { /* DELETE */
 		if (access_check_ddl(old_user->def->name, old_user->def->uid,
 				 old_user->def->owner, old_user->def->type,
-				 PRIV_D) != 0)
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Can't drop guest or super user */
 		if (uid <= (uint32_t) BOX_SYSTEM_USER_ID_MAX || uid == SUPER) {
@@ -3190,11 +3197,14 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 		struct user_def *user = user_def_new_from_tuple(new_tuple);
 		if (user == NULL)
 			return -1;
+		if (access_check_ddl(user->name, user->uid, user->uid,
+				 old_user->def->type, BOX_PRIVILEGE_ALTER) != 0)
+			return -1;
 		auto def_guard = make_scoped_guard([=] {
 			user_def_delete(user);
 		});
 		if (access_check_ddl(user->name, user->uid, user->uid,
-				 old_user->def->type, PRIV_A) != 0)
+				 old_user->def->type, BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		try {
 			user_cache_replace(user);
@@ -3490,7 +3500,7 @@ on_replace_dd_func(struct trigger * /* trigger */, void *event)
 			func_def_delete(def);
 		});
 		if (access_check_ddl(def->name, def->fid, def->uid, SC_FUNCTION,
-				 PRIV_C) != 0)
+				 BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct trigger *on_rollback =
 			txn_alter_trigger_new(on_create_func_rollback, NULL);
@@ -3513,7 +3523,7 @@ on_replace_dd_func(struct trigger * /* trigger */, void *event)
 		 * who created it or a superuser.
 		 */
 		if (access_check_ddl(old_func->def->name, fid, uid, SC_FUNCTION,
-				 PRIV_D) != 0)
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Can only delete func if it has no grants. */
 		bool out;
@@ -3761,7 +3771,7 @@ on_replace_dd_collation(struct trigger * /* trigger */, void *event)
 		assert(old_coll_id != NULL);
 		if (access_check_ddl(old_coll_id->name, old_coll_id->id,
 				 old_coll_id->owner_id, SC_COLLATION,
-				 PRIV_D) != 0)
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/*
 		 * Don't allow user to drop a collation identifier that is
@@ -3797,7 +3807,7 @@ on_replace_dd_collation(struct trigger * /* trigger */, void *event)
 		if (coll_id_def_new_from_tuple(new_tuple, &new_def) != 0)
 			return -1;
 		if (access_check_ddl(new_def.name, new_def.id, new_def.owner_id,
-				 SC_COLLATION, PRIV_C) != 0)
+				 SC_COLLATION, BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct coll_id *new_coll_id = coll_id_new(&new_def);
 		if (new_coll_id == NULL)
@@ -3885,7 +3895,7 @@ priv_def_create_from_tuple(struct priv_def *priv, struct tuple *tuple)
  * In the future we must protect grant/revoke with a logical lock.
  */
 static int
-priv_def_check(struct priv_def *priv, enum priv_type priv_type)
+priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 {
 	struct user *grantor = user_find(priv->grantor_id);
 	if (grantor == NULL)
@@ -3983,7 +3993,8 @@ priv_def_check(struct priv_def *priv, enum priv_type priv_type)
 		 */
 		if (role->def->owner != grantor->def->uid &&
 		    grantor->def->uid != ADMIN &&
-		    (role->def->uid != PUBLIC || priv->access != PRIV_X)) {
+		    (role->def->uid != PUBLIC ||
+			 priv->access != BOX_PRIVILEGE_EXECUTE)) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
 				  schema_object_name(SC_ROLE), name,
@@ -4054,7 +4065,8 @@ grant_or_revoke(struct priv_def *priv, struct txn_stmt *rolled_back_stmt)
 	 * Grant a role to a user only when privilege type is 'execute'
 	 * and the role is specified.
 	 */
-	if (priv->object_type == SC_ROLE && !(priv->access & ~PRIV_X)) {
+	if (priv->object_type == SC_ROLE &&
+	    !(priv->access & ~BOX_PRIVILEGE_EXECUTE)) {
 		struct user *role = user_by_id(priv->object_id);
 		if (role == NULL || role->def->type != SC_ROLE)
 			return 0;
@@ -4113,7 +4125,7 @@ on_replace_dd_priv(struct trigger * /* trigger */, void *event)
 
 	if (new_tuple != NULL && old_tuple == NULL) {	/* grant */
 		if (priv_def_create_from_tuple(&priv, new_tuple) != 0 ||
-		    priv_def_check(&priv, PRIV_GRANT) != 0 ||
+		    priv_def_check(&priv, BOX_PRIVILEGE_GRANT) != 0 ||
 		    grant_or_revoke(&priv, NULL) != 0)
 			return -1;
 		struct trigger *on_rollback =
@@ -4124,7 +4136,7 @@ on_replace_dd_priv(struct trigger * /* trigger */, void *event)
 	} else if (new_tuple == NULL) {                /* revoke */
 		assert(old_tuple);
 		if (priv_def_create_from_tuple(&priv, old_tuple) != 0 ||
-		    priv_def_check(&priv, PRIV_REVOKE) != 0)
+		    priv_def_check(&priv, BOX_PRIVILEGE_REVOKE) != 0)
 			return -1;
 		priv.access = 0;
 		if (grant_or_revoke(&priv, NULL) != 0)
@@ -4136,7 +4148,7 @@ on_replace_dd_priv(struct trigger * /* trigger */, void *event)
 		txn_stmt_on_rollback(stmt, on_rollback);
 	} else {                                       /* modify */
 		if (priv_def_create_from_tuple(&priv, new_tuple) != 0 ||
-		    priv_def_check(&priv, PRIV_GRANT) != 0 ||
+		    priv_def_check(&priv, BOX_PRIVILEGE_GRANT) != 0 ||
 		    grant_or_revoke(&priv, NULL) != 0)
 			return -1;
 		struct trigger *on_rollback =
@@ -4569,7 +4581,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		if (new_def == NULL)
 			return -1;
 		if (access_check_ddl(new_def->name, new_def->id, new_def->uid,
-				 SC_SEQUENCE, PRIV_C) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct trigger *on_rollback =
 			txn_alter_trigger_new(on_create_sequence_rollback, NULL);
@@ -4588,7 +4600,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		seq = sequence_by_id(id);
 		assert(seq != NULL);
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_D) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		bool out;
 		if (space_has_data(BOX_SEQUENCE_DATA_ID, 0, id, &out) != 0)
@@ -4630,7 +4642,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		seq = sequence_by_id(new_def->id);
 		assert(seq != NULL);
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_A) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		struct trigger *on_commit =
 			txn_alter_trigger_new(on_alter_sequence_commit, seq->def);
@@ -4860,7 +4872,8 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 			 "space \"_space_sequence\"", "update");
 		return -1;
 	}
-	enum priv_type priv_type = stmt->new_tuple ? PRIV_C : PRIV_D;
+	enum box_privilege_type priv_type = stmt->new_tuple ?
+		BOX_PRIVILEGE_CREATE : BOX_PRIVILEGE_DROP;
 
 	/* Check we have the correct access type on the sequence.  * */
 	if (is_generated || !stmt->new_tuple) {
@@ -4873,15 +4886,15 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 		 * check that it has read and write access.
 		 */
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_R) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_READ) != 0)
 			return -1;
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_W) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_WRITE) != 0)
 			return -1;
 	}
 	/** Check we have alter access on space. */
 	if (access_check_ddl(space->def->name, space->def->id, space->def->uid,
-			 SC_SPACE, PRIV_A) != 0)
+			 SC_SPACE, BOX_PRIVILEGE_ALTER) != 0)
 		return -1;
 
 	if (stmt->new_tuple != NULL) {			/* INSERT, UPDATE */

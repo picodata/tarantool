@@ -56,11 +56,11 @@
 #include "coll_id_cache.h"
 
 int
-access_check_space(struct space *space, user_access_t access)
+access_check_space(struct space *space, box_user_access_mask_t access)
 {
 	struct credentials *cr = effective_user();
 	/* Any space access also requires global USAGE privilege. */
-	access |= PRIV_U;
+	access |= BOX_PRIVILEGE_USAGE;
 	/*
 	 * If a user has a global permission, clear the respective
 	 * privilege from the list of privileges required
@@ -68,7 +68,7 @@ access_check_space(struct space *space, user_access_t access)
 	 * No special check for ADMIN user is necessary
 	 * since ADMIN has universal access.
 	 */
-	user_access_t space_access = access & ~cr->universal_access;
+	box_user_access_mask_t space_access = access & ~cr->universal_access;
 	/*
 	 * Similarly to global access, subtract entity-level access
 	 * (access to all spaces) if it is present.
@@ -77,7 +77,7 @@ access_check_space(struct space *space, user_access_t access)
 
 	if (space_access &&
 	    /* Check for missing USAGE access, ignore owner rights. */
-	    (space_access & PRIV_U ||
+	    (space_access & BOX_PRIVILEGE_USAGE ||
 	     /* Check for missing specific access, respect owner rights. */
 	    (space->def->uid != cr->uid &&
 	     space_access & ~space->access[cr->auth_token].effective))) {
@@ -89,9 +89,9 @@ access_check_space(struct space *space, user_access_t access)
 		 */
 		struct user *user = user_find(cr->uid);
 		if (user != NULL) {
-			if (!(cr->universal_access & PRIV_U)) {
+			if (!(cr->universal_access & BOX_PRIVILEGE_USAGE)) {
 				diag_set(AccessDeniedError,
-					 priv_name(PRIV_U),
+					 priv_name(BOX_PRIVILEGE_USAGE),
 					 schema_object_name(SC_UNIVERSE), "",
 					 user->def->name);
 			} else {

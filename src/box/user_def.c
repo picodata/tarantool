@@ -14,7 +14,7 @@
 #include "trivia/util.h"
 
 const char *
-priv_name(user_access_t access)
+priv_name(box_user_access_mask_t access)
 {
 	static const char *priv_name_strs[] = {
 		"Read",
