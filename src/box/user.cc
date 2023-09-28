@@ -52,7 +52,7 @@ static struct user_map user_map_nil;
 struct mh_i32ptr_t *user_registry;
 
 enum {
-	USER_ACCESS_FULL = (user_access_t)~0,
+	USER_ACCESS_FULL = (box_user_access_mask_t)~0,
 };
 
 /* {{{ user_map */
@@ -324,7 +324,8 @@ user_reload_priv(struct user *user, struct tuple *tuple)
 	 * Skip role grants, we're only
 	 * interested in real objects.
 	 */
-	if (priv.object_type != SC_ROLE || !(priv.access & PRIV_X))
+	if (priv.object_type != SC_ROLE ||
+	    !(priv.access & BOX_PRIVILEGE_EXECUTE))
 		return user_grant_priv(user, &priv);
 	return 0;
 }
@@ -431,7 +432,8 @@ next_tuple:
 	user_set_effective_access(user);
 	user->is_dirty = false;
 	struct credentials *creds;
-	user_access_t new_access = universe.access[user->auth_token].effective;
+	box_user_access_mask_t new_access =
+		universe.access[user->auth_token].effective;
 	rlist_foreach_entry(creds, &user->credentials_list, in_user)
 		creds->universal_access = new_access;
 	return 0;

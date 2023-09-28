@@ -2390,7 +2390,7 @@ case OP_IteratorOpen: {
 	}
 	struct space *space = aMem[pOp->p3].u.p;
 	assert(space != NULL);
-	if (access_check_space(space, PRIV_R) != 0)
+	if (access_check_space(space, BOX_PRIVILEGE_READ) != 0)
 		goto abort_due_to_error;
 
 	struct index *index = space_index(space, pOp->p2);

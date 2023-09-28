@@ -122,11 +122,12 @@ int
 box_module_reload(const char *name)
 {
 	struct credentials *credentials = effective_user();
-	if ((credentials->universal_access & (PRIV_X | PRIV_U)) !=
-	    (PRIV_X | PRIV_U)) {
+	if ((credentials->universal_access &
+		(BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE)) !=
+	    (BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE)) {
 		struct user *user = user_find(credentials->uid);
 		if (user != NULL)
-			diag_set(AccessDeniedError, priv_name(PRIV_U),
+			diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_USAGE),
 				 schema_object_name(SC_UNIVERSE), "",
 				 user->def->name);
 		return -1;
@@ -172,9 +173,10 @@ box_process_call(struct call_request *request, struct port *port)
 		if (func_call_no_access_check(func, &args, port) != 0)
 			return -1;
 	} else {
-		if (access_check_universe_object(PRIV_X | PRIV_U,
-						 SC_FUNCTION,
-						 tt_cstr(name, name_len)) != 0)
+		if (access_check_universe_object(
+				BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE,
+				SC_FUNCTION,
+				tt_cstr(name, name_len)) != 0)
 			return -1;
 		box_run_on_call(IPROTO_CALL, name, name_len, request->args);
 		if (box_lua_call(name, name_len, &args, port) != 0)
@@ -188,7 +190,7 @@ box_process_eval(struct call_request *request, struct port *port)
 {
 	rmean_collect(rmean_box, IPROTO_EVAL, 1);
 	/* Check permissions */
-	if (access_check_universe(PRIV_X) != 0)
+	if (access_check_universe(BOX_PRIVILEGE_EXECUTE) != 0)
 		return -1;
 	struct port args;
 	port_msgpack_create(&args, request->args,
