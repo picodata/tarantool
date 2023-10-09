@@ -511,12 +511,16 @@ fiber_make_ready(struct fiber *f)
 void
 fiber_set_ctx(struct fiber *f, void *f_arg)
 {
+	if (f == NULL)
+		f = fiber();
 	f->f_arg = f_arg;
 }
 
 void *
 fiber_get_ctx(struct fiber *f)
 {
+	if (f == NULL)
+		f = fiber();
 	return f->f_arg;
 }
 
@@ -574,6 +578,8 @@ fiber_is_cancelled(void)
 void
 fiber_set_joinable(struct fiber *fiber, bool yesno)
 {
+	if (fiber == NULL)
+		fiber = fiber();
 	if (yesno == true)
 		fiber->flags |= FIBER_IS_JOINABLE;
 	else
@@ -1039,15 +1045,11 @@ fiber_loop(MAYBE_UNUSED void *data)
 	}
 }
 
-inline void
-fiber_set_name(struct fiber *fiber, const char *name)
-{
-	fiber_set_name_n(fiber, name, strlen(name));
-}
-
 void
 fiber_set_name_n(struct fiber *fiber, const char *name, uint32_t len)
 {
+	if (fiber == NULL)
+		fiber = fiber();
 	size_t size = len + 1;
 	if (size <= FIBER_NAME_INLINE) {
 		if (fiber->name != fiber->inline_name) {
@@ -1069,6 +1071,30 @@ fiber_set_name_n(struct fiber *fiber, const char *name, uint32_t len)
 	--size;
 	memcpy(fiber->name, name, size);
 	fiber->name[size] = 0;
+}
+
+const char *
+fiber_name(const struct fiber *fiber)
+{
+	if (fiber == NULL)
+		fiber = fiber();
+	return fiber->name;
+}
+
+uint64_t
+fiber_id(const struct fiber *fiber)
+{
+	if (fiber == NULL)
+		fiber = fiber();
+	return fiber->fid;
+}
+
+uint64_t
+fiber_csw(const struct fiber *fiber)
+{
+	if (fiber == NULL)
+		fiber = fiber();
+	return fiber->csw;
 }
 
 static inline void *
