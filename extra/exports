@@ -232,10 +232,14 @@ fiber_cond_new
 fiber_cond_signal
 fiber_cond_wait
 fiber_cond_wait_timeout
+fiber_csw
+fiber_find
 fiber_get_ctx
+fiber_id
 fiber_is_cancelled
 fiber_join
 fiber_join_timeout
+fiber_name
 fiber_new
 fiber_new_ex
 fiber_reschedule
@@ -243,6 +247,7 @@ fiber_self
 fiber_set_cancellable
 fiber_set_ctx
 fiber_set_joinable
+fiber_set_name_n
 fiber_sleep
 fiber_start
 fiber_time
@@ -655,7 +660,6 @@ coio_readn_ahead
 coio_read_ahead_timeout
 coio_write_timeout
 
-fiber_set_name_n
 authenticate
 user_auth_method_name
 port_c_create
