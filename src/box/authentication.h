@@ -53,6 +53,12 @@ enum auth_method_flag {
 	 * communication channel is encrypted (e.g. with SSL/TLS).
 	 */
 	AUTH_METHOD_REQUIRES_ENCRYPTION = 1 << 0,
+	/**
+	 * Set if the authentication method does not need
+	 * password in auth_method::auth_data_prepare.
+	 * This is opt-in because most methods require password.
+	 */
+	AUTH_METHOD_PASSWORDLESS_DATA_PREPARE = 1 << 1,
 };
 
 /**
@@ -79,7 +85,8 @@ struct auth_method {
 	 */
 	void
 	(*auth_data_prepare)(const struct auth_method *method,
-			     const char *password, int password_len,
+			     const char *password, uint32_t password_len,
+			     const char *user, uint32_t user_len,
 			     const char **auth_data,
 			     const char **auth_data_end);
 	/**
@@ -94,7 +101,8 @@ struct auth_method {
 	 */
 	void
 	(*auth_request_prepare)(const struct auth_method *method,
-				const char *password, int password_len,
+				const char *password, uint32_t password_len,
+				const char *user, uint32_t user_len,
 				const char *salt,
 				const char **auth_request,
 				const char **auth_request_end);
@@ -136,6 +144,8 @@ struct auth_method {
 	 */
 	bool
 	(*authenticate_request)(const struct authenticator *auth,
+				const char *user,
+				uint32_t user_len,
 				const char *salt,
 				const char *auth_request,
 				const char *auth_request_end);
@@ -143,19 +153,22 @@ struct auth_method {
 
 static inline void
 auth_data_prepare(const struct auth_method *method,
-		  const char *password, int password_len,
+		  const char *password, uint32_t password_len,
+		  const char *user, uint32_t user_len,
 		  const char **auth_data, const char **auth_data_end)
 {
 	method->auth_data_prepare(method, password, password_len,
-				 auth_data, auth_data_end);
+				  user, user_len, auth_data, auth_data_end);
 }
 
 static inline void
 auth_request_prepare(const struct auth_method *method,
-		     const char *password, int password_len, const char *salt,
+		     const char *password, uint32_t password_len,
+		     const char *user, uint32_t user_len, const char *salt,
 		     const char **auth_request, const char **auth_request_end)
 {
-	method->auth_request_prepare(method, password, password_len, salt,
+	method->auth_request_prepare(method, password, password_len,
+				     user, user_len, salt,
 				     auth_request, auth_request_end);
 }
 
@@ -188,13 +201,15 @@ authenticator_delete(struct authenticator *auth)
  * NOTE: the request must be well-formed (checked by auth_request_check).
  */
 static inline bool
-authenticate_request(const struct authenticator *auth, const char *salt,
+authenticate_request(const struct authenticator *auth,
+		     const char *user, uint32_t user_len, const char *salt,
 		     const char *auth_request, const char *auth_request_end)
 {
 	assert(auth->method->auth_request_check(auth->method, auth_request,
 						auth_request_end) == 0);
-	return auth->method->authenticate_request(
-			auth, salt, auth_request, auth_request_end);
+	return auth->method->authenticate_request(auth, user, user_len, salt,
+						  auth_request,
+						  auth_request_end);
 }
 
 /**
@@ -208,7 +223,10 @@ authenticate_request(const struct authenticator *auth, const char *salt,
  */
 bool
 authenticate_password(const struct authenticator *auth,
-		      const char *password, int password_len);
+		      const char *password, uint32_t password_len,
+		      const char *user, uint32_t user_len);
+
+/** \cond public */
 
 /**
  * Authenticates a user.
@@ -230,6 +248,8 @@ authenticate_password(const struct authenticator *auth,
 int
 authenticate(const char *user_name, uint32_t user_name_len,
 	     const char *salt, const char *tuple);
+
+/** \endcond public */
 
 /**
  * Checks if an authentication method may be used over an IO stream.

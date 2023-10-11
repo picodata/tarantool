@@ -25,22 +25,8 @@ macro(libmisc_build)
         )
     endif()
 
-    if (HAVE_OPENMP)
-        list(APPEND misc_src
-             ${PROJECT_SOURCE_DIR}/third_party/qsort_arg_mt.c)
-    endif()
-
     add_library(misc STATIC ${misc_src})
     set_target_properties(misc PROPERTIES COMPILE_FLAGS "${DEPENDENCY_CFLAGS}")
-
-    if (HAVE_OPENMP)
-        if(BUILD_STATIC)
-            set(GOMP_LIBRARY libgomp.a)
-        else()
-            set(GOMP_LIBRARY gomp)
-        endif()
-        target_link_libraries(misc ${GOMP_LIBRARY} pthread ${CMAKE_DL_LIBS})
-    endif()
 
     unset(misc_src)
 endmacro(libmisc_build)

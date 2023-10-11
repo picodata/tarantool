@@ -1039,10 +1039,16 @@ fiber_loop(MAYBE_UNUSED void *data)
 	}
 }
 
-void
+inline void
 fiber_set_name(struct fiber *fiber, const char *name)
 {
-	size_t size = strlen(name) + 1;
+	fiber_set_name_n(fiber, name, strlen(name));
+}
+
+void
+fiber_set_name_n(struct fiber *fiber, const char *name, uint32_t len)
+{
+	size_t size = len + 1;
 	if (size <= FIBER_NAME_INLINE) {
 		if (fiber->name != fiber->inline_name) {
 			free(fiber->name);
@@ -1306,10 +1312,9 @@ fiber_gc_checker_init(struct fiber *fiber)
 		return;
 	}
 
-	size_t size;
 	fiber->first_alloc_bt =
 		xregion_alloc_object(&fiber->gc,
-				     typeof(*fiber->first_alloc_bt), &size);
+				     typeof(*fiber->first_alloc_bt));
 	fiber->gc_initial_size = region_used(&fiber->gc);
 	region_set_callbacks(&fiber->gc,
 			     fiber_on_gc_alloc, fiber_on_gc_truncate,

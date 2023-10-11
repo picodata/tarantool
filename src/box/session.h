@@ -114,6 +114,8 @@ struct session {
 	/** SQL Connection flag for current user session */
 	uint32_t sql_flags;
 	enum session_type type;
+	/** Max number of Vdbe commands for query. */
+	uint64_t vdbe_max_steps;
 	/** Session virtual methods. */
 	const struct session_vtab *vtab;
 	/** Session metadata. */
@@ -388,7 +390,7 @@ access_check_session(struct user *user);
  * the requested access to the universe.
  */
 int
-access_check_universe(user_access_t access);
+access_check_universe(box_user_access_mask_t access);
 
 /**
  * Same as access_check_universe(), but in case the current user
@@ -396,7 +398,7 @@ access_check_universe(user_access_t access);
  * given object type and name.
  */
 int
-access_check_universe_object(user_access_t access,
+access_check_universe_object(box_user_access_mask_t access,
 			     enum schema_object_type object_type,
 			     const char *object_name);
 
@@ -439,7 +441,7 @@ generic_session_sync(struct session *session);
 #include "diag.h"
 
 static inline void
-access_check_universe_xc(user_access_t access)
+access_check_universe_xc(box_user_access_mask_t access)
 {
 	if (access_check_universe(access) != 0)
 		diag_raise();

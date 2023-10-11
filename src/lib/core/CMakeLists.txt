@@ -45,6 +45,10 @@ set(core_sources
     mp_util.c
     cord_on_demand.cc
     tweaks.c
+    md5.c
+    cryptohash.c
+    crypt.c
+    tt_sort.c
 )
 
 if (ENABLE_BACKTRACE)

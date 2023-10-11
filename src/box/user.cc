@@ -39,6 +39,7 @@
 #include "scoped_guard.h"
 #include "sequence.h"
 #include "tt_static.h"
+#include "authentication.h"
 
 struct universe universe;
 static struct user users[BOX_USER_MAX];
@@ -50,7 +51,7 @@ static struct user_map user_map_nil;
 struct mh_i32ptr_t *user_registry;
 
 enum {
-	USER_ACCESS_FULL = (user_access_t)~0,
+	USER_ACCESS_FULL = (box_user_access_mask_t)~0,
 };
 
 /* {{{ user_map */
@@ -365,7 +366,7 @@ user_reload_privs(struct user *user)
 			 * Skip role grants, we're only
 			 * interested in real objects.
 			 */
-			if (priv.object_type != SC_ROLE || !(priv.access & PRIV_X))
+			if (priv.object_type != SC_ROLE || !(priv.access & BOX_PRIVILEGE_EXECUTE))
 				if (user_grant_priv(user, &priv) != 0)
 					return -1;
 			if (iterator_next(it, &tuple) != 0)
@@ -390,10 +391,19 @@ user_reload_privs(struct user *user)
 	user_set_effective_access(user);
 	user->is_dirty = false;
 	struct credentials *creds;
-	user_access_t new_access = universe.access[user->auth_token].effective;
+	box_user_access_mask_t new_access =
+		universe.access[user->auth_token].effective;
 	rlist_foreach_entry(creds, &user->credentials_list, in_user)
 		creds->universal_access = new_access;
 	return 0;
+}
+
+const char *
+user_auth_method_name(const char *user_name, uint32_t user_name_len)
+{
+	struct user *user = user_find_by_name(user_name, user_name_len);
+	struct authenticator *auth = user != NULL ? user->def->auth : NULL;
+	return auth != NULL ? auth->method->name : NULL;
 }
 
 /** }}} */

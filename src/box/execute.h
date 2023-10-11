@@ -55,10 +55,25 @@ struct sql_stmt;
 int
 sql_unprepare(uint32_t stmt_id);
 
+/**
+ * Execute prepared query (exported version).
+ * @param query_id prepared query id.
+ * @param bind Array of parameters.
+ * @param bind_count Length of a bind.
+ * @param port Port to store SQL response.
+ *
+ * @retval  0 Success.
+ * @retval -1 Error.
+ */
+int
+sql_execute_prepared_ext(uint32_t query_id, const struct sql_bind *bind,
+			 uint32_t bind_count, struct port *port);
+
 int
 sql_execute_prepared(uint32_t query_id, const struct sql_bind *bind,
 		     uint32_t bind_count, struct port *port,
-		     struct region *region);
+		     struct region *region,
+		     uint64_t vdbe_max_steps);
 
 /**
  * Prepare and execute an SQL statement.
@@ -76,7 +91,8 @@ sql_execute_prepared(uint32_t query_id, const struct sql_bind *bind,
 int
 sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 			uint32_t bind_count, struct port *port,
-			struct region *region);
+			struct region *region,
+			uint64_t vdbe_max_steps);
 
 int
 sql_stmt_finalize(struct sql_stmt *stmt);

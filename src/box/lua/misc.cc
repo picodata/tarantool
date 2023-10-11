@@ -213,12 +213,48 @@ port_msgpack_dump_lua(struct port *base, struct lua_State *L, bool is_flat)
 		luamp_decode(L, luaL_msgpack_default, &args);
 }
 
+/** Generate unique id for non-system space. */
+static int
+lbox_generate_space_id(lua_State *L)
+{
+	assert(lua_gettop(L) >= 1);
+	assert(lua_isboolean(L, 1) == 1);
+	bool is_temporary = lua_toboolean(L, 1) != 0;
+	uint32_t ret = 0;
+	if (box_generate_space_id(&ret, is_temporary) != 0)
+		return luaT_error(L);
+	lua_pushnumber(L, ret);
+	return 1;
+}
+
 /* }}} */
 
 /** {{{ Helper that generates user auth data. **/
 
 /**
- * Takes authentication method name (e.g. 'chap-sha1') and a password.
+ * Takes authentication method name (e.g. 'chap-sha1').
+ * Returns true if password is needed to produce auth data, false otherwise.
+ * Raises Lua error if the specified authentication method doesn't exist.
+ */
+static int
+lbox_prepare_auth_needs_password(lua_State *L)
+{
+	size_t method_name_len;
+	const char *method_name = luaL_checklstring(L, 1, &method_name_len);
+	const struct auth_method *method = auth_method_by_name(method_name,
+							       method_name_len);
+	if (method == NULL) {
+		diag_set(ClientError, ER_UNKNOWN_AUTH_METHOD,
+			 tt_cstr(method_name, method_name_len));
+		return luaT_error(L);
+	}
+	int pwdless = method->flags & AUTH_METHOD_PASSWORDLESS_DATA_PREPARE;
+	lua_pushboolean(L, !pwdless);
+	return 1;
+}
+
+/**
+ * Takes authentication method name (e.g. 'chap-sha1'), password and user name.
  * Returns authentication data that can be stored in the _user space.
  * Raises Lua error if the specified authentication method doesn't exist.
  */
@@ -236,10 +272,18 @@ lbox_prepare_auth(lua_State *L)
 			 tt_cstr(method_name, method_name_len));
 		return luaT_error(L);
 	}
+	size_t user_len;
+	const char *user = luaL_checklstring(L, 3, &user_len);
+	/*
+	 * User name shouldn't be verified, because this routine is called
+	 * by box.schema.user.create before the user is actually creted.
+	 */
+
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *auth_data, *auth_data_end;
 	auth_data_prepare(method, password, password_len,
+			  user, user_len,
 			  &auth_data, &auth_data_end);
 	luamp_decode(L, luaL_msgpack_default, &auth_data);
 	assert(auth_data == auth_data_end);
@@ -370,15 +414,10 @@ lbox_tuple_format_new(struct lua_State *L)
 	uint32_t count = lua_objlen(L, 1);
 	if (count == 0)
 		return lbox_push_tuple_format(L, tuple_format_runtime);
-	size_t size;
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
-	struct field_def *fields = region_alloc_array(region, typeof(fields[0]),
-						      count, &size);
-	if (fields == NULL) {
-		diag_set(OutOfMemory, size, "region_alloc_array", "fields");
-		return luaT_error(L);
-	}
+	struct field_def *fields = xregion_alloc_array(region,
+						       struct field_def, count);
 	for (uint32_t i = 0; i < count; ++i) {
 		size_t len;
 
@@ -400,13 +439,7 @@ lbox_tuple_format_new(struct lua_State *L)
 		lua_gettable(L, -2);
 		assert(! lua_isnil(L, -1));
 		const char *name = lua_tolstring(L, -1, &len);
-		fields[i].name = (char *)region_alloc(region, len + 1);
-		if (fields == NULL) {
-			diag_set(OutOfMemory, size, "region_alloc",
-				 "fields[i].name");
-			region_truncate(region, region_svp);
-			return luaT_error(L);
-		}
+		fields[i].name = (char *)xregion_alloc(region, len + 1);
 		memcpy(fields[i].name, name, len);
 		fields[i].name[len] = '\0';
 		lua_pop(L, 1);
@@ -496,12 +529,14 @@ void
 box_lua_misc_init(struct lua_State *L)
 {
 	static const struct luaL_Reg boxlib_internal[] = {
+		{"prepare_auth_needs_password", lbox_prepare_auth_needs_password},
 		{"prepare_auth", lbox_prepare_auth},
 		{"select", lbox_select},
 		{"new_tuple_format", lbox_tuple_format_new},
 		{"txn_set_isolation", lbox_txn_set_isolation},
 		{"read_view_list", lbox_read_view_list},
 		{"read_view_status", lbox_read_view_status},
+		{"generate_space_id", lbox_generate_space_id},
 		{NULL, NULL}
 	};
 

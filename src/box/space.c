@@ -55,11 +55,11 @@
 #include "wal_ext.h"
 
 int
-access_check_space(struct space *space, user_access_t access)
+access_check_space(struct space *space, box_user_access_mask_t access)
 {
 	struct credentials *cr = effective_user();
 	/* Any space access also requires global USAGE privilege. */
-	access |= PRIV_U;
+	access |= BOX_PRIVILEGE_USAGE;
 	/*
 	 * If a user has a global permission, clear the respective
 	 * privilege from the list of privileges required
@@ -67,7 +67,7 @@ access_check_space(struct space *space, user_access_t access)
 	 * No special check for ADMIN user is necessary
 	 * since ADMIN has universal access.
 	 */
-	user_access_t space_access = access & ~cr->universal_access;
+	box_user_access_mask_t space_access = access & ~cr->universal_access;
 	/*
 	 * Similarly to global access, subtract entity-level access
 	 * (access to all spaces) if it is present.
@@ -76,7 +76,7 @@ access_check_space(struct space *space, user_access_t access)
 
 	if (space_access &&
 	    /* Check for missing USAGE access, ignore owner rights. */
-	    (space_access & PRIV_U ||
+	    (space_access & BOX_PRIVILEGE_USAGE ||
 	     /* Check for missing specific access, respect owner rights. */
 	    (space->def->uid != cr->uid &&
 	     space_access & ~space->access[cr->auth_token].effective))) {
@@ -88,9 +88,9 @@ access_check_space(struct space *space, user_access_t access)
 		 */
 		struct user *user = user_find(cr->uid);
 		if (user != NULL) {
-			if (!(cr->universal_access & PRIV_U)) {
+			if (!(cr->universal_access & BOX_PRIVILEGE_USAGE)) {
 				diag_set(AccessDeniedError,
-					 priv_name(PRIV_U),
+					 priv_name(BOX_PRIVILEGE_USAGE),
 					 schema_object_name(SC_UNIVERSE), "",
 					 user->def->name);
 			} else {
@@ -389,7 +389,7 @@ space_new(struct space_def *def, struct rlist *key_list)
 struct space *
 space_new_ephemeral(struct space_def *def, struct rlist *key_list)
 {
-	assert(def->opts.is_temporary);
+	assert(space_opts_is_data_temporary(&def->opts));
 	assert(def->opts.is_ephemeral);
 	struct space *space = space_new(def, key_list);
 	if (space == NULL)
@@ -484,6 +484,41 @@ index_name_by_id(struct space *space, uint32_t id)
 }
 
 /**
+ * Apply default values from the space format to the null (or absent) fields of
+ * request->tuple.
+ */
+static int
+space_apply_defaults(struct space *space, struct txn *txn,
+		     struct request *request)
+{
+	assert(request->type == IPROTO_INSERT ||
+	       request->type == IPROTO_REPLACE ||
+	       request->type == IPROTO_UPSERT);
+
+	const char *new_data = request->tuple;
+	const char *new_data_end = request->tuple_end;
+	size_t region_svp = region_used(&fiber()->gc);
+
+	bool changed = tuple_format_apply_defaults(space->format, &new_data,
+						   &new_data_end);
+	if (!changed) {
+		region_truncate(&fiber()->gc, region_svp);
+		return 0;
+	}
+	/*
+	 * Field defaults changed the resulting tuple.
+	 * Fix the request to conform.
+	 */
+	struct region *txn_region = tx_region_acquire(txn);
+	int rc = request_create_from_tuple(request, space, NULL, 0, new_data,
+					   new_data_end - new_data, txn_region,
+					   true);
+	tx_region_release(txn, TX_ALLOC_SYSTEM);
+	region_truncate(&fiber()->gc, region_svp);
+	return rc;
+}
+
+/**
  * Run BEFORE triggers and foreign key constraint checks registered for a space.
  * If a trigger changes the current statement, this function updates the
  * request accordingly.
@@ -551,13 +586,18 @@ after_old_tuple_lookup:;
 	/*
 	 * Create the new tuple.
 	 */
-	uint32_t new_size, old_size;
+	uint32_t new_size, old_size = 0;
 	const char *new_data, *new_data_end;
-	const char *old_data, *old_data_end;
+	const char *old_data = NULL, *old_data_end;
 
 	switch (request->type) {
 	case IPROTO_INSERT:
+		new_data = request->tuple;
+		new_data_end = request->tuple_end;
+		break;
 	case IPROTO_REPLACE:
+		if (old_tuple != NULL)
+			old_data = tuple_data_range(old_tuple, &old_size);
 		new_data = request->tuple;
 		new_data_end = request->tuple_end;
 		break;
@@ -582,6 +622,7 @@ after_old_tuple_lookup:;
 			/* Nothing to delete. */
 			return 0;
 		}
+		old_data = tuple_data_range(old_tuple, &old_size);
 		new_data = new_data_end = NULL;
 		break;
 	case IPROTO_UPSERT:
@@ -665,7 +706,7 @@ after_old_tuple_lookup:;
 	int rc = trigger_run(&space->before_replace, txn);
 
 	/*
-	 * BEFORE riggers cannot change the old tuple,
+	 * BEFORE triggers cannot change the old tuple,
 	 * but they may replace the new tuple.
 	 */
 	bool request_changed = (stmt->new_tuple != new_tuple);
@@ -696,10 +737,13 @@ after_old_tuple_lookup:;
 	 * Fix the request to conform.
 	 */
 	if (request_changed) {
+		new_data = new_tuple == NULL ? NULL :
+			   tuple_data_range(new_tuple, &new_size);
 		struct region *txn_region = tx_region_acquire(txn);
 		rc = request_create_from_tuple(request, space,
-					       old_tuple, new_tuple,
-					       txn_region);
+					       old_data, old_size,
+					       new_data, new_size,
+					       txn_region, false);
 		tx_region_release(txn, TX_ALLOC_SYSTEM);
 	}
 out:
@@ -739,6 +783,16 @@ space_execute_dml(struct space *space, struct txn *txn,
 			}
 		}
 	}
+
+	bool need_defaults_apply = tuple_format_has_defaults(space->format) &&
+				   recovery_state == FINISHED_RECOVERY &&
+				   request->type != IPROTO_UPDATE &&
+				   request->type != IPROTO_DELETE;
+	if (unlikely(need_defaults_apply)) {
+		if (space_apply_defaults(space, txn, request) != 0)
+			return -1;
+	}
+
 	if (unlikely((!rlist_empty(&space->before_replace) &&
 		      space->run_triggers) || need_foreign_key_check)) {
 		/*

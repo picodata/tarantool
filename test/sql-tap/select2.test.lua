@@ -95,6 +95,7 @@ test:do_execsql_test(
         -- </select2-2.1>
     })
 
+test:execsql([[SET SESSION "sql_vdbe_max_steps" = 0;]])
 test:do_execsql_test(
     "select2-2.2",
     [[
@@ -114,6 +115,9 @@ test:do_execsql_test(
         500
         -- </select2-3.1>
     })
+-- restore exec limit to default value
+test:execsql(string.format([[SET SESSION "sql_vdbe_max_steps" = %d;]],
+        box.cfg.sql_vdbe_max_steps))
 
 test:do_execsql_test(
     "select2-3.2a",

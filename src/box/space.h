@@ -292,11 +292,18 @@ space_name(const struct space *space)
 	return space->def->name;
 }
 
+/** Return true if space is data-temporary. */
+static inline bool
+space_is_data_temporary(const struct space *space)
+{
+	return space_opts_is_data_temporary(&space->def->opts);
+}
+
 /** Return true if space is temporary. */
 static inline bool
 space_is_temporary(const struct space *space)
 {
-	return space->def->opts.is_temporary;
+	return space_opts_is_temporary(&space->def->opts);
 }
 
 /** Return true if space is synchronous. */
@@ -427,9 +434,13 @@ index_name_by_id(struct space *space, uint32_t id);
 /**
  * Check whether or not the current user can be granted
  * the requested access to the space.
+ * @param space Space to run access check against
+ * @param access Requested access
+ * @retval 0 on success when access is granted
+ * @retval -1 on error (check box_error_last())
  */
 int
-access_check_space(struct space *space, user_access_t access);
+access_check_space(struct space *space, box_user_access_mask_t access);
 
 /**
  * Execute a DML request on the given space.
@@ -634,7 +645,7 @@ space_new_xc(struct space_def *space_def, struct rlist *key_list)
 }
 
 static inline void
-access_check_space_xc(struct space *space, user_access_t access)
+access_check_space_xc(struct space *space, box_user_access_mask_t access)
 {
 	if (access_check_space(space, access) != 0)
 		diag_raise();

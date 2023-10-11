@@ -478,12 +478,10 @@ src_list_append_unique(struct SrcList *list, const char *new_name)
 
 	for (int i = 0; i < list->nSrc; ++i) {
 		const char *name = list->a[i].zName;
-		if (name != NULL && strcmp(new_name, name) == 0)
+		if (strcmp(new_name, name) == 0)
 			return list;
 	}
-	struct SrcList *new_list =
-		sql_src_list_enlarge(list, 1, list->nSrc);
-	list = new_list;
+	list = sql_src_list_enlarge(list, 1, list->nSrc);
 	struct SrcList_item *pItem = &list->a[list->nSrc - 1];
 	pItem->zName = sql_xstrdup(new_name);
 	return list;
@@ -500,8 +498,7 @@ select_collect_table_names(struct Walker *walker, struct Select *select)
 		walker->u.pSrcList =
 			src_list_append_unique(walker->u.pSrcList,
 					       select->pSrc->a[i].zName);
-		if (walker->u.pSrcList == NULL)
-			return WRC_Abort;
+		assert(walker->u.pSrcList != NULL);
 	}
 	return WRC_Continue;
 }
@@ -512,14 +509,13 @@ sql_select_expand_from_tables(struct Select *select)
 	assert(select != NULL);
 	struct Walker walker;
 	struct SrcList *table_names = sql_src_list_new();
+	table_names->nSrc = 0;
 	memset(&walker, 0, sizeof(walker));
 	walker.xExprCallback = sqlExprWalkNoop;
 	walker.xSelectCallback = select_collect_table_names;
 	walker.u.pSrcList = table_names;
-	if (sqlWalkSelect(&walker, select) != 0) {
-		sqlSrcListDelete(walker.u.pSrcList);
-		return NULL;
-	}
+	int rc = sqlWalkSelect(&walker, select);
+	assert(rc == WRC_Continue); (void)rc;
 	return walker.u.pSrcList;
 }
 
@@ -2069,14 +2065,9 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 	 */
 	assert(space_def->fields == NULL);
 	struct region *region = &parse->region;
-	size_t size;
 	space_def->fields =
-		region_alloc_array(region, typeof(space_def->fields[0]),
-				   column_count, &size);
-	if (space_def->fields == NULL) {
-		diag_set(OutOfMemory, size, "region_alloc_array", "fields");
-		goto error;
-	}
+		xregion_alloc_array(region, typeof(space_def->fields[0]),
+				    column_count);
 	for (uint32_t i = 0; i < column_count; i++) {
 		memcpy(&space_def->fields[i], &field_def_default,
 		       sizeof(field_def_default));
@@ -2136,22 +2127,12 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 		assert(field != NULL);
 		if (zName != NULL)
 			sqlHashInsert(&ht, zName, field);
-		space_def->fields[i].name = region_alloc(region, name_len + 1);
-		if (space_def->fields[i].name == NULL) {
-			diag_set(OutOfMemory, size, "region_alloc", "name");
-			goto error;
-		}
+		space_def->fields[i].name = xregion_alloc(region, name_len + 1);
 		memcpy(space_def->fields[i].name, zName, name_len);
 		space_def->fields[i].name[name_len] = '\0';
 	}
 	sqlHashClear(&ht);
 	return 0;
-error:
-	sqlHashClear(&ht);
-	parse->is_aborted = true;
-	space_def->fields = NULL;
-	space_def->field_count = 0;
-	return -1;
 }
 
 /*
@@ -4886,7 +4867,7 @@ selectExpander(Walker * pWalker, Select * p)
 	ExprList *pEList;
 	struct SrcList_item *pFrom;
 	Expr *pE, *pRight, *pExpr;
-	u16 selFlags = p->selFlags;
+	u32 selFlags = p->selFlags;
 
 	p->selFlags |= SF_Expanded;
 	if (NEVER(p->pSrc == 0) || (selFlags & SF_Expanded) != 0) {

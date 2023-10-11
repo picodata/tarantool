@@ -4,7 +4,7 @@ file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/src/box/sql)
 # Sometimes 'spying' code is not acceptable even if it would be
 # disabled by default. That option allows to remove the feedback
 # daemon from the build completely.
-option(ENABLE_FEEDBACK_DAEMON "Feedback daemon which reports debug data to the Tarantool team" ON)
+option(ENABLE_FEEDBACK_DAEMON "Feedback daemon which reports debug data to the Tarantool team" OFF)
 
 set(lua_sources)
 lua_source(lua_sources lua/load_cfg.lua load_cfg_lua)
@@ -85,6 +85,7 @@ add_custom_target(box_generate_lua_sources
     DEPENDS ${lua_sources})
 set_property(DIRECTORY PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${lua_sources})
 
+include_directories(${LDAP_INCLUDE_DIR})
 include_directories(${ZSTD_INCLUDE_DIRS})
 include_directories(${PROJECT_BINARY_DIR}/src/box/sql)
 include_directories(${PROJECT_BINARY_DIR}/src/box)
@@ -104,6 +105,7 @@ set(tuple_sources
     tuple_format.c
     tuple_constraint_def.c
     tuple_constraint.c
+    tuple_builder.c
     xrow_update.c
     xrow_update_field.c
     xrow_update_array.c
@@ -203,6 +205,8 @@ set(box_sources
     user.cc
     authentication.c
     auth_chap_sha1.c
+    auth_ldap.c
+    auth_md5.c
     replication.cc
     recovery.cc
     xstream.cc

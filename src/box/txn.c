@@ -397,6 +397,25 @@ txn_rollback_to_svp_finish(struct txn *txn)
 		txn->psn = 0;
 }
 
+/*
+ * Determine which row counts in @a txn need updating based on @a stmt.
+ * Row counts are either increasing or decreasing by 1.
+ */
+static void
+txn_update_row_counts(struct txn *txn, struct txn_stmt *stmt, int ofs)
+{
+	if (stmt->row->replica_id == 0) {
+		assert(ofs > 0 || stmt->txn->n_new_rows > 0);
+		txn->n_new_rows += ofs;
+		if (stmt->row->group_id == GROUP_LOCAL)
+			txn->n_local_rows += ofs;
+
+	} else {
+		assert(ofs > 0 || stmt->txn->n_applier_rows > 0);
+		txn->n_applier_rows += ofs;
+	}
+}
+
 static void
 txn_rollback_to_svp(struct txn *txn, struct stailq_entry *svp)
 {
@@ -407,16 +426,8 @@ txn_rollback_to_svp(struct txn *txn, struct stailq_entry *svp)
 	stailq_reverse(&rollback);
 	stailq_foreach_entry(stmt, &rollback, next) {
 		txn_rollback_one_stmt(txn, stmt);
-		if (stmt->row != NULL && stmt->row->replica_id == 0) {
-			assert(txn->n_new_rows > 0);
-			txn->n_new_rows--;
-			if (stmt->row->group_id == GROUP_LOCAL)
-				txn->n_local_rows--;
-		}
-		if (stmt->row != NULL && stmt->row->replica_id != 0) {
-			assert(txn->n_applier_rows > 0);
-			txn->n_applier_rows--;
-		}
+		if (stmt->row != NULL)
+			txn_update_row_counts(txn, stmt, -1);
 		txn_stmt_destroy(stmt);
 		stmt->space = NULL;
 		stmt->row = NULL;
@@ -653,21 +664,14 @@ txn_commit_stmt(struct txn *txn, struct request *request)
 
 	/*
 	 * Create WAL record for the write requests in
-	 * non-temporary spaces. stmt->space can be NULL for
+	 * non-data-temporary spaces. stmt->space can be NULL for
 	 * IRPOTO_NOP or IPROTO_RAFT_CONFIRM.
 	 */
-	if (stmt->space == NULL || !space_is_temporary(stmt->space)) {
+	if (stmt->space == NULL || !space_is_data_temporary(stmt->space)) {
 		if (txn_add_redo(txn, stmt, request) != 0)
 			goto fail;
 		assert(stmt->row != NULL);
-		if (stmt->row->replica_id == 0) {
-			++txn->n_new_rows;
-			if (stmt->row->group_id == GROUP_LOCAL)
-				++txn->n_local_rows;
-
-		} else {
-			++txn->n_applier_rows;
-		}
+		txn_update_row_counts(txn, stmt, 1);
 	}
 	/*
 	 * If there are triggers, and they are not disabled, and
@@ -905,7 +909,9 @@ txn_journal_entry_new(struct txn *txn)
 			rlist_splice(&txn->on_commit, &stmt->on_commit);
 		}
 
-		/* A read (e.g. select) request */
+		/* A read (e.g. select) request or
+		 * a temporary's space metadata update.
+		 */
 		if (stmt->row == NULL)
 			continue;
 
@@ -1368,10 +1374,10 @@ txn_check_space_linearizability(const struct txn *txn,
 	 * require checking whether **any** node in the replicaset has
 	 * committed something, which's impossible as soon as at least one node
 	 * becomes unavailable.
-	 * The only exception are local and temporary spaces, which only store
-	 * updates present on this particular node.
+	 * The only exception are local and data-temporary spaces, which only
+	 * store updates present on this particular node.
 	 */
-	if (!space_is_sync(space) && !space_is_temporary(space) &&
+	if (!space_is_sync(space) && !space_is_data_temporary(space) &&
 	    !space_is_local(space)) {
 		diag_set(ClientError, ER_UNSUPPORTED,
 			 tt_sprintf("space \"%s\"", space_name(space)),
@@ -1600,4 +1606,13 @@ txn_attach(struct txn *txn)
 	fiber_set_txn(fiber(), txn);
 	trigger_add(&fiber()->on_yield, &txn->fiber_on_yield);
 	trigger_add(&fiber()->on_stop, &txn->fiber_on_stop);
+}
+
+void
+txn_stmt_mark_as_temporary(struct txn *txn, struct txn_stmt *stmt)
+{
+	assert(stmt->row != NULL);
+	/* Revert row counter increases. */
+	txn_update_row_counts(txn, stmt, -1);
+	stmt->row = NULL;
 }

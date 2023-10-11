@@ -124,44 +124,44 @@ ffi.cdef[[
                    struct port *port, int64_t iterator, uint64_t offset,
                    uint64_t limit);
 
-    enum priv_type {
-        PRIV_R = 1,
-        PRIV_W = 2,
-        PRIV_X = 4,
-        PRIV_S = 8,
-        PRIV_U = 16,
-        PRIV_C = 32,
-        PRIV_D = 64,
-        PRIV_A = 128,
-        PRIV_REFERENCE = 256,
-        PRIV_TRIGGER = 512,
-        PRIV_INSERT = 1024,
-        PRIV_UPDATE = 2048,
-        PRIV_DELETE = 4096,
-        PRIV_GRANT = 8192,
-        PRIV_REVOKE = 16384,
-        PRIV_ALL  = 4294967295
+    enum box_privilege_type {
+        BOX_PRIVILEGE_READ = 1,
+        BOX_PRIVILEGE_WRITE = 2,
+        BOX_PRIVILEGE_EXECUTE = 4,
+        BOX_PRIVILEGE_SESSION = 8,
+        BOX_PRIVILEGE_USAGE = 16,
+        BOX_PRIVILEGE_CREATE = 32,
+        BOX_PRIVILEGE_DROP = 64,
+        BOX_PRIVILEGE_ALTER = 128,
+        BOX_PRIVILEGE_REFERENCE = 256,
+        BOX_PRIVILEGE_TRIGGER = 512,
+        BOX_PRIVILEGE_INSERT = 1024,
+        BOX_PRIVILEGE_UPDATE = 2048,
+        BOX_PRIVILEGE_DELETE = 4096,
+        BOX_PRIVILEGE_GRANT = 8192,
+        BOX_PRIVILEGE_REVOKE = 16384,
+        BOX_PRIVILEGE_ALL  = 4294967295
     };
 
 ]]
 
 box.priv = {
-    ["R"] = builtin.PRIV_R,
-    ["W"] = builtin.PRIV_W,
-    ["X"] = builtin.PRIV_X,
-    ["S"] = builtin.PRIV_S,
-    ["U"] = builtin.PRIV_U,
-    ["C"] = builtin.PRIV_C,
-    ["D"] = builtin.PRIV_D,
-    ["A"] = builtin.PRIV_A,
-    ["REFERENCE"] = builtin.PRIV_REFERENCE,
-    ["TRIGGER"] = builtin.PRIV_TRIGGER,
-    ["INSERT"] = builtin.PRIV_INSERT,
-    ["UPDATE"] = builtin.PRIV_UPDATE,
-    ["DELETE"] = builtin.PRIV_DELETE,
-    ["GRANT"]= builtin.PRIV_GRANT,
-    ["REVOKE"] = builtin.PRIV_REVOKE,
-    ["ALL"] = builtin.PRIV_ALL
+    ["R"] = builtin.BOX_PRIVILEGE_READ,
+    ["W"] = builtin.BOX_PRIVILEGE_WRITE,
+    ["X"] = builtin.BOX_PRIVILEGE_EXECUTE,
+    ["S"] = builtin.BOX_PRIVILEGE_SESSION,
+    ["U"] = builtin.BOX_PRIVILEGE_USAGE,
+    ["C"] = builtin.BOX_PRIVILEGE_CREATE,
+    ["D"] = builtin.BOX_PRIVILEGE_DROP,
+    ["A"] = builtin.BOX_PRIVILEGE_ALTER,
+    ["REFERENCE"] = builtin.BOX_PRIVILEGE_REFERENCE,
+    ["TRIGGER"] = builtin.BOX_PRIVILEGE_TRIGGER,
+    ["INSERT"] = builtin.BOX_PRIVILEGE_INSERT,
+    ["UPDATE"] = builtin.BOX_PRIVILEGE_UPDATE,
+    ["DELETE"] = builtin.BOX_PRIVILEGE_DELETE,
+    ["GRANT"]= builtin.BOX_PRIVILEGE_GRANT,
+    ["REVOKE"] = builtin.BOX_PRIVILEGE_REVOKE,
+    ["ALL"] = builtin.BOX_PRIVILEGE_ALL
 }
 
 local function user_or_role_resolve(user)
@@ -781,6 +781,25 @@ local function denormalize_format(format)
     return result
 end
 
+local space_types = {
+    'normal',
+    'data-temporary',
+    'temporary',
+}
+local function check_space_type(space_type)
+    if space_type == nil then
+        return
+    end
+    for _, t in ipairs(space_types) do
+        if t == space_type then
+            return
+        end
+    end
+    box.error(box.error.ILLEGAL_PARAMS,
+              "unknown space type, must be one of: '" ..
+              table.concat(space_types, "', '") .. "'.")
+end
+
 box.schema.space = {}
 box.schema.space.create = function(name, options)
     check_param(name, 'name', 'string')
@@ -791,6 +810,7 @@ box.schema.space.create = function(name, options)
         field_count = 'number',
         user = 'string, number',
         format = 'table',
+        type = 'string',
         is_local = 'boolean',
         temporary = 'boolean',
         is_sync = 'boolean',
@@ -801,10 +821,14 @@ box.schema.space.create = function(name, options)
     local options_defaults = {
         engine = 'memtx',
         field_count = 0,
-        temporary = false,
     }
     check_param_table(options, options_template)
     options = update_param_table(options, options_defaults)
+    check_space_type(options.type)
+    if options.type ~= nil and options.temporary ~= nil then
+        box.error(box.error.ILLEGAL_PARAMS,
+                  "only one of 'type' or 'temporary' may be specified")
+    end
     if options.engine == 'vinyl' then
         options = update_param_table(options, {
             defer_deletes = box.cfg.vinyl_defer_deletes,
@@ -821,16 +845,7 @@ box.schema.space.create = function(name, options)
     end
     local id = options.id
     if not id then
-        local _schema = box.space._schema
-        local max_id = _schema:update({'max_id'}, {{'+', 2, 1}})
-        if max_id == nil then
-            id = _space.index.primary:max().id
-            if id < box.schema.SYSTEM_ID_MAX then
-                id = box.schema.SYSTEM_ID_MAX
-            end
-            max_id = _schema:insert{'max_id', id + 1}
-        end
-        id = max_id.value
+        id = internal.generate_space_id(options.type == 'temporary')
     end
     local uid = session.euid()
     if options.user then
@@ -848,7 +863,8 @@ box.schema.space.create = function(name, options)
     -- filter out global parameters from the options array
     local space_options = setmap({
         group_id = options.is_local and 1 or nil,
-        temporary = options.temporary and true or nil,
+        temporary = options.temporary,
+        type = options.type,
         is_sync = options.is_sync,
         defer_deletes = options.defer_deletes and true or nil,
         constraint = constraint,
@@ -899,10 +915,15 @@ box.schema.space.drop = function(space_id, space_name, opts)
     local _truncate = box.space[box.schema.TRUNCATE_ID]
     local _space_sequence = box.space[box.schema.SPACE_SEQUENCE_ID]
     local _func_index = box.space[box.schema.FUNC_INDEX_ID]
-    local sequence_tuple = _space_sequence:delete{space_id}
-    if sequence_tuple ~= nil and sequence_tuple.is_generated == true then
-        -- Delete automatically generated sequence.
-        box.schema.sequence.drop(sequence_tuple.sequence_id)
+    -- This is needed to support dropping temporary spaces
+    -- in read-only mode, because sequences aren't supported for them yet
+    -- and therefore such requests aren't allowed in read-only mode.
+    if _space_sequence:get(space_id) ~= nil then
+        local sequence_tuple = _space_sequence:delete{space_id}
+        if sequence_tuple.is_generated == true then
+            -- Delete automatically generated sequence.
+            box.schema.sequence.drop(sequence_tuple.sequence_id)
+        end
     end
     for _, t in _trigger.index.space_id:pairs({space_id}) do
         _trigger:delete({t.name})
@@ -916,7 +937,15 @@ box.schema.space.drop = function(space_id, space_name, opts)
         _index:delete{v.id, v.iid}
     end
     revoke_object_privs('space', space_id)
-    _truncate:delete{space_id}
+    -- Deleting from _truncate currently adds a delete entry into WAL even
+    -- if the corresponding space was never truncated. This is a problem for
+    -- temporary spaces, because in such situations it's impossible to
+    -- filter out such entries from the within on_replace trigger which
+    -- basically results in temporary space's metadata getting into WAL
+    -- which breaks some invariants.
+    if _truncate:get{space_id} ~= nil then
+        _truncate:delete{space_id}
+    end
     if _space:delete{space_id} == nil then
         if space_name == nil then
             space_name = '#'..tostring(space_id)
@@ -941,6 +970,7 @@ local alter_space_template = {
     field_count = 'number',
     user = 'string, number',
     format = 'table',
+    type = 'string',
     temporary = 'boolean',
     is_sync = 'boolean',
     defer_deletes = 'boolean',
@@ -973,6 +1003,11 @@ box.schema.space.alter = function(space_id, options)
     local name = options.name or tuple.name
     local field_count = options.field_count or tuple.field_count
     local flags = tuple.flags
+
+    if options.type ~= nil then
+        check_space_type(options.type)
+        flags.type = options.type
+    end
 
     if options.temporary ~= nil then
         flags.temporary = options.temporary
@@ -1660,10 +1695,15 @@ box.schema.index.drop = function(space_id, index_id)
     check_param(index_id, 'index_id', 'number')
     if index_id == 0 then
         local _space_sequence = box.space[box.schema.SPACE_SEQUENCE_ID]
-        local sequence_tuple = _space_sequence:delete{space_id}
-        if sequence_tuple ~= nil and sequence_tuple.is_generated == true then
-            -- Delete automatically generated sequence.
-            box.schema.sequence.drop(sequence_tuple.sequence_id)
+        -- This is needed to support dropping temporary spaces
+        -- in read-only mode, because sequences aren't supported for them yet
+        -- and therefore such requests aren't allowed in read-only mode.
+        if _space_sequence:get(space_id) ~= nil then
+            local sequence_tuple = _space_sequence:delete{space_id}
+            if sequence_tuple.is_generated == true then
+                -- Delete automatically generated sequence.
+                box.schema.sequence.drop(sequence_tuple.sequence_id)
+            end
         end
     end
     local _index = box.space[box.schema.INDEX_ID]
@@ -3330,13 +3370,19 @@ end
 
 box.schema.user = {}
 
-box.schema.user.password = function(password)
-    return internal.prepare_auth(box.cfg.auth_type, password)
+box.schema.user.password = function(password, name)
+    name = name or box.session.user()
+    return internal.prepare_auth(box.cfg.auth_type, password, name)
 end
 
-local function prepare_auth_list(password)
+local function prepare_auth_list_needs_password(auth_type)
+    return internal.prepare_auth_needs_password(auth_type)
+end
+
+local function prepare_auth_list(auth_type, password, name)
     return {
-        [box.cfg.auth_type] = internal.prepare_auth(box.cfg.auth_type, password)
+        [auth_type] =
+            internal.prepare_auth(auth_type, password, name)
     }
 end
 
@@ -3354,11 +3400,13 @@ local function check_password(password, auth_history)
     end
 end
 
-local function chpasswd(uid, new_password)
+local function chpasswd(uid, new_password, name)
     local _user = box.space[box.schema.USER_ID]
+    local auth_type = box.cfg.auth_type
+    local auth_list = prepare_auth_list(auth_type, new_password, name)
     local auth_history = prepare_auth_history(uid)
     check_password(new_password, auth_history)
-    _user:update({uid}, {{'=', 5, prepare_auth_list(new_password)},
+    _user:update({uid}, {{'=', 5, auth_list},
                          {'=', 6, auth_history},
                          {'=', 7, math.floor(fiber.time())}})
 end
@@ -3370,31 +3418,40 @@ box.schema.user.passwd = function(name, new_password)
     if new_password == nil then
         -- change password for current user
         new_password = name
-        box.session.su('admin', chpasswd, session.uid(), new_password)
+        box.session.su('admin', chpasswd, session.uid(), new_password,
+                       session.user())
     else
         -- change password for other user
         local uid = user_resolve(name)
         if uid == nil then
             box.error(box.error.NO_SUCH_USER, name)
         end
-        return chpasswd(uid, new_password)
+        return chpasswd(uid, new_password, name)
     end
 end
 
 box.schema.user.create = function(name, opts)
     local uid = user_or_role_resolve(name)
     opts = opts or {}
-    check_param_table(opts, { password = 'string', if_not_exists = 'boolean' })
+    check_param_table(opts, {auth_type = 'string',
+                             password = 'string',
+                             if_not_exists = 'boolean'})
     if uid then
         if not opts.if_not_exists then
             box.error(box.error.USER_EXISTS, name)
         end
         return
     end
+    local auth_type = opts.auth_type or box.cfg.auth_type
     local auth_list
-    if opts.password then
+    if not prepare_auth_list_needs_password(auth_type) then
+        if opts.password then
+            log.warn(auth_type .. " doesn't need password")
+        end
+        auth_list = prepare_auth_list(auth_type, '', name)
+    elseif opts.password then
         check_password(opts.password)
-        auth_list = prepare_auth_list(opts.password)
+        auth_list = prepare_auth_list(auth_type, opts.password, name)
     else
         auth_list = setmap({})
     end

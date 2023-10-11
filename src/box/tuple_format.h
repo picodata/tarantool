@@ -65,7 +65,6 @@ enum { TUPLE_INDEX_BASE = 1 };
 enum { TUPLE_OFFSET_SLOT_NIL = INT32_MAX };
 
 struct tuple;
-struct tuple_chunk;
 struct tuple_format;
 struct coll;
 struct Expr;
@@ -161,8 +160,12 @@ struct tuple_field {
 	struct tuple_constraint *constraint;
 	/** Number of constraints. */
 	uint32_t constraint_count;
-	/** AST for parsed default value. */
-	struct Expr *default_value_expr;
+	/** AST for parsed SQL default value. */
+	struct Expr *sql_default_value_expr;
+	/** MsgPack with the default value. */
+	char *default_value;
+	/** Size of the default value. */
+	size_t default_value_size;
 };
 
 /**
@@ -175,6 +178,15 @@ static inline bool
 tuple_field_is_nullable(const struct tuple_field *tuple_field)
 {
 	return tuple_field->nullable_action == ON_CONFLICT_ACTION_NONE;
+}
+
+/**
+ * Return true if tuple_field has a default value.
+ */
+static inline bool
+tuple_field_has_default(const struct tuple_field *tuple_field)
+{
+	return tuple_field->default_value != NULL;
 }
 
 /**
@@ -210,7 +222,7 @@ struct tuple_format {
 	/** Reference counter */
 	int refs;
 	/**
-	 * Tuples of this format belong to a temporary space and
+	 * Tuples of this format belong to a data-temporary space and
 	 * hence can be freed immediately while checkpointing is
 	 * in progress.
 	 */
@@ -252,6 +264,11 @@ struct tuple_format {
 	 * path fields. See also tuple_format::fields.
 	 */
 	uint32_t total_field_count;
+	/**
+	 * An upper bound for the number of fields with a default value.
+	 * In other words, max fieldno with a default value + 1.
+	 */
+	uint32_t default_field_count;
 	/**
 	 * Bitmap of fields that must be present in a tuple
 	 * conforming to the format. Indexed by tuple_field::id.
@@ -370,7 +387,7 @@ tuple_format_unref(struct tuple_format *format)
  * @param space_fields Array of fields, defined in a space format.
  * @param space_field_count Length of @a space_fields.
  * @param exact_field_count Exact field count for format.
- * @param is_temporary Set if format belongs to temporary space.
+ * @param is_temporary Set if format belongs to data-temporary space.
  * @param is_reusable Set if format may be reused.
  * @param constraint_def - Array of constraint definitions.
  * @param constraint_count - Number of constraints above.
@@ -437,6 +454,15 @@ uint32_t
 tuple_format_min_field_count(struct key_def * const *keys, uint16_t key_count,
 			     const struct field_def *space_fields,
 			     uint32_t space_field_count);
+
+/**
+ * Return true if format has at least one field with a default value.
+ */
+static inline bool
+tuple_format_has_defaults(const struct tuple_format *format)
+{
+	return format->default_field_count > 0;
+}
 
 typedef struct tuple_format box_tuple_format_t;
 
@@ -640,6 +666,17 @@ tuple_format_iterator_create(struct tuple_format_iterator *it,
 int
 tuple_format_iterator_next(struct tuple_format_iterator *it,
 			   struct tuple_format_iterator_entry *entry);
+
+/**
+ * Replace null (or absent) fields of msgpack with the default values from the
+ * format. The input msgpack is located at [*data .. *data_end).
+ * Return true if at least one field is changed, in that case data and data_end
+ * are updated to point to the new buffer with the modified msgpack. The buffer
+ * is allocated on current fiber's region.
+ */
+bool
+tuple_format_apply_defaults(struct tuple_format *format, const char **data,
+			    const char **data_end);
 
 #if defined(__cplusplus)
 } /* extern "C" */

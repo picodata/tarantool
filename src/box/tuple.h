@@ -149,6 +149,13 @@ size_t
 box_tuple_bsize(box_tuple_t *tuple);
 
 /**
+ * Return the number of bytes to the MessagePack from the begin of the tuple.
+ * \param tuple a tuple
+ */
+uint16_t
+box_tuple_data_offset(box_tuple_t *tuple);
+
+/**
  * Dump raw MsgPack data to the memory buffer \a buf of size \a size.
  *
  * Store tuple fields in the memory buffer.
@@ -357,7 +364,7 @@ enum tuple_flag {
 	 */
 	TUPLE_IS_DIRTY = 1,
 	/**
-	 * The tuple belongs to a temporary space so it can be freed
+	 * The tuple belongs to a data-temporary space so it can be freed
 	 * immediately while a snapshot is in progress.
 	 */
 	TUPLE_IS_TEMPORARY = 2,

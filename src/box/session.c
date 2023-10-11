@@ -42,6 +42,8 @@
 #include "watcher.h"
 #include "on_shutdown.h"
 #include "sql.h"
+#include "sqlInt.h"
+#include "cfg.h"
 
 const char *session_type_strs[] = {
 	"background",
@@ -250,6 +252,7 @@ session_new(enum session_type type)
 	session_set_type(session, type);
 	session->sql_flags = sql_default_session_flags();
 	session->sql_default_engine = SQL_STORAGE_ENGINE_MEMTX;
+	session->vdbe_max_steps = default_vdbe_max_steps;
 	session->sql_stmts = NULL;
 	session->watchers = NULL;
 	rlist_create(&session->in_shutdown_list);
@@ -436,8 +439,9 @@ access_check_session(struct user *user)
 	 * Can't use here access_check_universe
 	 * as current_user is not assigned yet
 	 */
-	if (!(universe.access[user->auth_token].effective & PRIV_S)) {
-		diag_set(AccessDeniedError, priv_name(PRIV_S),
+	if (!(universe.access[user->auth_token].effective &
+		BOX_PRIVILEGE_SESSION)) {
+		diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_SESSION),
 			 schema_object_name(SC_UNIVERSE), "",
 			 user->def->name);
 		return -1;
@@ -446,12 +450,12 @@ access_check_session(struct user *user)
 }
 
 int
-access_check_universe_object(user_access_t access,
+access_check_universe_object(box_user_access_mask_t access,
 			     enum schema_object_type object_type,
 			     const char *object_name)
 {
 	struct credentials *credentials = effective_user();
-	access |= PRIV_U;
+	access |= BOX_PRIVILEGE_USAGE;
 	if ((credentials->universal_access & access) ^ access) {
 		/*
 		 * Access violation, report error.
@@ -480,7 +484,7 @@ access_check_universe_object(user_access_t access,
 }
 
 int
-access_check_universe(user_access_t access)
+access_check_universe(box_user_access_mask_t access)
 {
 	return access_check_universe_object(access, SC_UNIVERSE, "");
 }

@@ -466,6 +466,7 @@ t;
  |   245: box.error.OLD_TERM
  |   246: box.error.INTERFERING_ELECTIONS
  |   247: box.error.ITERATOR_POSITION
+ |   248: box.error.DEFAULT_VALUE_TYPE
  |   249: box.error.UNKNOWN_AUTH_METHOD
  |   250: box.error.INVALID_AUTH_DATA
  |   251: box.error.INVALID_AUTH_REQUEST
@@ -484,6 +485,9 @@ t;
  |   264: box.error.NIL_UUID
  |   265: box.error.WRONG_FUNCTION_OPTIONS
  |   266: box.error.MISSING_SYSTEM_SPACES
+ |   267: box.error.EXCEEDED_VDBE_MAX_STEPS
+ |   268: box.error.ILLEGAL_OPTIONS
+ |   269: box.error.ILLEGAL_OPTIONS_FORMAT
  | ...
 
 test_run:cmd("setopt delimiter ''");

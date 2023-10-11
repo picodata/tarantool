@@ -261,6 +261,9 @@ create_unit_test(PREFIX cbus_call
                  LIBRARIES core unit stat
 )
 
+add_executable(cbus_lcpipe.test cbus_lcpipe.c core_test_utils.c)
+target_link_libraries(cbus_lcpipe.test core unit stat)
+
 include(CheckSymbolExists)
 check_symbol_exists(__GLIBC__ features.h GLIBC_USED)
 if (GLIBC_USED)
@@ -554,6 +557,11 @@ create_unit_test(PREFIX qsort_arg
                  LIBRARIES misc unit
 )
 
+create_unit_test(PREFIX tt_sort
+                 SOURCES tt_sort.cc core_test_utils.c
+                 LIBRARIES unit core
+)
+
 create_unit_test(PREFIX iterator_position
                  SOURCES iterator_position.c box_test_utils.c
                  LIBRARIES unit box core
@@ -561,6 +569,11 @@ create_unit_test(PREFIX iterator_position
 
 create_unit_test(PREFIX key_def
                  SOURCES key_def.c box_test_utils.c
+                 LIBRARIES unit box core
+)
+
+create_unit_test(PREFIX tuple_builder
+                 SOURCES tuple_builder.c box_test_utils.c
                  LIBRARIES unit box core
 )
 

@@ -210,11 +210,15 @@ set(api_headers
     ${PROJECT_SOURCE_DIR}/src/lib/core/say.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/fiber.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/fiber_cond.h
+    ${PROJECT_SOURCE_DIR}/src/lib/core/iostream.h
+    ${PROJECT_SOURCE_DIR}/third_party/libev/ev.h
+    ${PROJECT_SOURCE_DIR}/third_party/tarantool_ev.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/coio.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/coio_task.h
     ${PROJECT_SOURCE_DIR}/src/box/ibuf.h
     ${PROJECT_SOURCE_DIR}/src/lua/utils.h
     ${PROJECT_SOURCE_DIR}/src/lua/error.h
+    ${PROJECT_SOURCE_DIR}/src/box/authentication.h
     ${PROJECT_SOURCE_DIR}/src/box/txn.h
     ${PROJECT_SOURCE_DIR}/src/box/tuple.h
     ${PROJECT_SOURCE_DIR}/src/box/key_def.h
@@ -227,10 +231,17 @@ set(api_headers
     ${PROJECT_SOURCE_DIR}/src/box/iterator_type.h
     ${PROJECT_SOURCE_DIR}/src/box/error.h
     ${PROJECT_SOURCE_DIR}/src/box/lua/tuple.h
+    ${PROJECT_SOURCE_DIR}/src/box/user.h
+    ${PROJECT_SOURCE_DIR}/src/box/user_def.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/latch.h
     ${PROJECT_SOURCE_DIR}/src/lib/core/clock.h
     ${PROJECT_SOURCE_DIR}/src/box/decimal.h
     ${PROJECT_SOURCE_DIR}/src/lua/decimal.h
+    ${PROJECT_SOURCE_DIR}/src/lib/core/random.h
+    ${PROJECT_SOURCE_DIR}/src/lib/core/port.h
+    ${PROJECT_SOURCE_DIR}/src/box/port.h
+    ${PROJECT_SOURCE_DIR}/src/box/module_cache.h
+    ${PROJECT_SOURCE_DIR}/src/box/read_view.h
     ${EXTRA_API_HEADERS}
 )
 rebuild_module_api(${api_headers})
@@ -269,6 +280,8 @@ set (common_libraries
     ${LIBYAML_LIBRARIES}
     ${READLINE_LIBRARIES}
     ${ICONV_LIBRARIES}
+    ${LDAP_LIBRARIES}
+    ${SASL_LIBRARIES}
     ${OPENSSL_LIBRARIES}
 )
 
@@ -323,13 +336,6 @@ if(BUILD_STATIC)
         endif()
     endforeach(libstatic)
     string(REPLACE ";" " " EXPORT_LIST "${EXPORT_LIST}")
-
-    if (HAVE_OPENMP)
-        # Link libgomp explicitly to make it static. Avoid linking
-        # against DSO version of libgomp, which implied by -fopenmp
-        set (common_libraries ${common_libraries} "libgomp.a")
-        set(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -fno-openmp")
-    endif()
 endif()
 
 set(exports_file_sources

@@ -95,8 +95,12 @@
 #include "wal_ext.h"
 #include "mp_util.h"
 #include "small/static.h"
+#include "sqlLimit.h"
+#include "tt_sort.h"
 
 static char status[64] = "unconfigured";
+
+uint64_t default_vdbe_max_steps = 45000;
 
 /** box.stat rmean */
 struct rmean *rmean_box;
@@ -347,7 +351,7 @@ box_check_slice_slow(void)
 	return fiber_check_slice();
 }
 
-static int
+int
 box_check_writable(void)
 {
 	if (!is_ro_summary)
@@ -450,7 +454,7 @@ box_process_rw(struct request *request, struct space *space,
 		return -1;
 	assert(iproto_type_is_dml(request->type));
 	rmean_collect(rmean_box, request->type, 1);
-	if (access_check_space(space, PRIV_W) != 0)
+	if (access_check_space(space, BOX_PRIVILEGE_WRITE) != 0)
 		goto rollback;
 	if (txn_begin_stmt(txn, space, request->type) != 0)
 		goto rollback;
@@ -1412,6 +1416,20 @@ box_check_sql_cache_size(int size)
 	return 0;
 }
 
+/**
+ * Check sql_vdbe_max_steps cfg option value
+ */
+static int
+box_check_sql_vdbe_max_steps(int steps)
+{
+	if (steps < 0) {
+		diag_set(ClientError, ER_CFG, "sql_vdbe_max_steps",
+			 "must be non-negative");
+		return -1;
+	}
+	return 0;
+}
+
 static int
 box_check_allocator(void)
 {
@@ -1419,7 +1437,7 @@ box_check_allocator(void)
 	if (strcmp(allocator, "small") && strcmp(allocator, "system")) {
 		diag_set(ClientError, ER_CFG, "memtx_allocator",
 			 tt_sprintf("must be small or system, "
-				    "but was set to %s", allocator));
+					"but was set to %s", allocator));
 		return -1;
 	}
 	return 0;
@@ -1535,6 +1553,24 @@ box_init_say()
 	return 0;
 }
 
+/**
+ * Checks whether memtx_sort_threads configuration parameter is correct.
+ */
+static void
+box_check_memtx_sort_threads(void)
+{
+	int num = cfg_geti("memtx_sort_threads");
+	/*
+	 * After high level checks this parameter is either nil or has
+	 * type 'number'.
+	 */
+	if (cfg_isnumber("memtx_sort_threads") &&
+	    (num <= 0 || num > TT_SORT_THREADS_MAX))
+		tnt_raise(ClientError, ER_CFG, "memtx_sort_threads",
+			  tt_sprintf("must be greater than 0 and less than or"
+				     " equal to %d", TT_SORT_THREADS_MAX));
+}
+
 void
 box_check_config(void)
 {
@@ -1589,10 +1625,13 @@ box_check_config(void)
 		diag_raise();
 	if (box_check_sql_cache_size(cfg_geti("sql_cache_size")) != 0)
 		diag_raise();
+	if (box_check_sql_vdbe_max_steps(cfg_geti("sql_vdbe_max_steps")) != 0)
+		diag_raise();
 	if (box_check_txn_timeout() < 0)
 		diag_raise();
 	if (box_check_txn_isolation() == txn_isolation_level_MAX)
 		diag_raise();
+	box_check_memtx_sort_threads();
 }
 
 int
@@ -2691,6 +2730,17 @@ box_set_prepared_stmt_cache_size(void)
 	return 0;
 }
 
+int
+box_set_vdbe_max_steps(void)
+{
+	int new_limit = cfg_geti("sql_vdbe_max_steps");
+	if (box_check_sql_vdbe_max_steps(new_limit) != 0)
+		return -1;
+	current_session()->vdbe_max_steps = new_limit;
+	default_vdbe_max_steps = new_limit;
+	return 0;
+}
+
 /**
  * Report crash information to the feedback daemon
  * (ie send it to feedback daemon).
@@ -3071,21 +3121,33 @@ box_process1(struct request *request, box_tuple_t **result)
 {
 	if (box_check_slice() != 0)
 		return -1;
-	/* Allow to write to temporary spaces in read-only mode. */
 	struct space *space = space_cache_find(request->space_id);
 	if (space == NULL)
 		return -1;
-	if (!space_is_temporary(space) &&
+	/*
+	 * Allow to write to data-temporary and local spaces in the read-only
+	 * mode. To handle space truncation and/or ddl operations on temporary
+	 * spaces, we postpone the read-only check for the _truncate, _space &
+	 * _index system spaces till the on_replace trigger is called, when
+	 * we know which spaces are concerned.
+	 */
+	uint32_t id = space_id(space);
+	if (is_ro_summary &&
+	    id != BOX_TRUNCATE_ID &&
+	    id != BOX_SPACE_ID &&
+	    id != BOX_INDEX_ID &&
+	    !space_is_data_temporary(space) &&
 	    !space_is_local(space) &&
 	    box_check_writable() != 0)
 		return -1;
 	if (space_is_memtx(space)) {
 		/*
 		 * Due to on_init_schema triggers set on system spaces,
-		 * we can insert data during recovery to local and temporary
-		 * spaces. However, until recovery is finished, we can't
-		 * check key uniqueness (since indexes are still not yet built).
-		 * So reject any attempts to write into these spaces.
+		 * we can insert data during recovery to local and
+		 * data-temporary spaces. However, until recovery is finished,
+		 * we can't check key uniqueness (since indexes are still not
+		 * yet built). So reject any attempts to write into these
+		 * spaces.
 		 */
 		if (memtx_space_is_recovering(space)) {
 			diag_set(ClientError, ER_UNSUPPORTED, "Snapshot recovery",
@@ -3123,7 +3185,7 @@ box_select(uint32_t space_id, uint32_t index_id,
 	struct space *space = space_cache_find(space_id);
 	if (space == NULL)
 		return -1;
-	if (access_check_space(space, PRIV_R) != 0)
+	if (access_check_space(space, BOX_PRIVILEGE_READ) != 0)
 		return -1;
 	struct index *index = index_find(space, index_id);
 	if (index == NULL)
@@ -3513,6 +3575,56 @@ box_session_id(void)
 }
 
 API_EXPORT int
+box_session_su(uint32_t uid)
+{
+	struct session *session = current_session();
+	if (session == NULL) {
+		diag_set(ClientError, ER_SESSION_CLOSED);
+		return -1;
+	}
+	struct user *user = user_find(uid);
+	if (user == NULL)
+		return -1;
+	if (access_check_session(user) < 0)
+		return -1;
+
+	credentials_reset(&session->credentials, user);
+	fiber_set_user(fiber(), &session->credentials);
+	return 0;
+}
+
+API_EXPORT int
+box_session_user_id(uint32_t *uid)
+{
+	struct session *session = current_session();
+	if (session == NULL) {
+		diag_set(ClientError, ER_SESSION_CLOSED);
+		return -1;
+	}
+	struct user *user = user_find(session->credentials.uid);
+	if (user == NULL)
+		return -1;
+	*uid = user->def->uid;
+	return 0;
+}
+
+API_EXPORT uint32_t
+box_effective_user_id(void)
+{
+	return effective_user()->uid;
+}
+
+API_EXPORT int
+box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid)
+{
+	struct user *user = user_find_by_name(name, name_end - name);
+	if (user == NULL)
+		return -1;
+	*uid = user->def->uid;
+	return 0;
+}
+
+API_EXPORT int
 box_iproto_send(uint64_t sid,
 		const char *header, const char *header_end,
 		const char *body, const char *body_end)
@@ -3535,6 +3647,15 @@ box_iproto_override(uint32_t req_type, iproto_handler_t handler,
 		    iproto_handler_destroy_t destroy, void *ctx)
 {
 	return iproto_override(req_type, handler, destroy, ctx);
+}
+
+API_EXPORT int
+box_access_check_space(uint32_t space_id, uint16_t access)
+{
+	struct space *space = space_cache_find(space_id);
+	if (space == NULL)
+		return -1;
+	return access_check_space(space, access);
 }
 
 static inline void
@@ -3599,7 +3720,7 @@ box_process_fetch_snapshot(struct iostream *io,
 		tnt_raise(ClientError, ER_LOADING);
 
 	/* Check permissions */
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 
 	/* Forbid replication with disabled WAL */
 	if (wal_mode() == WAL_NONE) {
@@ -3640,7 +3761,7 @@ box_process_register(struct iostream *io, const struct xrow_header *header)
 	if (tt_uuid_is_equal(&req.instance_uuid, &INSTANCE_UUID))
 		tnt_raise(ClientError, ER_CONNECTION_TO_SELF);
 
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 	/* We only get register requests from anonymous instances. */
 	struct replica *replica = replica_by_uuid(&req.instance_uuid);
 	if (replica && replica->id != REPLICA_ID_NIL) {
@@ -3656,7 +3777,7 @@ box_process_register(struct iostream *io, const struct xrow_header *header)
 	/* See box_process_join() */
 	box_check_writable_xc();
 	struct space *space = space_cache_find_xc(BOX_CLUSTER_ID);
-	access_check_space_xc(space, PRIV_W);
+	access_check_space_xc(space, BOX_PRIVILEGE_WRITE);
 
 	/* Forbid replication with disabled WAL */
 	if (wal_mode() == WAL_NONE) {
@@ -3776,7 +3897,7 @@ box_process_join(struct iostream *io, const struct xrow_header *header)
 		tnt_raise(ClientError, ER_CONNECTION_TO_SELF);
 
 	/* Check permissions */
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 
 	if (replication_anon) {
 		tnt_raise(ClientError, ER_UNSUPPORTED, "Anonymous replica",
@@ -3793,7 +3914,7 @@ box_process_join(struct iostream *io, const struct xrow_header *header)
 	if (replica == NULL || replica->id == REPLICA_ID_NIL) {
 		box_check_writable_xc();
 		struct space *space = space_cache_find_xc(BOX_CLUSTER_ID);
-		access_check_space_xc(space, PRIV_W);
+		access_check_space_xc(space, BOX_PRIVILEGE_WRITE);
 	}
 
 	/* Forbid replication with disabled WAL */
@@ -3906,7 +4027,7 @@ box_process_subscribe(struct iostream *io, const struct xrow_header *header)
 	}
 
 	/* Check permissions */
-	access_check_universe_xc(PRIV_R);
+	access_check_universe_xc(BOX_PRIVILEGE_READ);
 
 	/* Check replica uuid */
 	struct replica *replica = replica_by_uuid(&req.instance_uuid);
@@ -4091,6 +4212,7 @@ engine_init()
 				    cfg_geti("slab_alloc_granularity"),
 				    cfg_gets("memtx_allocator"),
 				    cfg_getd("slab_alloc_factor"),
+				    cfg_geti("memtx_sort_threads"),
 				    box_on_indexes_built);
 	engine_register((struct engine *)memtx);
 	box_set_memtx_max_tuple_size();
@@ -4652,6 +4774,8 @@ box_cfg_xc(void)
 
 	if (box_set_prepared_stmt_cache_size() != 0)
 		diag_raise();
+	if (box_set_vdbe_max_steps() != 0)
+		diag_raise();
 	box_set_net_msg_max();
 	box_set_readahead();
 	box_set_too_long_threshold();
@@ -5031,6 +5155,56 @@ box_read_ffi_enable(void)
 		box_read_ffi_is_disabled = false;
 }
 
+int
+box_generate_space_id(uint32_t *new_space_id, bool is_temporary)
+{
+	assert(new_space_id != NULL);
+	uint32_t id_range_begin = !is_temporary ?
+		BOX_SYSTEM_ID_MAX + 1 : BOX_SPACE_ID_TEMPORARY_MIN;
+	uint32_t id_range_end = !is_temporary ?
+		(uint32_t)BOX_SPACE_ID_TEMPORARY_MIN :
+		(uint32_t)BOX_SPACE_MAX + 1;
+	char key_buf[16];
+	char *key_end = key_buf;
+	key_end = mp_encode_array(key_end, 1);
+	key_end = mp_encode_uint(key_end, id_range_end);
+	struct credentials *orig_credentials = effective_user();
+	fiber_set_user(fiber(), &admin_credentials);
+	auto guard = make_scoped_guard([=] {
+		fiber_set_user(fiber(), orig_credentials);
+	});
+	box_iterator_t *it = box_index_iterator(BOX_SPACE_ID, 0, ITER_LT,
+						key_buf, key_end);
+	if (it == NULL)
+		return -1;
+	struct tuple *res = NULL;
+	int rc = box_iterator_next(it, &res);
+	box_iterator_free(it);
+	if (rc != 0)
+		return -1;
+	assert(res != NULL);
+	uint32_t max_id = 0;
+	rc = tuple_field_u32(res, 0, &max_id);
+	assert(rc == 0);
+	if (max_id < id_range_begin)
+		max_id = id_range_begin - 1;
+	*new_space_id = space_cache_find_next_unused_id(max_id);
+	/* Try again if overflowed. */
+	if (*new_space_id >= id_range_end) {
+		*new_space_id =
+			space_cache_find_next_unused_id(id_range_begin - 1);
+		/*
+		 * The second overflow means all ids are occupied.
+		 * This situation cannot happen in real world with limited
+		 * memory, and its pretty hard to test it, so let's just panic
+		 * if we've run out of ids.
+		 */
+		if (*new_space_id >= id_range_end)
+			panic("Space id limit is reached");
+	}
+	return 0;
+}
+
 static void
 on_garbage_collection(void)
 {
@@ -5139,4 +5313,31 @@ box_free(void)
 	/* schema_module_free(); */
 	/* session_free(); */
 	/* user_cache_free(); */
+}
+
+API_EXPORT int
+box_auth_data_prepare(const char *method_name, const char *method_name_end,
+		      const char *password, const char *password_end,
+		      const char *user_name, const char *user_name_end,
+		      const char **data, const char **data_end)
+{
+	assert(method_name != NULL);
+	assert(method_name_end != NULL);
+	assert(password != NULL);
+	assert(password_end != NULL);
+	assert(user_name != NULL);
+	assert(user_name_end != NULL);
+
+	size_t method_len = method_name_end - method_name;
+	const struct auth_method *auth = auth_method_by_name(
+				method_name, method_len);
+	if (auth == NULL) {
+		diag_set(ClientError, ER_UNKNOWN_AUTH_METHOD,
+			 tt_cstr(method_name, method_len));
+		return -1;
+	}
+
+	auth_data_prepare(auth, password, password_end - password, user_name,
+			  user_name_end - user_name, data, data_end);
+	return 0;
 }

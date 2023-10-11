@@ -40,6 +40,7 @@
 #include "coll_id_def.h"
 #include "txn.h"
 #include "tuple.h"
+#include "tuple_constraint.h"
 #include "fiber.h" /* for gc_pool */
 #include "scoped_guard.h"
 #include <base64.h>
@@ -70,13 +71,15 @@ box_schema_version_bump(void)
 
 static int
 access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
-		 enum schema_object_type type, enum priv_type priv_type)
+		 enum schema_object_type type,
+		 enum box_privilege_type priv_type)
 {
 	struct credentials *cr = effective_user();
-	user_access_t has_access = cr->universal_access;
+	box_user_access_mask_t has_access = cr->universal_access;
 
-	user_access_t access = ((PRIV_U | (user_access_t) priv_type) &
-				~has_access);
+	box_user_access_mask_t access = (
+		(BOX_PRIVILEGE_USAGE | (box_user_access_mask_t)priv_type) &
+		 ~has_access);
 	bool is_owner = owner_uid == cr->uid || cr->uid == ADMIN;
 	if (access == 0)
 		return 0; /* Access granted. */
@@ -94,12 +97,12 @@ access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 	 * the owner of the object, but this should be ignored --
 	 * CREATE privilege is required.
 	 */
-	if (access == 0 || (is_owner && !(access & (PRIV_U | PRIV_C))))
+	if (access == 0 || (is_owner && !(access & (BOX_PRIVILEGE_USAGE | BOX_PRIVILEGE_CREATE))))
 		return 0; /* Access granted. */
 	/*
 	 * USAGE can be granted only globally.
 	 */
-	if (!(access & PRIV_U)) {
+	if (!(access & BOX_PRIVILEGE_USAGE)) {
 		/* Check for privileges on a single object. */
 		struct access *object = access_find(type, object_id);
 		if (object != NULL)
@@ -113,9 +116,9 @@ access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 		return -1;
 	const char *object_name;
 	const char *pname;
-	if (access & PRIV_U) {
+	if (access & BOX_PRIVILEGE_USAGE) {
 		object_name = schema_object_name(SC_UNIVERSE);
-		pname = priv_name(PRIV_U);
+		pname = priv_name(BOX_PRIVILEGE_USAGE);
 		name = "";
 	} else {
 		object_name = schema_object_name(type);
@@ -390,11 +393,18 @@ space_opts_decode(struct space_opts *opts, const char *map,
 		  struct region *region)
 {
 	space_opts_create(opts);
+	opts->type = SPACE_TYPE_DEFAULT;
 	if (opts_decode(opts, space_opts_reg, &map, region) != 0) {
 		diag_set(ClientError, ER_WRONG_SPACE_OPTIONS,
 			 diag_last_error(diag_get())->errmsg);
 		return -1;
 	}
+	/*
+	 * This can only be SPACE_TYPE_DEFAULT if neither 'type' nor 'temporary'
+	 * was specified, which means the space type is normal.
+	 */
+	if (opts->type == SPACE_TYPE_DEFAULT)
+		opts->type = SPACE_TYPE_NORMAL;
 	return 0;
 }
 
@@ -496,6 +506,11 @@ space_def_new_from_tuple(struct tuple *tuple, uint32_t errcode,
 	if (opts.is_sync && opts.group_id == GROUP_LOCAL) {
 		diag_set(ClientError, errcode, tt_cstr(name, name_len),
 			 "local space can't be synchronous");
+		return NULL;
+	}
+	if (space_opts_is_temporary(&opts) && opts.constraint_count > 0) {
+		diag_set(ClientError, ER_UNSUPPORTED, "temporary space",
+			 "constraints");
 		return NULL;
 	}
 	struct space_def *def =
@@ -1784,25 +1799,18 @@ alter_space_move_indexes(struct alter_space *alter, uint32_t begin,
  *
  * @param select Tables from this select to be updated.
  * @param update_value +1 on view creation, -1 on drop.
- * @param suppress_error If true, silently skip nonexistent
- *                       spaces from 'FROM' clause.
- * @param[out] not_found_space Name of a disappeared space.
- * @retval 0 on success, -1 if suppress_error is false and space
- *         from 'FROM' clause doesn't exist.
+ * @retval 0 on success, -1 on error (diag is set).
  */
 static int
-update_view_references(struct Select *select, int update_value,
-		       bool suppress_error, const char **not_found_space)
+update_view_references(struct Select *select, int update_value)
 {
 	assert(update_value == 1 || update_value == -1);
 	struct SrcList *list = sql_select_expand_from_tables(select);
-	if (list == NULL)
-		return -1;
 	int from_tables_count = sql_src_list_entry_count(list);
+	/* Firstly check that everything is correct. */
 	for (int i = 0; i < from_tables_count; ++i) {
 		const char *space_name = sql_src_list_entry_name(list, i);
-		if (space_name == NULL)
-			continue;
+		assert(space_name != NULL);
 		/*
 		 * Views are allowed to contain CTEs. CTE is a
 		 * temporary object, created and destroyed at SQL
@@ -1815,19 +1823,30 @@ update_view_references(struct Select *select, int update_value,
 			continue;
 		struct space *space = space_by_name(space_name);
 		if (space == NULL) {
-			if (! suppress_error) {
-				assert(not_found_space != NULL);
-				*not_found_space = tt_sprintf("%s", space_name);
-				sqlSrcListDelete(list);
-				return -1;
-			}
-			continue;
+			diag_set(ClientError, ER_NO_SUCH_SPACE, space_name);
+			goto error;
 		}
+		if (space_is_temporary(space)) {
+			diag_set(ClientError, ER_UNSUPPORTED,
+				 "CREATE VIEW", "temporary spaces");
+			goto error;
+		}
+	}
+	/* Secondly do the job. */
+	for (int i = 0; i < from_tables_count; ++i) {
+		const char *space_name = sql_src_list_entry_name(list, i);
+		/* See comment before sql_select_constains_cte call above. */
+		if (sql_select_constains_cte(select, space_name))
+			continue;
+		struct space *space = space_by_name(space_name);
 		assert(space->def->view_ref_count > 0 || update_value > 0);
 		space->def->view_ref_count += update_value;
 	}
 	sqlSrcListDelete(list);
 	return 0;
+error:
+	sqlSrcListDelete(list);
+	return -1;
 }
 
 /**
@@ -1853,7 +1872,8 @@ on_create_view_rollback(struct trigger *trigger, void *event)
 {
 	(void) event;
 	struct Select *select = (struct Select *)trigger->data;
-	update_view_references(select, -1, true, NULL);
+	int rc = update_view_references(select, -1);
+	assert(rc == 0); (void)rc;
 	sql_select_delete(select);
 	return 0;
 }
@@ -1882,7 +1902,8 @@ on_drop_view_rollback(struct trigger *trigger, void *event)
 {
 	(void) event;
 	struct Select *select = (struct Select *)trigger->data;
-	update_view_references(select, 1, true, NULL);
+	int rc = update_view_references(select, 1);
+	assert(rc == 0); (void)rc;
 	sql_select_delete(select);
 	return 0;
 }
@@ -1902,6 +1923,76 @@ space_check_pinned(struct space *space)
 			 tt_sprintf("space is referenced by %s", type_str));
 		return -1;
 	}
+	return 0;
+}
+
+/**
+ * Check whether @a old_space holders prohibit alter to @a new_space_def.
+ * For example if the space becomes data-temporary, there can be foreign keys
+ * from non-data-temporary space, so this alter must not be allowed.
+ * Return 0 if allowed, or -1 if not allowed (diag is set).
+ */
+static int
+space_check_alter(struct space *old_space, struct space_def *new_space_def)
+{
+	/*
+	 * group_id, which is currently used for defining local spaces, is
+	 * now can't be changed; if it could, an additional check would be
+	 * required below.
+	 */
+	assert(old_space->def->opts.group_id == new_space_def->opts.group_id);
+	/* Only alter from non-data-temporary to data-temporary can cause
+	 * problems.
+	 */
+	if (space_is_data_temporary(old_space) ||
+	    !space_opts_is_data_temporary(&new_space_def->opts))
+		return 0;
+	/* Check for foreign keys that refers to this space. */
+	struct space_cache_holder *h;
+	rlist_foreach_entry(h, &old_space->space_cache_pin_list, link) {
+		if (h->selfpin)
+			continue;
+		if (h->type != SPACE_HOLDER_FOREIGN_KEY)
+			continue;
+		struct tuple_constraint *constr =
+			container_of(h, struct tuple_constraint,
+				     space_cache_holder);
+		struct space *other_space = constr->space;
+		/*
+		 * If the referring space is data-temporary too then the alter
+		 * can't break foreign key consistency after restart.
+		 */
+		if (space_opts_is_data_temporary(&other_space->def->opts))
+			continue;
+		diag_set(ClientError, ER_ALTER_SPACE,
+			 space_name(old_space),
+			 tt_sprintf("foreign key '%s' from non-data-temporary"
+				    " space '%s' can't refer to data-temporary"
+				    " space",
+				    constr->def.name, space_name(other_space)));
+		return -1;
+	}
+	return 0;
+}
+
+/*
+ * box_process1() bypasses the read-only check for the _space system space
+ * because there it's not yet known if the related space is temporary. Perform
+ * the check here if the space isn't temporary and the statement was issued by
+ * this replica.
+ */
+static int
+filter_temporary_ddl_stmt(struct txn *txn, const struct space_def *def)
+{
+	if (def == NULL)
+		return 0;
+	struct txn_stmt *stmt = txn_current_stmt(txn);
+	if (space_opts_is_temporary(&def->opts)) {
+		txn_stmt_mark_as_temporary(txn, stmt);
+		return 0;
+	}
+	if (stmt->row->replica_id == 0 && recovery_state != INITIAL_RECOVERY)
+		return box_check_writable();
 	return 0;
 }
 
@@ -1982,16 +2073,22 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 			    BOX_SPACE_FIELD_ID, &old_id) != 0)
 		return -1;
 	struct space *old_space = space_by_id(old_id);
+	struct space_def *def = NULL;
+	if (new_tuple != NULL) {
+		uint32_t errcode = (old_tuple == NULL) ?
+			ER_CREATE_SPACE : ER_ALTER_SPACE;
+		def = space_def_new_from_tuple(new_tuple, errcode, region);
+	}
+	if (filter_temporary_ddl_stmt(txn, old_space != NULL ?
+				      old_space->def : def) != 0)
+		return -1;
 	if (new_tuple != NULL && old_space == NULL) { /* INSERT */
-		struct space_def *def =
-			space_def_new_from_tuple(new_tuple, ER_CREATE_SPACE,
-						 region);
 		if (def == NULL)
 			return -1;
 		auto def_guard =
 			make_scoped_guard([=] { space_def_delete(def); });
 		if (access_check_ddl(def->name, def->id, def->uid, SC_SPACE,
-				 PRIV_C) != 0)
+				 BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		RLIST_HEAD(empty_list);
 		struct space *space = space_new(def, &empty_list);
@@ -2030,19 +2127,8 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 			auto select_guard = make_scoped_guard([=] {
 				sql_select_delete(select);
 			});
-			const char *disappeared_space;
-			if (update_view_references(select, 1, false,
-						   &disappeared_space) != 0) {
-				/*
-				 * Decrement counters which have
-				 * been increased by previous call.
-				 */
-				update_view_references(select, -1, false,
-						       &disappeared_space);
-				diag_set(ClientError, ER_NO_SUCH_SPACE,
-					  disappeared_space);
+			if (update_view_references(select, 1) != 0)
 				return -1;
-			}
 			struct trigger *on_commit_view =
 				txn_alter_trigger_new(on_create_view_commit,
 						      select);
@@ -2059,7 +2145,8 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		}
 	} else if (new_tuple == NULL) { /* DELETE */
 		if (access_check_ddl(old_space->def->name, old_space->def->id,
-				 old_space->def->uid, SC_SPACE, PRIV_D) != 0)
+				 old_space->def->uid, SC_SPACE,
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Verify that the space is empty (has no indexes) */
 		if (old_space->index_count) {
@@ -2143,7 +2230,8 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 			if (on_rollback_view == NULL)
 				return -1;
 			txn_stmt_on_rollback(stmt, on_rollback_view);
-			update_view_references(select, -1, true, NULL);
+			int rc = update_view_references(select, -1);
+			assert(rc == 0); (void)rc;
 			select_guard.is_active = false;
 		}
 	} else { /* UPDATE, REPLACE */
@@ -2154,15 +2242,12 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 				 "view can not be altered");
 			return -1;
 		}
-		struct space_def *def =
-			space_def_new_from_tuple(new_tuple, ER_ALTER_SPACE,
-						 region);
 		if (def == NULL)
 			return -1;
 		auto def_guard =
 			make_scoped_guard([=] { space_def_delete(def); });
 		if (access_check_ddl(def->name, def->id, def->uid, SC_SPACE,
-				 PRIV_A) != 0)
+				 BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		if (def->id != space_id(old_space)) {
 			diag_set(ClientError, ER_ALTER_SPACE,
@@ -2182,6 +2267,13 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 				  "replication group is immutable");
 			return -1;
 		}
+		if (space_is_temporary(old_space) !=
+		     space_opts_is_temporary(&def->opts)) {
+			diag_set(ClientError, ER_ALTER_SPACE,
+				 old_space->def->name,
+				 "temporariness cannot change");
+			return -1;
+		}
 		if (def->opts.is_view != old_space->def->opts.is_view) {
 			diag_set(ClientError, ER_ALTER_SPACE,
 				  space_name(old_space),
@@ -2197,6 +2289,10 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 				  "view");
 			return -1;
 		}
+
+		if (space_check_alter(old_space, def) != 0)
+			return -1;
+
 		/*
 		 * Allow change of space properties, but do it
 		 * in WAL-error-safe mode.
@@ -2307,14 +2403,17 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 	struct space *old_space = space_cache_find(id);
 	if (old_space == NULL)
 		return -1;
+	if (filter_temporary_ddl_stmt(txn, old_space->def) != 0)
+		return -1;
 	if (old_space->def->opts.is_view) {
 		diag_set(ClientError, ER_ALTER_SPACE, space_name(old_space),
 			  "can not add index on a view");
 		return -1;
 	}
-	enum priv_type priv_type = new_tuple ? PRIV_C : PRIV_D;
+	enum box_privilege_type priv_type = (
+		new_tuple ? BOX_PRIVILEGE_CREATE : BOX_PRIVILEGE_DROP);
 	if (old_tuple && new_tuple)
-		priv_type = PRIV_A;
+		priv_type = BOX_PRIVILEGE_ALTER;
 	if (access_check_ddl(old_space->def->name, old_space->def->id,
 			 old_space->def->uid, SC_SPACE, priv_type) != 0)
 		return -1;
@@ -2567,16 +2666,39 @@ on_replace_dd_truncate(struct trigger * /* trigger */, void *event)
 	struct txn_stmt *stmt = txn_current_stmt(txn);
 	struct tuple *new_tuple = stmt->new_tuple;
 
-	if (new_tuple == NULL) {
-		/* Space drop - nothing to do. */
+	if (recovery_state == INITIAL_RECOVERY) {
+		/* Space creation during initial recovery - nothing to do. */
 		return 0;
 	}
 
+	struct tuple *any_tuple = new_tuple;
+	if (any_tuple == NULL)
+		any_tuple = stmt->old_tuple;
 	uint32_t space_id;
-	if (tuple_field_u32(new_tuple, BOX_TRUNCATE_FIELD_SPACE_ID, &space_id) != 0)
+	if (tuple_field_u32(any_tuple, BOX_TRUNCATE_FIELD_SPACE_ID,
+			    &space_id) != 0)
 		return -1;
 	struct space *old_space = space_cache_find(space_id);
 	if (old_space == NULL)
+		return -1;
+	if (space_is_temporary(old_space))
+		txn_stmt_mark_as_temporary(txn, stmt);
+
+	if (new_tuple == NULL) {
+		/* Space drop - nothing else to do. */
+		return 0;
+	}
+
+	/*
+	 * box_process1() bypasses the read-only check for the _truncate system
+	 * space because there the space that is going to be truncated isn't yet
+	 * known. Perform the check here if this statement was issued by this
+	 * replica and the space isn't data-temporary or local.
+	 */
+	bool is_temp = space_is_data_temporary(old_space) ||
+		       space_is_local(old_space);
+	if (!is_temp && stmt->row->replica_id == 0 &&
+	    box_check_writable() != 0)
 		return -1;
 
 	/*
@@ -2584,16 +2706,8 @@ on_replace_dd_truncate(struct trigger * /* trigger */, void *event)
 	 * The check should precede initial recovery check to correctly
 	 * handle direct insert into _truncate systable.
 	 */
-	if (access_check_space(old_space, PRIV_W) != 0)
+	if (access_check_space(old_space, BOX_PRIVILEGE_WRITE) != 0)
 		return -1;
-
-	if (stmt->row->type == IPROTO_INSERT) {
-		/*
-		 * Space creation during initial recovery -
-		 * nothing to do.
-		 */
-		return 0;
-	}
 
 	/*
 	 * System spaces use triggers to keep records in sync
@@ -2617,11 +2731,12 @@ on_replace_dd_truncate(struct trigger * /* trigger */, void *event)
 
 	/*
 	 * Modify the WAL header to prohibit
-	 * replication of local & temporary
-	 * spaces truncation.
+	 * replication of local & data-temporary
+	 * spaces truncation
+	 * unless it's a temporary space
+	 * in which case the header doesn't exist.
 	 */
-	if (space_is_temporary(old_space) ||
-	    space_is_local(old_space)) {
+	if (is_temp && !space_is_temporary(old_space)) {
 		stmt->row->group_id = GROUP_LOCAL;
 		/*
 		 * The trigger is invoked after txn->n_local_rows
@@ -2731,7 +2846,8 @@ user_def_fill_auth_data(struct user_def *user, const char *auth_data)
 			return -1;
 		/* The guest user may only have an empty password. */
 		if (user->uid == GUEST &&
-		    !authenticate_password(auth, "", 0)) {
+		    !authenticate_password(auth, "", 0, user->name,
+					   strnlen(user->name, UINT32_MAX))) {
 			authenticator_delete(auth);
 			diag_set(ClientError, ER_GUEST_USER_PASSWORD);
 			return -1;
@@ -2861,7 +2977,7 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 		if (user == NULL)
 			return -1;
 		if (access_check_ddl(user->name, user->uid, user->owner, user->type,
-				 PRIV_C) != 0)
+				 BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		auto def_guard = make_scoped_guard([=] {
 			user_def_delete(user);
@@ -2880,7 +2996,7 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 	} else if (new_tuple == NULL) { /* DELETE */
 		if (access_check_ddl(old_user->def->name, old_user->def->uid,
 				 old_user->def->owner, old_user->def->type,
-				 PRIV_D) != 0)
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Can't drop guest or super user */
 		if (uid <= (uint32_t) BOX_SYSTEM_USER_ID_MAX || uid == SUPER) {
@@ -2919,7 +3035,7 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 		if (user == NULL)
 			return -1;
 		if (access_check_ddl(user->name, user->uid, user->uid,
-				 old_user->def->type, PRIV_A) != 0)
+				 old_user->def->type, BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		auto def_guard = make_scoped_guard([=] {
 			user_def_delete(user);
@@ -3219,7 +3335,7 @@ on_replace_dd_func(struct trigger * /* trigger */, void *event)
 			func_def_delete(def);
 		});
 		if (access_check_ddl(def->name, def->fid, def->uid, SC_FUNCTION,
-				 PRIV_C) != 0)
+				 BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct trigger *on_rollback =
 			txn_alter_trigger_new(on_create_func_rollback, NULL);
@@ -3242,7 +3358,7 @@ on_replace_dd_func(struct trigger * /* trigger */, void *event)
 		 * who created it or a superuser.
 		 */
 		if (access_check_ddl(old_func->def->name, fid, uid, SC_FUNCTION,
-				 PRIV_D) != 0)
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Can only delete func if it has no grants. */
 		bool out;
@@ -3494,7 +3610,7 @@ on_replace_dd_collation(struct trigger * /* trigger */, void *event)
 		assert(old_coll_id != NULL);
 		if (access_check_ddl(old_coll_id->name, old_coll_id->id,
 				 old_coll_id->owner_id, SC_COLLATION,
-				 PRIV_D) != 0)
+				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/*
 		 * Set on_commit/on_rollback triggers after
@@ -3516,7 +3632,7 @@ on_replace_dd_collation(struct trigger * /* trigger */, void *event)
 		if (coll_id_def_new_from_tuple(new_tuple, &new_def) != 0)
 			return -1;
 		if (access_check_ddl(new_def.name, new_def.id, new_def.owner_id,
-				 SC_COLLATION, PRIV_C) != 0)
+				 SC_COLLATION, BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct coll_id *new_coll_id = coll_id_new(&new_def);
 		if (new_coll_id == NULL)
@@ -3604,7 +3720,7 @@ priv_def_create_from_tuple(struct priv_def *priv, struct tuple *tuple)
  * In the future we must protect grant/revoke with a logical lock.
  */
 static int
-priv_def_check(struct priv_def *priv, enum priv_type priv_type)
+priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 {
 	struct user *grantor = user_find(priv->grantor_id);
 	if (grantor == NULL)
@@ -3644,6 +3760,11 @@ priv_def_check(struct priv_def *priv, enum priv_type priv_type)
 				  priv_name(priv_type),
 				  schema_object_name(SC_SPACE), name,
 				  grantor->def->name);
+			return -1;
+		}
+		if (space_is_temporary(space)) {
+			diag_set(ClientError, ER_UNSUPPORTED,
+				 "temporary space", "privileges");
 			return -1;
 		}
 		break;
@@ -3697,7 +3818,8 @@ priv_def_check(struct priv_def *priv, enum priv_type priv_type)
 		 */
 		if (role->def->owner != grantor->def->uid &&
 		    grantor->def->uid != ADMIN &&
-		    (role->def->uid != PUBLIC || priv->access != PRIV_X)) {
+		    (role->def->uid != PUBLIC ||
+			 priv->access != BOX_PRIVILEGE_EXECUTE)) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
 				  schema_object_name(SC_ROLE), name,
@@ -3767,7 +3889,8 @@ grant_or_revoke(struct priv_def *priv)
 	 * Grant a role to a user only when privilege type is 'execute'
 	 * and the role is specified.
 	 */
-	if (priv->object_type == SC_ROLE && !(priv->access & ~PRIV_X)) {
+	if (priv->object_type == SC_ROLE &&
+	    !(priv->access & ~BOX_PRIVILEGE_EXECUTE)) {
 		struct user *role = user_by_id(priv->object_id);
 		if (role == NULL || role->def->type != SC_ROLE)
 			return 0;
@@ -3828,7 +3951,7 @@ on_replace_dd_priv(struct trigger * /* trigger */, void *event)
 
 	if (new_tuple != NULL && old_tuple == NULL) {	/* grant */
 		if (priv_def_create_from_tuple(&priv, new_tuple) != 0 ||
-		    priv_def_check(&priv, PRIV_GRANT) != 0 ||
+		    priv_def_check(&priv, BOX_PRIVILEGE_GRANT) != 0 ||
 		    grant_or_revoke(&priv) != 0)
 			return -1;
 		struct trigger *on_rollback =
@@ -3839,7 +3962,7 @@ on_replace_dd_priv(struct trigger * /* trigger */, void *event)
 	} else if (new_tuple == NULL) {                /* revoke */
 		assert(old_tuple);
 		if (priv_def_create_from_tuple(&priv, old_tuple) != 0 ||
-		    priv_def_check(&priv, PRIV_REVOKE) != 0)
+		    priv_def_check(&priv, BOX_PRIVILEGE_REVOKE) != 0)
 			return -1;
 		priv.access = 0;
 		if (grant_or_revoke(&priv) != 0)
@@ -3851,7 +3974,7 @@ on_replace_dd_priv(struct trigger * /* trigger */, void *event)
 		txn_stmt_on_rollback(stmt, on_rollback);
 	} else {                                       /* modify */
 		if (priv_def_create_from_tuple(&priv, new_tuple) != 0 ||
-		    priv_def_check(&priv, PRIV_GRANT) != 0 ||
+		    priv_def_check(&priv, BOX_PRIVILEGE_GRANT) != 0 ||
 		    grant_or_revoke(&priv) != 0)
 			return -1;
 		struct trigger *on_rollback =
@@ -4212,7 +4335,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		if (new_def == NULL)
 			return -1;
 		if (access_check_ddl(new_def->name, new_def->id, new_def->uid,
-				 SC_SEQUENCE, PRIV_C) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct trigger *on_rollback =
 			txn_alter_trigger_new(on_create_sequence_rollback, NULL);
@@ -4231,7 +4354,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		seq = sequence_by_id(id);
 		assert(seq != NULL);
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_D) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		bool out;
 		if (space_has_data(BOX_SEQUENCE_DATA_ID, 0, id, &out) != 0)
@@ -4273,7 +4396,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		seq = sequence_by_id(new_def->id);
 		assert(seq != NULL);
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_A) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		struct trigger *on_commit =
 			txn_alter_trigger_new(on_alter_sequence_commit, seq->def);
@@ -4483,6 +4606,11 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 	struct space *space = space_cache_find(space_id);
 	if (space == NULL)
 		return -1;
+	if (space_is_temporary(space)) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "sequences are not supported for temporary spaces");
+		return -1;
+	}
 	struct sequence *seq = sequence_by_id(sequence_id);
 	if (seq == NULL) {
 		diag_set(ClientError, ER_NO_SUCH_SEQUENCE, int2str(sequence_id));
@@ -4498,7 +4626,8 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 			 "space \"_space_sequence\"", "update");
 		return -1;
 	}
-	enum priv_type priv_type = stmt->new_tuple ? PRIV_C : PRIV_D;
+	enum box_privilege_type priv_type = stmt->new_tuple ?
+		BOX_PRIVILEGE_CREATE : BOX_PRIVILEGE_DROP;
 
 	/* Check we have the correct access type on the sequence.  * */
 	if (is_generated || !stmt->new_tuple) {
@@ -4511,15 +4640,15 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 		 * check that it has read and write access.
 		 */
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_R) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_READ) != 0)
 			return -1;
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, PRIV_W) != 0)
+				 SC_SEQUENCE, BOX_PRIVILEGE_WRITE) != 0)
 			return -1;
 	}
 	/** Check we have alter access on space. */
 	if (access_check_ddl(space->def->name, space->def->id, space->def->uid,
-			 SC_SPACE, PRIV_A) != 0)
+			 SC_SPACE, BOX_PRIVILEGE_ALTER) != 0)
 		return -1;
 
 	if (stmt->new_tuple != NULL) {			/* INSERT, UPDATE */
@@ -4724,6 +4853,13 @@ on_replace_dd_trigger(struct trigger * /* trigger */, void *event)
 				  "resolved on AST building from SQL");
 			return -1;
 		}
+		struct space *space = space_cache_find(space_id);
+		if (space != NULL && space_is_temporary(space)) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "triggers are not supported for "
+				 "temporary spaces");
+			return -1;
+		}
 
 		struct sql_trigger *old_trigger;
 		if (sql_trigger_replace(trigger_name,
@@ -4778,6 +4914,11 @@ on_replace_dd_func_index(struct trigger *trigger, void *event)
 		space = space_cache_find(space_id);
 		if (space == NULL)
 			return -1;
+		if (space_is_temporary(space)) {
+			diag_set(ClientError, ER_UNSUPPORTED,
+				 "temporary space", "functional indexes");
+			return -1;
+		}
 		index = index_find(space, index_id);
 		if (index == NULL)
 			return -1;

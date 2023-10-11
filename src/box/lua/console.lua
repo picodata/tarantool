@@ -685,7 +685,11 @@ end
 -- Print result to stdout
 --
 local function local_print(self, output)
-    if output:endswith(output_eos["lua"]) then
+    --
+    -- Be cautious, `output` may be any printable object, e.g. tarantoolctl
+    -- passes cdata errors in some cases.
+    --
+    if type(output) == 'string' and output:endswith(output_eos["lua"]) then
         local new_local_eos
         if self.remote ~= nil then
             new_local_eos = self.remote.local_eos
@@ -855,6 +859,11 @@ local function connect(uri, opts)
         error('Usage: console.connect("[login:password@][host:]port")')
     end
 
+    if opts.auth_type == nil and u.params ~= nil and
+       u.params.auth_type ~= nil then
+        opts.auth_type = u.params.auth_type[1]
+    end
+
     -- We don't know if the remote end is binary or Lua console so we first try
     -- to connect to it as binary using net.box and fall back on Lua console if
     -- it fails.
@@ -862,6 +871,7 @@ local function connect(uri, opts)
             connect_timeout = opts.timeout,
             user = u.login,
             password = u.password,
+            auth_type = opts.auth_type,
     })
     if remote.state == 'error' then
         local err = remote.error

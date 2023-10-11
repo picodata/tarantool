@@ -375,7 +375,6 @@ int sqlVdbeExec(Vdbe *p)
 	/* The database */
 	struct sql *db = sql_get();
 	int iCompare = 0;          /* Result of last comparison */
-	unsigned nVmStep = 0;      /* Number of virtual machine steps */
 	Mem *aMem = p->aMem;       /* Copy of p->aMem */
 	Mem *pIn1 = 0;             /* 1st input operand */
 	Mem *pIn2 = 0;             /* 2nd input operand */
@@ -421,7 +420,13 @@ int sqlVdbeExec(Vdbe *p)
 		assert(rc == 0);
 
 		assert(pOp>=aOp && pOp<&aOp[p->nOp]);
-		nVmStep++;
+		p->step_count++;
+		if (p->vdbe_max_steps > 0 &&
+		    p->vdbe_max_steps < p->step_count) {
+			diag_set(ClientError, ER_EXCEEDED_VDBE_MAX_STEPS,
+				 p->vdbe_max_steps);
+			goto abort_due_to_error;
+		}
 
 		/* Only allow tracing if SQL_DEBUG is defined.
 		 */
@@ -2388,7 +2393,7 @@ case OP_IteratorOpen: {
 	}
 	struct space *space = aMem[pOp->p3].u.p;
 	assert(space != NULL);
-	if (access_check_space(space, PRIV_R) != 0)
+	if (access_check_space(space, BOX_PRIVILEGE_READ) != 0)
 		goto abort_due_to_error;
 
 	struct index *index = space_index(space, pOp->p2);
@@ -4333,17 +4338,18 @@ case OP_Init: {          /* jump */
 	goto jump_to_p2;
 }
 
-/* Opcode: IncMaxid P1 * * * *
+/* Opcode: GenSpaceid P1 * * * *
+ * Synopsis: r[P1]=new space ID
  *
- * Increment the max_id from _schema (max space id)
- * and store updated id in register specified by first operand.
- * It is system opcode and must be used only during DDL routine.
+ * Generate unique id for a non-system space and store it in register
+ * specified by first operand. It is system opcode and must be used only
+ * during DDL routine.
  */
-case OP_IncMaxid: {
+case OP_GenSpaceid: {
 	assert(pOp->p1 > 0);
 	pOut = vdbe_prepare_null_out(p, pOp->p1);
-	uint64_t u;
-	if (tarantoolsqlIncrementMaxid(&u) != 0)
+	uint32_t u;
+	if (box_generate_space_id(&u, false) != 0)
 		goto abort_due_to_error;
 	mem_set_uint(pOut, u);
 	break;
@@ -4387,6 +4393,17 @@ case OP_SetSession: {
 			goto abort_due_to_error;
 		}
 		mp_encode_str(mp_value, str, pIn1->n);
+		if (setting->set(sid, mp_value) != 0)
+			goto abort_due_to_error;
+		break;
+	}
+	case FIELD_TYPE_UNSIGNED: {
+		if (!mem_is_uint(pIn1))
+			goto invalid_type;
+		uint64_t value = pIn1->u.u;
+		size_t size = mp_sizeof_uint(value);
+		char *mp_value = (char *)static_alloc(size);
+		mp_encode_uint(mp_value, value);
 		if (setting->set(sid, mp_value) != 0)
 			goto abort_due_to_error;
 		break;
@@ -4460,7 +4477,6 @@ abort_due_to_error:
 
 	/* This is the only way out of this procedure. */
 vdbe_return:
-	p->aCounter[SQL_STMTSTATUS_VM_STEP] += (int)nVmStep;
 	assert(rc == 0 || rc == -1 || rc == SQL_ROW || rc == SQL_DONE);
 	return rc;
 

@@ -406,6 +406,9 @@ lbox_session_setting_get_by_id(struct lua_State *L, int sid)
 	if (field_type == FIELD_TYPE_BOOLEAN) {
 		bool value = mp_decode_bool(&mp_pair);
 		lua_pushboolean(L, value);
+	} else if (field_type == FIELD_TYPE_UNSIGNED) {
+		uint64_t value = mp_decode_uint(&mp_pair);
+		luaL_pushuint64(L, value);
 	} else {
 		assert(field_type == FIELD_TYPE_STRING);
 		const char *str = mp_decode_str(&mp_pair, &len);
@@ -461,6 +464,15 @@ lbox_session_setting_set(struct lua_State *L)
 			return luaT_error(L);
 		}
 		mp_encode_str(mp_value, str, len);
+		if (setting->set(sid, mp_value) != 0)
+			return luaT_error(L);
+		break;
+	}
+	case LUA_TNUMBER: {
+		const uint64_t value = lua_tonumber(L, -1);
+		size_t size = mp_sizeof_uint(value);
+		char *mp_value = (char *)static_alloc(size);
+		mp_encode_uint(mp_value, value);
 		if (setting->set(sid, mp_value) != 0)
 			return luaT_error(L);
 		break;

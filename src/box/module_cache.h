@@ -18,11 +18,15 @@ extern "C" {
  * API of C stored function.
  */
 
+/** \cond public */
+
 struct port;
 
 struct box_function_ctx {
 	struct port *port;
 };
+
+/** \endcond public */
 
 typedef struct box_function_ctx box_function_ctx_t;
 typedef int (*box_function_t)(box_function_ctx_t *ctx,

@@ -303,7 +303,7 @@ sql_shallow_space_copy(struct Parse *parse, struct space *space)
 	}
 	memcpy(ret->index, space->index, size);
 	memcpy(ret->def, space->def, sizeof(struct space_def));
-	ret->def->opts.is_temporary = true;
+	ret->def->opts.type = SPACE_TYPE_DATA_TEMPORARY;
 	ret->def->opts.is_ephemeral = true;
 	if (ret->def->field_count != 0) {
 		uint32_t fields_size = 0;
@@ -513,17 +513,18 @@ sqlAddDefaultValue(Parse * pParse, ExprSpan * pSpan)
 			struct field_def *field =
 				&def->fields[def->field_count - 1];
 			struct region *region = &pParse->region;
-			uint32_t default_length = (int)(pSpan->zEnd - pSpan->zStart);
-			field->default_value = region_alloc(region,
-							    default_length + 1);
-			if (field->default_value == NULL) {
+			uint32_t default_length = (int)(pSpan->zEnd -
+							pSpan->zStart);
+			field->sql_default_value =
+				region_alloc(region, default_length + 1);
+			if (field->sql_default_value == NULL) {
 				diag_set(OutOfMemory, default_length + 1,
 					 "region_alloc",
-					 "field->default_value");
+					 "field->sql_default_value");
 				pParse->is_aborted = true;
 				return;
 			}
-			strlcpy(field->default_value, pSpan->zStart,
+			strlcpy(field->sql_default_value, pSpan->zStart,
 				default_length + 1);
 		}
 	}
@@ -910,7 +911,7 @@ getNewSpaceId(Parse * pParse)
 	Vdbe *v = sqlGetVdbe(pParse);
 	int iRes = ++pParse->nMem;
 
-	sqlVdbeAddOp1(v, OP_IncMaxid, iRes);
+	sqlVdbeAddOp1(v, OP_GenSpaceid, iRes);
 	return iRes;
 }
 
@@ -3304,6 +3305,8 @@ static struct sql_option_metadata sql_session_opts[] = {
 	/** SESSION_SETTING_SQL_VDBE_DEBUG */
 	{FIELD_TYPE_BOOLEAN,
 	 SQL_SqlTrace | SQL_VdbeListing | SQL_VdbeTrace},
+	 /** SESSION_SETTING_SQL_VDBE_MAX_STEPS */
+	 {FIELD_TYPE_UNSIGNED, 0},
 };
 
 static void
@@ -3317,21 +3320,25 @@ sql_session_setting_get(int id, const char **mp_pair, const char **mp_pair_end)
 	uint32_t mask = opt->mask;
 	const char *name = session_setting_strs[id];
 	size_t name_len = strlen(name);
-	size_t engine_len;
-	const char *engine;
+	size_t engine_len = 0;
+	uint64_t vdbe_max_steps = session->vdbe_max_steps;
+	const char *engine = NULL;
 	size_t size = mp_sizeof_array(2) + mp_sizeof_str(name_len);
 	/*
-	 * Currently, SQL session settings are of a boolean or
+	 * Currently, SQL session settings are of a boolean, unsigned or
 	 * string type.
 	 */
 	bool is_bool = opt->field_type == FIELD_TYPE_BOOLEAN;
+	bool is_str = opt->field_type == FIELD_TYPE_STRING;
 	if (is_bool) {
 		size += mp_sizeof_bool(true);
-	} else {
+	} else if (is_str) {
 		assert(id == SESSION_SETTING_SQL_DEFAULT_ENGINE);
 		engine = sql_storage_engine_strs[session->sql_default_engine];
 		engine_len = strlen(engine);
 		size += mp_sizeof_str(engine_len);
+	} else {
+		size += mp_sizeof_uint(vdbe_max_steps);
 	}
 
 	char *pos = static_alloc(size);
@@ -3340,8 +3347,10 @@ sql_session_setting_get(int id, const char **mp_pair, const char **mp_pair_end)
 	pos_end = mp_encode_str(pos_end, name, name_len);
 	if (is_bool)
 		pos_end = mp_encode_bool(pos_end, (flags & mask) == mask);
-	else
+	else if (is_str)
 		pos_end = mp_encode_str(pos_end, engine, engine_len);
+	else
+		pos_end = mp_encode_uint(pos_end, vdbe_max_steps);
 	*mp_pair = pos;
 	*mp_pair_end = pos_end;
 }
@@ -3391,6 +3400,24 @@ sql_set_string_option(int id, const char *value)
 	return 0;
 }
 
+/**
+ * Set given value for option that has
+ * type uint64_t.
+ *
+ * Currently it is only sql_vdbe_max_steps
+ * option.
+ */
+static int
+sql_set_unsigned_option(int id, uint64_t value)
+{
+	assert(sql_session_opts[id - SESSION_SETTING_SQL_BEGIN].field_type =
+				   FIELD_TYPE_UNSIGNED);
+	assert(id == SESSION_SETTING_SQL_VDBE_MAX_STEPS);
+	(void)id;
+	current_session()->vdbe_max_steps = value;
+	return 0;
+}
+
 static int
 sql_session_setting_set(int id, const char *mp_value)
 {
@@ -3411,6 +3438,11 @@ sql_session_setting_set(int id, const char *mp_value)
 		tmp = mp_decode_str(&mp_value, &len);
 		tmp = tt_cstr(tmp, len);
 		return sql_set_string_option(id, tmp);
+	case FIELD_TYPE_UNSIGNED:
+		if (mtype != MP_UINT)
+			break;
+		return sql_set_unsigned_option(id,
+			mp_decode_uint(&mp_value));
 	default:
 		unreachable();
 	}

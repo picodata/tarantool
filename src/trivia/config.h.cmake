@@ -147,10 +147,6 @@
  */
 #cmakedefine HAVE_BYTE_ORDER_BIG_ENDIAN 1
 /*
- * Defined if this platform supports openmp and it is enabled
- */
-#cmakedefine HAVE_OPENMP 1
-/*
 *  Defined if compatible with GNU readline installed.
 */
 #cmakedefine HAVE_GNU_READLINE 1
@@ -280,7 +276,7 @@
 #cmakedefine ENABLE_SPACE_UPGRADE 1
 #cmakedefine ENABLE_SSL 1
 #cmakedefine ENABLE_AUDIT_LOG 1
-#cmakedefine ENABLE_FEEDBACK_DAEMON 1
+#cmakedefine ENABLE_FEEDBACK_DAEMON 0
 #cmakedefine ENABLE_WAL_EXT 1
 #cmakedefine ENABLE_READ_VIEW 1
 #cmakedefine ENABLE_SECURITY 1

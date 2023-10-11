@@ -372,7 +372,9 @@ sql_ephemeral_space_new(const struct sql_space_info *info)
 		names += strlen(fields[i].name) + 1;
 		fields[i].is_nullable = true;
 		fields[i].nullable_action = ON_CONFLICT_ACTION_NONE;
+		fields[i].sql_default_value = NULL;
 		fields[i].default_value = NULL;
+		fields[i].default_value_size = 0;
 		fields[i].type = info->types[i];
 		fields[i].coll_id = info->coll_ids[i];
 		fields[i].compression_type = COMPRESSION_TYPE_NONE;
@@ -855,42 +857,6 @@ out:
 	return rc;
 }
 
-int
-tarantoolsqlIncrementMaxid(uint64_t *space_max_id)
-{
-	/* ["max_id"] */
-	static const char key[] = {
-		(char)0x91, /* MsgPack array(1) */
-		(char)0xa6, /* MsgPack string(6) */
-		'm', 'a', 'x', '_', 'i', 'd'
-	};
-	/* [["+", 1, 1]]*/
-	static const char ops[] = {
-		(char)0x91, /* MsgPack array(1) */
-		(char)0x93, /* MsgPack array(3) */
-		(char)0xa1, /* MsgPack string(1) */
-		'+',
-		1,          /* MsgPack int(1) */
-		1           /* MsgPack int(1) */
-	};
-
-	struct tuple *res = NULL;
-	struct space *space_schema = space_by_id(BOX_SCHEMA_ID);
-	assert(space_schema != NULL);
-	struct request request;
-	memset(&request, 0, sizeof(request));
-	request.tuple = ops;
-	request.tuple_end = ops + sizeof(ops);
-	request.key = key;
-	request.key_end = key + sizeof(key);
-	request.type = IPROTO_UPDATE;
-	request.space_id = space_schema->def->id;
-	if (box_process1(&request, &res) != 0 || res == NULL ||
-	    tuple_field_u64(res, 1, space_max_id) != 0)
-		return -1;
-	return 0;
-}
-
 /*
  * Allocate or grow memory for cursor's key.
  * Result->type value is unspecified.
@@ -1068,7 +1034,7 @@ sql_encode_table(struct region *region, struct space_def *def, uint32_t *size)
 	for (uint32_t i = 0; i < field_count && !is_error; i++) {
 		uint32_t cid = def->fields[i].coll_id;
 		struct field_def *field = &def->fields[i];
-		const char *default_str = field->default_value;
+		const char *default_str = field->sql_default_value;
 		int base_len = 4;
 		if (cid != COLL_NONE)
 			base_len += 1;
@@ -1109,7 +1075,7 @@ sql_encode_table(struct region *region, struct space_def *def, uint32_t *size)
 			mpstream_encode_uint(&stream, cid);
 		}
 		if (default_str != NULL) {
-			mpstream_encode_str(&stream, "default");
+			mpstream_encode_str(&stream, "sql_default");
 			mpstream_encode_str(&stream, default_str);
 		}
 		sql_mpstream_encode_constraints(&stream, cdefs, ck_count,
@@ -1303,7 +1269,7 @@ space_column_default_expr(uint32_t space_id, uint32_t fieldno)
 		return NULL;
 	assert(space->def->field_count > fieldno);
 	struct tuple_field *field = tuple_format_field(space->format, fieldno);
-	return field->default_value_expr;
+	return field->sql_default_value_expr;
 }
 
 /**

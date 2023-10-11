@@ -269,7 +269,10 @@ sysview_space_execute_upsert(struct space *space, struct txn *txn,
  * 7. User is parent for the user/role.
  */
 
-const uint32_t PRIV_WRDA = PRIV_W | PRIV_D | PRIV_A | PRIV_R;
+const uint32_t PRIV_WRDA = BOX_PRIVILEGE_WRITE |
+						   BOX_PRIVILEGE_DROP |
+						   BOX_PRIVILEGE_ALTER |
+						   BOX_PRIVILEGE_READ;
 
 static bool
 vspace_filter(struct space *source, struct tuple *tuple)
@@ -284,7 +287,7 @@ vspace_filter(struct space *source, struct tuple *tuple)
 	/* Allow access for a user with space privileges. */
 	if (PRIV_WRDA & entity_access_get(SC_SPACE)[cr->auth_token].effective)
 		return true;
-	if (PRIV_R & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _space space */
 	uint32_t space_id;
 	if (tuple_field_u32(tuple, BOX_SPACE_FIELD_ID, &space_id) != 0)
@@ -292,7 +295,8 @@ vspace_filter(struct space *source, struct tuple *tuple)
 	struct space *space = space_cache_find(space_id);
 	if (space == NULL)
 		return false;
-	user_access_t effective = space->access[cr->auth_token].effective;
+	box_user_access_mask_t effective =
+		space->access[cr->auth_token].effective;
 	/*
 	 * Allow access for space owners and users with any
 	 * privilege for the space.
@@ -311,7 +315,7 @@ vuser_filter(struct space *source, struct tuple *tuple)
 	 */
 	if (PRIV_WRDA & cr->universal_access)
 		return true;
-	if (PRIV_R & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _user space */
 
 	uint32_t uid;
@@ -334,7 +338,7 @@ vpriv_filter(struct space *source, struct tuple *tuple)
 	 */
 	if (PRIV_WRDA & cr->universal_access)
 		return true;
-	if (PRIV_R & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _priv space */
 
 	uint32_t grantor_id;
@@ -355,13 +359,13 @@ vfunc_filter(struct space *source, struct tuple *tuple)
 	 * Allow access for a user with read, write,
 	 * drop, alter or execute privileges for universe.
 	 */
-	if ((PRIV_WRDA | PRIV_X) & cr->universal_access)
+	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) & cr->universal_access)
 		return true;
 	/* Allow access for a user with function privileges. */
-	if ((PRIV_WRDA | PRIV_X) &
+	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) &
 	    entity_access_get(SC_FUNCTION)[cr->auth_token].effective)
 		return true;
-	if (PRIV_R & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _func space */
 
 	uint32_t name_len;
@@ -371,9 +375,10 @@ vfunc_filter(struct space *source, struct tuple *tuple)
 		return false;
 	struct func *func = func_by_name(name, name_len);
 	assert(func != NULL);
-	user_access_t effective = func->access[cr->auth_token].effective;
+	box_user_access_mask_t effective =
+		func->access[cr->auth_token].effective;
 	return func->def->uid == cr->uid ||
-	       ((PRIV_WRDA | PRIV_X) & effective);
+	       ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) & effective);
 }
 
 static bool
@@ -384,13 +389,13 @@ vsequence_filter(struct space *source, struct tuple *tuple)
 	 * Allow access for a user with read, write,
 	 * drop, alter or execute privileges for universe.
 	 */
-	if ((PRIV_WRDA | PRIV_X) & cr->universal_access)
+	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) & cr->universal_access)
 		return true;
 	/* Allow access for a user with sequence privileges. */
-	if ((PRIV_WRDA | PRIV_X) &
+	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) &
 	    entity_access_get(SC_SEQUENCE)[cr->auth_token].effective)
 		return true;
-	if (PRIV_R & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _sequence space */
 
 	uint32_t id;
@@ -399,9 +404,10 @@ vsequence_filter(struct space *source, struct tuple *tuple)
 	struct sequence *sequence = sequence_by_id(id);
 	if (sequence == NULL)
 		return false;
-	user_access_t effective = sequence->access[cr->auth_token].effective;
+	box_user_access_mask_t effective =
+		sequence->access[cr->auth_token].effective;
 	return sequence->def->uid == cr->uid ||
-	       ((PRIV_WRDA | PRIV_X) & effective);
+	       ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) & effective);
 }
 
 static bool

@@ -1972,6 +1972,72 @@ test_key_def_validate_key(struct lua_State *L)
 }
 
 static int
+test_key_def_hash(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	/* Prepare a new tuple [1, 2, 3] */
+	box_tuple_t *tuple_1 = new_runtime_tuple("\x93\x01\x02\x03", 4);
+	/* Create a key definition from the first two columns. */
+	box_key_part_def_t parts_1[2];
+	box_key_part_def_create(&parts_1[0]);
+	box_key_part_def_create(&parts_1[1]);
+	parts_1[0].fieldno = 0;
+	parts_1[0].field_type = "integer";
+	parts_1[1].fieldno = 1;
+	parts_1[1].field_type = "integer";
+	box_key_def_t *key_def_1 = box_key_def_new_v2(parts_1, 2);
+	fail_unless(key_def_1 != NULL);
+	/* Calculate tuple's hash */
+	uint32_t hash_1 = box_tuple_hash(tuple_1, key_def_1);
+	fail_unless(hash_1 == 605624609);
+	/* Clean up */
+	box_key_def_delete(key_def_1);
+	box_tuple_unref(tuple_1);
+
+	/* Prepare a new tuple [1] */
+	box_tuple_t *tuple_2 = new_runtime_tuple("\x91\x01", 2);
+	/* Create a key definition from its column. */
+	box_key_part_def_t parts_2[1];
+	box_key_part_def_create(&parts_2[0]);
+	parts_2[0].fieldno = 0;
+	parts_2[0].field_type = "integer";
+	box_key_def_t *key_def_2 = box_key_def_new_v2(parts_2, 1);
+	fail_unless(key_def_2 != NULL);
+	/* Calculate tuple's hash */
+	uint32_t hash_2 = box_tuple_hash(tuple_2, key_def_2);
+	fail_unless(hash_2 == 1457374933);
+	/* Clean up */
+	box_key_def_delete(key_def_2);
+	box_tuple_unref(tuple_2);
+
+	/* Prepare a new tuple [1] */
+	box_tuple_t *tuple_3 = new_runtime_tuple("\x91\x01", 2);
+	/* Create a key defenition where the second column is nullable */
+	box_key_part_def_t parts_3[2];
+	box_key_part_def_create(&parts_3[0]);
+	box_key_part_def_create(&parts_3[1]);
+	parts_3[0].fieldno = 0;
+	parts_3[0].field_type = "integer";
+	parts_3[1].fieldno = 1;
+	parts_3[1].field_type = "integer";
+	parts_3[1].flags = BOX_KEY_PART_DEF_IS_NULLABLE;
+	box_key_def_t *key_def_3 = box_key_def_new_v2(parts_3, 2);
+	fail_unless(key_def_3 != NULL);
+	/* Calculate tuple's hash */
+	uint32_t hash_3 = box_tuple_hash(tuple_3, key_def_3);
+	fail_unless(hash_3 == 766361540);
+	/* Clean up */
+	box_key_def_delete(key_def_3);
+	box_tuple_unref(tuple_3);
+
+	box_region_truncate(region_svp);
+
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
 test_key_def_dup(lua_State *L)
 {
 	size_t region_svp = box_region_used();
@@ -3042,6 +3108,112 @@ test_box_session_id(struct lua_State *L)
 
 /* }}} Helpers for current session identifier Lua/C API test cases */
 
+static int
+test_box_session_su(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	uint32_t guest_uid = 0;
+	uint32_t orig_uid = 0;
+	uint32_t uid = 0;
+
+	/* Get current session user */
+	int rc = box_session_user_id(&orig_uid);
+	fail_unless(rc == 0);
+
+	/* Switch session to the guest user */
+	const char *guest = "guest";
+	rc = box_user_id_by_name(guest, guest + strlen(guest), &guest_uid);
+	fail_unless(rc == 0);
+	rc = box_session_su(guest_uid);
+	fail_unless(rc == 0);
+	rc = box_session_user_id(&uid);
+	fail_unless(rc == 0);
+	fail_unless(uid == guest_uid);
+
+	/* Switch session back to original user */
+	rc = box_session_su(orig_uid);
+	fail_unless(rc == 0);
+	rc = box_session_user_id(&uid);
+	fail_unless(rc == 0);
+	fail_unless(uid == orig_uid);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
+test_box_session_user_id(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	uint32_t user_id = 42;
+	int rc = box_session_user_id(&user_id);
+	fail_unless(rc == 0);
+	fail_unless(user_id != 42);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
+test_box_effective_user_id(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	/* Effective and session user ids are equal by default */
+	uint32_t fiber_uid = box_effective_user_id();
+	uint32_t session_uid = 0;
+	int rc = box_session_user_id(&session_uid);
+	fail_unless(rc == 0);
+	fail_unless(fiber_uid == session_uid);
+
+	/**
+	 * Switch the session user (effective and session users
+	 * are **not** equal now)
+	 */
+	const char *guest = "guest";
+	rc = box_user_id_by_name(guest, guest + strlen(guest), &session_uid);
+	fail_unless(rc == 0);
+	fiber_uid = box_effective_user_id();
+	rc = box_session_su(session_uid);
+	fail_unless(rc == 0);
+	fail_unless(fiber_uid != session_uid);
+
+	/**
+	 * Switch back to original user (effective and session users
+	 * become equal again)
+	 */
+	rc = box_session_su(fiber_uid);
+	fail_unless(rc == 0);
+	fiber_uid = box_effective_user_id();
+	rc = box_session_user_id(&session_uid);
+	fail_unless(rc == 0);
+	fail_unless(session_uid == fiber_uid);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+static int
+test_box_user_id_by_name(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	uint32_t user_id = 42;
+	const char *guest = "guest";
+	int rc = box_user_id_by_name(guest, guest + strlen(guest), &user_id);
+	fail_unless(rc == 0);
+	fail_unless(user_id != 42);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 /* {{{ Helpers for `box_iproto_send` Lua/C API test cases */
 
 static int
@@ -3154,11 +3326,308 @@ test_box_iproto_override_reset(struct lua_State *L)
 
 /* }}} Helpers for `box_iproto_override` Lua/C API test cases */
 
+static int
+test_box_auth_data_prepare(struct lua_State *L)
+{
+	size_t region_svp = box_region_used();
+
+	const char *auth_data = NULL;
+	const char *auth_data_end = NULL;
+	const char *empty = "";
+	const char *password = "password";
+	const char *user = "user";
+	uint32_t len = 0;
+
+	/* Check md5 */
+	const char *md5 = "md5";
+	int rc = box_auth_data_prepare(md5, md5 + strlen(md5),
+				       password, password + strlen(password),
+				       user, user + strlen(user),
+				       &auth_data, &auth_data_end);
+	fail_unless(rc == 0);
+	char *hash = (char *)mp_decode_str((const char **)(&auth_data), &len);
+	const char *md5_hash = "md54d45974e13472b5a0be3533de4666414";
+	fail_unless(len == strlen(md5_hash));
+	fail_unless(strncmp(hash, md5_hash, len) == 0);
+	fail_unless(hash + len == auth_data_end);
+
+	/* Check chap-sha1 */
+	const char *chap_sha1 = "chap-sha1";
+	rc = box_auth_data_prepare(chap_sha1, chap_sha1 + strlen(chap_sha1),
+				   password, password + strlen(password),
+				   empty, empty + 0,
+				   &auth_data, &auth_data_end);
+	fail_unless(rc == 0);
+	hash = (char *)mp_decode_str((const char **)(&auth_data), &len);
+	const char *sha1_hash = "JHDAwG3uQv0WGLuZAFrcouydHhk=";
+	fail_unless(len == strlen(sha1_hash));
+	fail_unless(strncmp(hash, sha1_hash, len) == 0);
+	fail_unless(hash + len == auth_data_end);
+
+	/* Check ldap */
+	const char *ldap = "ldap";
+	rc = box_auth_data_prepare(ldap, ldap + strlen(ldap),
+				   empty, empty + 0,
+				   empty, empty + 0,
+				   &auth_data, &auth_data_end);
+	fail_unless(rc == 0);
+	hash = (char *)mp_decode_str((const char **)(&auth_data), &len);
+	const char *ldap_hash = "";
+	fail_unless(len == strlen(ldap_hash));
+	fail_unless(strncmp(hash, ldap_hash, len) == 0);
+	fail_unless(hash + len == auth_data_end);
+
+	box_region_truncate(region_svp);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
+#define CHECK_STREQ(expected, data, len) do {					\
+	fail_unless(strlen(expected) == (len));					\
+	fail_unless(memcmp(expected, data, len) == 0);				\
+} while (0)
+
+static int
+test_box_read_view(struct lua_State *L)
+{
+	int rc;
+	const char *data;
+	uint32_t size;
+	box_tuple_t *t;
+
+	/*
+	 * Preparation.
+	 */
+	const char code[] =
+		"local s1 = box.schema.space.create('test_box_read_view_s1')\n"
+		"s1:create_index('pk')\n"
+		"s1:put{16}\n"
+		"s1:put{32}\n"
+		"s1:put{48}\n"
+		"\n"
+		"local s2 = box.schema.space.create('test_box_read_view_s2')\n"
+		"s2:format({{'id', 'unsigned'}, {'val', 'string'}})\n"
+		"s2:create_index('pk')\n"
+		"s2:create_index('val', {parts = {'val'}})\n"
+		"s2:put{1, 'c'}\n"
+		"s2:put{2, 'b'}\n"
+		"s2:put{3, 'a'}\n"
+		"\n"
+		"local s3 = box.schema.space.create('test_box_read_view_s3')\n"
+		"s3:create_index('pk')\n"
+		"s3:put{1}\n"
+		"s3:put{2}\n"
+		"s3:put{3}\n"
+		"\n"
+		"local s4 = box.schema.space.create("
+		"    'test_box_read_view_s4', { engine = 'vinyl' }\n"
+		")\n"
+		"s4:create_index('pk')\n"
+		"s4:put{16}\n"
+		"s4:put{32}\n"
+		"s4:put{48}\n"
+		"\n"
+		"return s1.id, s2.id, s3.id, s4.id\n";
+	rc = luaL_loadbuffer(L, code, sizeof(code) - 1, __func__);
+	fail_unless(rc == 0);
+	rc = lua_pcall(L, 0, 4, 0);
+	fail_unless(rc == 0);
+	uint32_t s1_id = lua_tointeger(L, -4);
+	uint32_t s2_id = lua_tointeger(L, -3);
+	uint32_t s3_id = lua_tointeger(L, -2);
+	uint32_t s4_id = lua_tointeger(L, -1);
+
+	/* Space doesn't exist */
+	uint32_t sX_id = 69420;
+	{
+		char key[64];
+		char *key_end = key;
+		key_end = mp_encode_array(key_end, 1);
+		key_end = mp_encode_uint(key_end, sX_id);
+		box_index_get(BOX_SPACE_ID, 0, key, key_end, &t);
+		fail_unless(t == NULL);
+	}
+
+	/*
+	 * Open read view.
+	 */
+	struct space_index_id space_index_ids[] = {
+		{s1_id, 0},
+		/* Unknown index is ignored. */
+		{s3_id, 1337},
+		/* Unknown space is ignored. */
+		{sX_id, 0},
+		{s4_id, 0},
+		{s2_id, 1},
+	};
+	box_read_view_t *rv;
+	rv = box_read_view_open_for_given_spaces(__func__,
+						 space_index_ids,
+						 lengthof(space_index_ids), 0);
+	fail_unless(rv != NULL);
+
+	/*
+	 * Space index is in the read view.
+	 */
+	box_read_view_iterator_t *it;
+	rc = box_read_view_iterator_all(rv, s1_id, 0, &it);
+	fail_unless(rc == 0);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x10", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x20", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x30", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(data == NULL);
+
+	box_read_view_iterator_free(it);
+
+	/*
+	 * Space is in the read view, but index doesn't.
+	 */
+	rc = box_read_view_iterator_all(rv, s1_id, 1, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	rc = box_read_view_iterator_all(rv, s2_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	/*
+	 * Space index is in the read view. Non-primary index.
+	 */
+	rc = box_read_view_iterator_all(rv, s2_id, 1, &it);
+	fail_unless(rc == 0);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x92\x03\xa1\x61", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x92\x02\xa1\x62", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x92\x01\xa1\x63", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(data == NULL);
+
+	box_read_view_iterator_free(it);
+
+	/*
+	 * Space is not in the read view.
+	 */
+	rc = box_read_view_iterator_all(rv, s3_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	rc = box_read_view_iterator_all(rv, s3_id, 1337, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	rc = box_read_view_iterator_all(rv, sX_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	/*
+	 * Space is modified but read view is not.
+	 */
+	{
+		static const char key[] = "\x91\x20";
+		box_delete(s1_id, 0, key, key + sizeof(key) - 1, &t);
+		fail_unless(t != NULL);
+	}
+	{
+		static const char key[] = "\x91\x40";
+		box_insert(s1_id, key, key + sizeof(key) - 1, &t);
+		fail_unless(t != NULL);
+	}
+	{
+		static const char key[] = "\x92\x30\x45";
+		box_replace(s1_id, key, key + sizeof(key) - 1, &t);
+		fail_unless(t != NULL);
+	}
+	{
+		box_iterator_t *it;
+		ssize_t len;
+		char buf[64];
+		buf[0] = 0x90;
+		it = box_index_iterator(s1_id, 0, ITER_ALL, buf, buf + 1);
+
+		box_iterator_next(it, &t);
+		len = box_tuple_to_buf(t, buf, sizeof(buf));
+		CHECK_STREQ("\x91\x10", buf, len);
+
+		box_iterator_next(it, &t);
+		len = box_tuple_to_buf(t, buf, sizeof(buf));
+		CHECK_STREQ("\x92\x30\x45", buf, len);
+
+		box_iterator_next(it, &t);
+		len = box_tuple_to_buf(t, buf, sizeof(buf));
+		CHECK_STREQ("\x91\x40", buf, len);
+
+		box_iterator_next(it, &t);
+		fail_unless(t == NULL);
+
+		box_iterator_free(it);
+	}
+
+	/*
+	 * Read view is not modified.
+	 */
+	rc = box_read_view_iterator_all(rv, s1_id, 0, &it);
+	fail_unless(rc == 0);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x10", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x20", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(rc == 0);
+	CHECK_STREQ("\x91\x30", data, size);
+
+	rc = box_read_view_iterator_next_raw(it, &data, &size);
+	fail_unless(data == NULL);
+
+	box_read_view_iterator_free(it);
+
+	/*
+	 * Vinyl spaces don't support read views.
+	 */
+
+	rc = box_read_view_iterator_all(rv, s4_id, 0, &it);
+	fail_unless(rc == 0);
+	fail_unless(it == NULL);
+
+	/*
+	 * Close read view.
+	 */
+	box_read_view_close(rv);
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
 LUA_API int
 luaopen_module_api(lua_State *L)
 {
 	(void) consts;
 	static const struct luaL_Reg lib[] = {
+		{"test_box_auth_data_prepare", test_box_auth_data_prepare },
 		{"test_say", test_say },
 		{"test_coio_call", test_coio_call },
 		{"test_coio_getaddrinfo", test_coio_getaddrinfo },
@@ -3195,7 +3664,12 @@ luaopen_module_api(lua_State *L)
 		{"test_key_def_merge", test_key_def_merge},
 		{"test_key_def_extract_key", test_key_def_extract_key},
 		{"test_key_def_validate_key", test_key_def_validate_key},
+		{"test_key_def_hash", test_key_def_hash},
 		{"test_box_ibuf", test_box_ibuf},
+		{"test_box_session_su", test_box_session_su},
+		{"test_box_session_user_id", test_box_session_user_id},
+		{"test_box_effective_user_id", test_box_effective_user_id},
+		{"test_box_user_id_by_name", test_box_user_id_by_name},
 		{"tuple_validate_def", test_tuple_validate_default},
 		{"tuple_validate_fmt", test_tuple_validate_formatted},
 		{"test_key_def_dup", test_key_def_dup},
@@ -3210,6 +3684,7 @@ luaopen_module_api(lua_State *L)
 		{"box_iproto_send", test_box_iproto_send},
 		{"box_iproto_override_set", test_box_iproto_override_set},
 		{"box_iproto_override_reset", test_box_iproto_override_reset},
+		{"test_box_read_view", test_box_read_view},
 		{NULL, NULL}
 	};
 	luaL_register(L, "module_api", lib);

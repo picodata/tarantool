@@ -304,9 +304,14 @@ lbox_fillspace(struct lua_State *L, struct space *space, int i)
 	lua_pushboolean(L, space_is_local(space));
 	lua_settable(L, i);
 
-	/* space.is_temp */
+	/* space.temporary */
 	lua_pushstring(L, "temporary");
-	lua_pushboolean(L, space_is_temporary(space));
+	lua_pushboolean(L, space_is_data_temporary(space));
+	lua_settable(L, i);
+
+	/* space.type */
+	lua_pushstring(L, "type");
+	lua_pushstring(L, space_type_name(space->def->opts.type));
 	lua_settable(L, i);
 
 	/* space.name */
@@ -775,6 +780,8 @@ box_lua_space_init(struct lua_State *L)
 	lua_setfield(L, -2, "REPLICA_MAX");
 	lua_pushnumber(L, SQL_BIND_PARAMETER_MAX);
 	lua_setfield(L, -2, "SQL_BIND_PARAMETER_MAX");
+	lua_pushnumber(L, BOX_SPACE_ID_TEMPORARY_MIN);
+	lua_setfield(L, -2, "SPACE_ID_TEMPORARY_MIN");
 	lua_pop(L, 2); /* box, schema */
 
 	static const struct luaL_Reg space_internal_lib[] = {

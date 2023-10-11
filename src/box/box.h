@@ -135,6 +135,13 @@ box_check_slice(void)
 	}
 }
 
+/**
+ * Check if a write operation can be performed on this instance.
+ * Returns 0 on success. On error, sets diag and returns -1.
+ */
+int
+box_check_writable(void);
+
 void
 box_set_ro(void);
 
@@ -306,6 +313,7 @@ void box_set_replication_skip_conflict(void);
 void box_set_replication_anon(void);
 void box_set_net_msg_max(void);
 int box_set_prepared_stmt_cache_size(void);
+int box_set_vdbe_max_steps(void);
 int box_set_feedback(void);
 int box_set_txn_timeout(void);
 int box_set_txn_isolation(void);
@@ -404,6 +412,27 @@ typedef enum iproto_handler_status
  */
 typedef void
 (*iproto_handler_destroy_t)(void *ctx);
+
+/**
+ * Return authentication data string packed into a tuple.
+ *
+ * \param method_name pointer to the authentication method name
+ * \param method_name_end pointer to the end of the authentication method name
+ * \param password pointer to password data
+ * \param password_end pointer to the end of the password data
+ * \param user_name pointer to the user name
+ * \param user_name_end pointer to the end of the user name
+ * \param[out] data a pointer to a MessagePack with authentication data
+ *             string. The string is allocated on the fiber region.
+ * \param[out] data_end a pointer to the end of the authentication data.
+ * \retval -1 on error
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_auth_data_prepare(const char *method_name, const char *method_name_end,
+		      const char *password, const char *password_end,
+		      const char *user_name, const char *user_name_end,
+		      const char **data, const char **data_end);
 
 /**
  * Return a tuple from stored C procedure.
@@ -632,6 +661,61 @@ API_EXPORT uint64_t
 box_session_id(void);
 
 /**
+ * Change the current session user.
+ * \param uid new user identifier
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_session_su(uint32_t uid);
+
+/**
+ * Return the current session user identifier.
+ * Session user can be changed with box_session_su()
+ * or setuid functions.
+ * \param[out] uid pointer to a user identifier
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_session_user_id(uint32_t *uid);
+
+/**
+ * Return the effective user identifier. Effective
+ * user is **not** affected by box_session_su()
+ * or setuid functions.
+ * \retval user identifier
+ */
+API_EXPORT uint32_t
+box_effective_user_id(void);
+
+/**
+ * Return the user identifier by name.
+ * \param name user name
+ * \param name_end end of user name
+ * \param[out] uid pointer to a user identifier
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid);
+
+/**
+ * Run access check for the current user against
+ * specified space and access type.
+ * While it is possible to pass bitmask in access
+ * parameter this function is intended to be used
+ * with only one permission at a time.
+ * Most relevant access types are read and write.
+ * \param space_id space id
+ * \param access type of access. See valid options in box_privilege_type enum.
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_access_check_space(uint32_t space_id, uint16_t access);
+
+/**
  * Sends a packet with the given header and body over the IPROTO session's
  * socket.
  *
@@ -699,6 +783,10 @@ box_process_rw(struct request *request, struct space *space,
 
 int
 boxk(int type, uint32_t space_id, const char *format, ...);
+
+/** Generate unique id for non-system space. */
+int
+box_generate_space_id(uint32_t *new_space_id, bool is_temporary);
 
 /**
  * Broadcast the identification of the instance

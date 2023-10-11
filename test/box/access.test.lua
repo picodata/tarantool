@@ -14,8 +14,8 @@ session.effective_user()
 session.user(nil)
 -- password() is a function which returns base64(sha1(sha1(password))
 -- a string to store in _user table
-box.schema.user.password('test')
-box.schema.user.password('test1')
+box.schema.user.password('test', "user")
+box.schema.user.password('test1', "user")
 -- admin can create any user
 box.schema.user.create('test', { password = 'test' })
 -- su() let's you change the user of the session
@@ -588,6 +588,7 @@ box.schema.func.create('test_func')
 box.session.su("admin")
 box.schema.user.grant("tester", "read", "space", "_user")
 box.schema.user.grant("tester", "read", "space", "_func")
+box.schema.user.grant("tester", "read", "space", "_truncate")
 -- failed create
 box.session.su("tester")
 box.schema.space.create("test_space")
