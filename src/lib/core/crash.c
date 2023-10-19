@@ -16,6 +16,10 @@
 #include "crash.h"
 #include "say.h"
 
+#ifndef PICODATA_BUG_REPORT_INFO
+#define PICODATA_BUG_REPORT_INFO "support@picodata.io"
+#endif
+
 /** Storage for crash_collect function return value. */
 static struct crash_info crash_info;
 
@@ -143,8 +147,7 @@ crash_report_stderr(struct crash_info *cinfo)
 #endif /* HAS_GREG */
 
 	fprintf(stderr, "Current time: %u\n", (unsigned)time(0));
-	fprintf(stderr, "Please file a bug at "
-		"https://github.com/tarantool/tarantool/issues\n");
+	fprintf(stderr, "Please file a bug at " PICODATA_BUG_REPORT_INFO "\n");
 
 #ifdef ENABLE_BACKTRACE
 	fprintf(stderr, "Attempting backtrace... Note: since the server has "
