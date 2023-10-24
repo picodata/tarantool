@@ -980,6 +980,14 @@ static bool
 txn_commit_nop(struct txn *txn)
 {
 	if (txn->n_new_rows + txn->n_applier_rows == 0) {
+		struct txn_stmt *stmt;
+		stailq_foreach_entry(stmt, &txn->stmts, next) {
+			if (stmt->has_triggers) {
+				txn_init_triggers(txn);
+				rlist_splice(&txn->on_commit, &stmt->on_commit);
+			}
+		}
+
 		txn->signature = TXN_SIGNATURE_NOP;
 		txn_complete_success(txn);
 		fiber_set_txn(fiber(), NULL);
