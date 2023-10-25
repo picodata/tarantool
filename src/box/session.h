@@ -402,7 +402,7 @@ access_check_universe(box_user_access_mask_t access);
  */
 int
 access_check_universe_object(box_user_access_mask_t access,
-			     enum schema_object_type object_type,
+			     enum box_schema_object_type object_type,
 			     const char *object_name);
 
 static inline int
