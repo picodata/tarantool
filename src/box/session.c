@@ -450,7 +450,7 @@ access_check_session(struct user *user)
 	if (!(universe.access[user->auth_token].effective &
 		BOX_PRIVILEGE_SESSION)) {
 		diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_SESSION),
-			 schema_object_name(SC_UNIVERSE), "",
+			 schema_object_name(BOX_SC_UNIVERSE), "",
 			 user->def->name);
 		return -1;
 	}
@@ -459,7 +459,7 @@ access_check_session(struct user *user)
 
 int
 access_check_universe_object(box_user_access_mask_t access,
-			     enum schema_object_type object_type,
+			     enum box_schema_object_type object_type,
 			     const char *object_name)
 {
 	struct credentials *credentials = effective_user();
@@ -494,7 +494,7 @@ access_check_universe_object(box_user_access_mask_t access,
 int
 access_check_universe(box_user_access_mask_t access)
 {
-	return access_check_universe_object(access, SC_UNIVERSE, "");
+	return access_check_universe_object(access, BOX_SC_UNIVERSE, "");
 }
 
 int

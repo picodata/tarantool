@@ -56,9 +56,32 @@ g.test_box_access_check_ddl = function()
         end
         local ffi = require('ffi')
         ffi.cdef([[
+            enum box_schema_object_type {
+                BOX_SC_UNKNOWN = 0,
+                BOX_SC_UNIVERSE = 1,
+                BOX_SC_SPACE = 2,
+                BOX_SC_FUNCTION = 3,
+                BOX_SC_USER = 4,
+                BOX_SC_ROLE = 5,
+                BOX_SC_SEQUENCE = 6,
+                BOX_SC_COLLATION = 7,
+                /*
+                 * All object types are supposed to be above this point,
+                 * all entity types - below.
+                 */
+                schema_object_type_MAX = 8,
+                BOX_SC_ENTITY_SPACE,
+                BOX_SC_ENTITY_FUNCTION,
+                BOX_SC_ENTITY_USER,
+                BOX_SC_ENTITY_ROLE,
+                BOX_SC_ENTITY_SEQUENCE,
+                BOX_SC_ENTITY_COLLATION,
+                schema_entity_type_MAX = 15
+            };
+
             int box_access_check_ddl(
                 const char *name, uint32_t object_id, uint32_t owner_uid,
-                uint32_t object_type, uint16_t access);
+                enum box_schema_object_type object_type, uint16_t access);
         ]])
 
         local priv_to_name = {}

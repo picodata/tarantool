@@ -40,7 +40,7 @@ priv_name(box_user_access_mask_t access)
 }
 
 struct user_def *
-user_def_new(uint32_t uid, uint32_t owner, enum schema_object_type type,
+user_def_new(uint32_t uid, uint32_t owner, enum box_schema_object_type type,
 	     const char *name, uint32_t name_len)
 {
 	struct user_def *def;

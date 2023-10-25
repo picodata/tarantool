@@ -214,69 +214,69 @@ user_grant_priv(struct user *user, struct priv_def *def)
  * given object type and object id.
  */
 struct access *
-access_find(enum schema_object_type object_type, uint32_t object_id)
+access_find(enum box_schema_object_type object_type, uint32_t object_id)
 {
 	struct access *access = NULL;
 	switch (object_type) {
-	case SC_UNIVERSE:
+	case BOX_SC_UNIVERSE:
 	{
 		access = universe.access;
 		break;
 	}
-	case SC_ENTITY_SPACE:
+	case BOX_SC_ENTITY_SPACE:
 	{
 		access = entity_access.space;
 		break;
 	}
-	case SC_ENTITY_FUNCTION:
+	case BOX_SC_ENTITY_FUNCTION:
 	{
 		access = entity_access.function;
 		break;
 	}
-	case SC_ENTITY_USER:
+	case BOX_SC_ENTITY_USER:
 	{
 		access = entity_access.user;
 		break;
 	}
-	case SC_ENTITY_ROLE:
+	case BOX_SC_ENTITY_ROLE:
 	{
 		access = entity_access.role;
 		break;
 	}
-	case SC_ENTITY_SEQUENCE:
+	case BOX_SC_ENTITY_SEQUENCE:
 	{
 		access = entity_access.sequence;
 		break;
 	}
-	case SC_SPACE:
+	case BOX_SC_SPACE:
 	{
 		struct space *space = space_by_id(object_id);
 		if (space)
 			access = space->access;
 		break;
 	}
-	case SC_FUNCTION:
+	case BOX_SC_FUNCTION:
 	{
 		struct func *func = func_by_id(object_id);
 		if (func)
 			access = func->access;
 		break;
 	}
-	case SC_USER:
+	case BOX_SC_USER:
 	{
 		struct user *user = user_by_id(object_id);
 		if (user)
 			access = user->access;
 		break;
 	}
-	case SC_ROLE:
+	case BOX_SC_ROLE:
 	{
 		struct user *role = user_by_id(object_id);
 		if (role)
 			access = role->access;
 		break;
 	}
-	case SC_SEQUENCE:
+	case BOX_SC_SEQUENCE:
 	{
 		struct sequence *seq = sequence_by_id(object_id);
 		if (seq)
@@ -324,7 +324,7 @@ user_reload_priv(struct user *user, struct tuple *tuple)
 	 * Skip role grants, we're only
 	 * interested in real objects.
 	 */
-	if (priv.object_type != SC_ROLE ||
+	if (priv.object_type != BOX_SC_ROLE ||
 	    !(priv.access & BOX_PRIVILEGE_EXECUTE))
 		return user_grant_priv(user, &priv);
 	return 0;
@@ -584,7 +584,7 @@ user_find_by_name(const char *name, uint32_t len)
 		return NULL;
 	if (uid != BOX_ID_NIL) {
 		struct user *user = user_by_id(uid);
-		if (user != NULL && user->def->type == SC_USER)
+		if (user != NULL && user->def->type == BOX_SC_USER)
 			return user;
 	}
 	diag_set(ClientError, ER_NO_SUCH_USER,
@@ -607,7 +607,7 @@ user_cache_init(void)
 	 * updated with snapshot contents during recovery.
 	 */
 	const char *name = "guest";
-	struct user_def *def = user_def_new(GUEST, ADMIN, SC_USER,
+	struct user_def *def = user_def_new(GUEST, ADMIN, BOX_SC_USER,
 					    name, strlen(name));
 	/* Free def in a case of exception. */
 	auto guest_def_guard = make_scoped_guard([=] { user_def_delete(def); });
@@ -619,7 +619,7 @@ user_cache_init(void)
 	(void) user;
 
 	name = "admin";
-	def = user_def_new(ADMIN, ADMIN, SC_USER, name, strlen(name));
+	def = user_def_new(ADMIN, ADMIN, BOX_SC_USER, name, strlen(name));
 	auto admin_def_guard = make_scoped_guard([=] { user_def_delete(def); });
 	user = user_cache_replace(def);
 	admin_def_guard.is_active = false;
@@ -817,7 +817,8 @@ priv_grant(struct user *grantee, struct priv_def *priv,
 	struct access *object = access_find(priv->object_type, priv->object_id);
 	if (object == NULL)
 		return 0;
-	if (grantee->auth_token == ADMIN && priv->object_type == SC_UNIVERSE &&
+	if (grantee->auth_token == ADMIN &&
+	    priv->object_type == BOX_SC_UNIVERSE &&
 	    priv->access != USER_ACCESS_FULL) {
 		diag_set(ClientError, ER_GRANT,
 			 "can't revoke universe from the admin user");

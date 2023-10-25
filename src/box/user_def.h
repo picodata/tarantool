@@ -95,7 +95,7 @@ struct priv_def {
 	/* Object id - is only defined for object type */
 	uint32_t object_id;
 	/* Object type - function, space, universe */
-	enum schema_object_type object_type;
+	enum box_schema_object_type object_type;
 	/**
 	 * What is being granted, has been granted, or is being
 	 * revoked.
@@ -142,7 +142,7 @@ struct user_def {
 	/** Creator of the user */
 	uint32_t owner;
 	/** 'user' or 'role' */
-	enum schema_object_type type;
+	enum box_schema_object_type type;
 	/**
 	 * Authentication data or NULL if auth method is unset.
 	 *
@@ -166,7 +166,7 @@ struct user_def {
  * This function never fails.
  */
 struct user_def *
-user_def_new(uint32_t uid, uint32_t owner, enum schema_object_type type,
+user_def_new(uint32_t uid, uint32_t owner, enum box_schema_object_type type,
 	     const char *name, uint32_t name_len);
 
 /** Destroys and frees a user definition. */

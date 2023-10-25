@@ -305,28 +305,31 @@ enum {
  * Use 0 for unknown to use the same index consistently
  * even when there are more object types in the future.
  */
-enum schema_object_type {
-	SC_UNKNOWN = 0,
-	SC_UNIVERSE = 1,
-	SC_SPACE = 2,
-	SC_FUNCTION = 3,
-	SC_USER = 4,
-	SC_ROLE = 5,
-	SC_SEQUENCE = 6,
-	SC_COLLATION = 7,
+/** \cond public */
+enum box_schema_object_type {
+	BOX_SC_UNKNOWN = 0,
+	BOX_SC_UNIVERSE = 1,
+	BOX_SC_SPACE = 2,
+	BOX_SC_FUNCTION = 3,
+	BOX_SC_USER = 4,
+	BOX_SC_ROLE = 5,
+	BOX_SC_SEQUENCE = 6,
+	BOX_SC_COLLATION = 7,
 	/*
 	 * All object types are supposed to be above this point,
 	 * all entity types - below.
 	 */
 	schema_object_type_MAX = 8,
-	SC_ENTITY_SPACE,
-	SC_ENTITY_FUNCTION,
-	SC_ENTITY_USER,
-	SC_ENTITY_ROLE,
-	SC_ENTITY_SEQUENCE,
-	SC_ENTITY_COLLATION,
+	BOX_SC_ENTITY_SPACE,
+	BOX_SC_ENTITY_FUNCTION,
+	BOX_SC_ENTITY_USER,
+	BOX_SC_ENTITY_ROLE,
+	BOX_SC_ENTITY_SEQUENCE,
+	BOX_SC_ENTITY_COLLATION,
 	schema_entity_type_MAX = 15
 };
+
+/** \endcond public */
 
 /** SQL Storage engine. */
 enum sql_storage_engine {
@@ -340,17 +343,23 @@ extern const char *sql_storage_engine_strs[];
 /**
  * Given a object type, return an entity type it belongs to.
  */
-enum schema_object_type
-schema_entity_type(enum schema_object_type type);
+enum box_schema_object_type
+schema_entity_type(enum box_schema_object_type type);
 
-enum schema_object_type
+enum box_schema_object_type
 schema_object_type(const char *name);
 
+/**
+ * Given an object type, return corresponding object name.
+ */
 const char *
-schema_object_name(enum schema_object_type type);
+schema_object_name(enum box_schema_object_type type);
 
+/**
+ * Given an object type, return entity name it belongs to.
+ */
 const char *
-schema_entity_name(enum schema_object_type type);
+schema_entity_name(enum box_schema_object_type type);
 
 /**
  * Check that the space id corresponds to a system space, which means that is

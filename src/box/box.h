@@ -31,6 +31,7 @@
  * SUCH DAMAGE.
  */
 #include "trivia/util.h"
+#include "schema_def.h"
 
 #include <stdbool.h>
 
@@ -790,7 +791,7 @@ box_access_check_space(uint32_t space_id, uint16_t access);
  */
 API_EXPORT int
 box_access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
-		     uint32_t object_type, uint16_t access);
+		     enum box_schema_object_type object_type, uint16_t access);
 
 /**
  * Sends a packet with the given header and body over the IPROTO session's

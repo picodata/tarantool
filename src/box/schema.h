@@ -83,7 +83,7 @@ box_dd_version_id(void);
  * @return NULL if object of type not found, otherwise name of object.
  */
 const char *
-schema_find_name(enum schema_object_type type, uint32_t object_id);
+schema_find_name(enum box_schema_object_type type, uint32_t object_id);
 
 /**
  * Find a sequence by id. Return NULL if the sequence was
@@ -191,25 +191,27 @@ struct entity_access {
 /** A single instance of the global entities. */
 extern struct entity_access entity_access;
 
-static inline
-struct access *
-entity_access_get(enum schema_object_type type)
+/**
+ * Get access structure corresponding to given object type
+ */
+static inline struct access *
+entity_access_get(enum box_schema_object_type type)
 {
 	switch (type) {
-	case SC_SPACE:
-	case SC_ENTITY_SPACE:
+	case BOX_SC_SPACE:
+	case BOX_SC_ENTITY_SPACE:
 		return entity_access.space;
-	case SC_FUNCTION:
-	case SC_ENTITY_FUNCTION:
+	case BOX_SC_FUNCTION:
+	case BOX_SC_ENTITY_FUNCTION:
 		return entity_access.function;
-	case SC_USER:
-	case SC_ENTITY_USER:
+	case BOX_SC_USER:
+	case BOX_SC_ENTITY_USER:
 		return entity_access.user;
-	case SC_ROLE:
-	case SC_ENTITY_ROLE:
+	case BOX_SC_ROLE:
+	case BOX_SC_ENTITY_ROLE:
 		return entity_access.role;
-	case SC_SEQUENCE:
-	case SC_ENTITY_SEQUENCE:
+	case BOX_SC_SEQUENCE:
+	case BOX_SC_ENTITY_SEQUENCE:
 		return entity_access.sequence;
 	default:
 		return NULL;
