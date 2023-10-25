@@ -758,6 +758,41 @@ API_EXPORT int
 box_access_check_space(uint32_t space_id, uint16_t access);
 
 /**
+ * Run ddl access check for the current user.
+ * The function checks whole object type permission first:
+ * i e read arbitrary spaces. Then in case the check didn't succeed
+ * individual object permissions are checked.
+ *
+ * \param name name of the object, used to format the error message
+ * \param object_id id of the object user tries to access.
+ *
+ * Note: In case you need to check create privilege you still need
+ * to pass object id, additionally you need to ensure that this
+ * object doesn't exist yet.
+ *
+ * \param owner_id uid of the owning user. If you're checking for grant
+ * privilege this must be the user who grants the privilege (grantor)
+ * \param object_type type of the object, for values see
+ * box_schema_object_type enum
+ * \param access type of an access, for values see box_privilege_type enum
+ *
+ * Note: Be careful, some permissions can't be checked directly.
+ * For example execute can't be checked on a role, because permissions given
+ * girectly to users are merged with permissions given to roles the
+ * user has execute access to.
+ *
+ * Note: Not all combinations of parameters are valid. Be careful, ENTITY_*
+ * object types can only be used with grant or revoke. Otherwise this leads
+ * to undefined behavior.
+ *
+ * \retval -1 on error (check box_error_last())
+ * \retval 0 on success
+ */
+API_EXPORT int
+box_access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
+		     uint32_t object_type, uint16_t access);
+
+/**
  * Sends a packet with the given header and body over the IPROTO session's
  * socket.
  *
