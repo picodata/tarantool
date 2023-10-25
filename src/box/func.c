@@ -564,7 +564,8 @@ func_access_check(struct func *func)
 	box_user_access_mask_t access =
 		BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE;
 	/* Check access for all functions. */
-	access &= ~entity_access_get(SC_FUNCTION)[credentials->auth_token].effective;
+	access &= ~entity_access_get(
+		BOX_SC_FUNCTION)[credentials->auth_token].effective;
 	box_user_access_mask_t func_access =
 		access & ~credentials->universal_access;
 	if ((func_access & BOX_PRIVILEGE_USAGE) != 0 ||
@@ -574,7 +575,7 @@ func_access_check(struct func *func)
 		struct user *user = user_find(credentials->uid);
 		if (user != NULL) {
 			diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_EXECUTE),
-				 schema_object_name(SC_FUNCTION),
+				 schema_object_name(BOX_SC_FUNCTION),
 				 func->def->name, user->def->name);
 		}
 		return -1;

@@ -273,7 +273,8 @@ access_check_sequence(struct sequence *seq)
 	box_user_access_mask_t access =
 		BOX_PRIVILEGE_USAGE | BOX_PRIVILEGE_WRITE;
 	box_user_access_mask_t sequence_access = access & ~cr->universal_access;
-	sequence_access &= ~entity_access_get(SC_SEQUENCE)[cr->auth_token].effective;
+	sequence_access &= ~entity_access_get(
+		BOX_SC_SEQUENCE)[cr->auth_token].effective;
 	if (sequence_access &&
 	    /* Check for missing Usage access, ignore owner rights. */
 	    (sequence_access & BOX_PRIVILEGE_USAGE ||
@@ -287,12 +288,13 @@ access_check_sequence(struct sequence *seq)
 			if (!(cr->universal_access & BOX_PRIVILEGE_USAGE)) {
 				diag_set(AccessDeniedError,
 					 priv_name(BOX_PRIVILEGE_USAGE),
-					 schema_object_name(SC_UNIVERSE), "",
+					 schema_object_name(BOX_SC_UNIVERSE),
+					 "",
 					 user->def->name);
 			} else {
 				diag_set(AccessDeniedError,
 					 priv_name(access),
-					 schema_object_name(SC_SEQUENCE),
+					 schema_object_name(BOX_SC_SEQUENCE),
 					 seq->def->name, user->def->name);
 			}
 		}

@@ -73,7 +73,8 @@ access_check_space(struct space *space, box_user_access_mask_t access)
 	 * Similarly to global access, subtract entity-level access
 	 * (access to all spaces) if it is present.
 	 */
-	space_access &= ~entity_access_get(SC_SPACE)[cr->auth_token].effective;
+	space_access &= ~entity_access_get(
+		BOX_SC_SPACE)[cr->auth_token].effective;
 
 	if (space_access &&
 	    /* Check for missing USAGE access, ignore owner rights. */
@@ -92,12 +93,13 @@ access_check_space(struct space *space, box_user_access_mask_t access)
 			if (!(cr->universal_access & BOX_PRIVILEGE_USAGE)) {
 				diag_set(AccessDeniedError,
 					 priv_name(BOX_PRIVILEGE_USAGE),
-					 schema_object_name(SC_UNIVERSE), "",
+					 schema_object_name(BOX_SC_UNIVERSE),
+					 "",
 					 user->def->name);
 			} else {
 				diag_set(AccessDeniedError,
 					 priv_name(access),
-					 schema_object_name(SC_SPACE),
+					 schema_object_name(BOX_SC_SPACE),
 					 space->def->name, user->def->name);
 			}
 		}
