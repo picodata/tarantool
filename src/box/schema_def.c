@@ -36,43 +36,43 @@ const char *sql_storage_engine_strs[] = {
 };
 
 static const char *object_type_strs[] = {
-	/* [SC_UKNNOWN]         = */ "unknown",
-	/* [SC_UNIVERSE]        = */ "universe",
-	/* [SC_SPACE]           = */ "space",
-	/* [SC_FUNCTION]        = */ "function",
-	/* [SC_USER]            = */ "user",
-	/* [SC_ROLE]            = */ "role",
-	/* [SC_SEQUENCE]        = */ "sequence",
-	/* [SC_COLLATION]       = */ "collation",
+	/* [BOX_SC_UKNNOWN]             = */ "unknown",
+	/* [BOX_SC_UNIVERSE]        = */ "universe",
+	/* [BOX_SC_SPACE]           = */ "space",
+	/* [BOX_SC_FUNCTION]        = */ "function",
+	/* [BOX_SC_USER]            = */ "user",
+	/* [BOX_SC_ROLE]            = */ "role",
+	/* [BOX_SC_SEQUENCE]        = */ "sequence",
+	/* [BOX_SC_COLLATION]       = */ "collation",
 };
 
 /** Given object type @type, return corresponding entity type. */
-static enum schema_object_type
-schema_object_type_to_entity(enum schema_object_type type)
+static enum box_schema_object_type
+schema_object_type_to_entity(enum box_schema_object_type type)
 {
-	assert(type >= SC_SPACE);
+	assert(type >= BOX_SC_SPACE);
 	assert((int) type < (int) schema_object_type_MAX);
 	return type + schema_object_type_MAX - 1;
 }
 
 /** Given entity type @type, return corresponding object type. */
-static enum schema_object_type
-schema_entity_type_to_object(enum schema_object_type type)
+static enum box_schema_object_type
+schema_entity_type_to_object(enum box_schema_object_type type)
 {
 	assert((int) type > (int) schema_object_type_MAX);
 	assert((int) type < (int) schema_entity_type_MAX);
 	return (type % (schema_object_type_MAX)) + 1;
 }
 
-enum schema_object_type
-schema_entity_type(enum schema_object_type type)
+enum box_schema_object_type
+schema_entity_type(enum box_schema_object_type type)
 {
-	if (type <= SC_UNIVERSE || type >= schema_object_type_MAX)
-		return SC_UNKNOWN;
+	if (type <= BOX_SC_UNIVERSE || type >= schema_object_type_MAX)
+		return BOX_SC_UNKNOWN;
 	return schema_object_type_to_entity(type);
 }
 
-enum schema_object_type
+enum box_schema_object_type
 schema_object_type(const char *name)
 {
 	/**
@@ -82,18 +82,18 @@ schema_object_type(const char *name)
 	 */
 	int n_strs = sizeof(object_type_strs)/sizeof(*object_type_strs);
 	int index = strindex(object_type_strs, name, n_strs);
-	return (enum schema_object_type) (index == n_strs ? 0 : index);
+	return (enum box_schema_object_type)(index == n_strs ? 0 : index);
 }
 
 const char *
-schema_object_name(enum schema_object_type type)
+schema_object_name(enum box_schema_object_type type)
 {
 	assert((int) type < (int) schema_object_type_MAX);
 	return object_type_strs[type];
 }
 
 const char *
-schema_entity_name(enum schema_object_type type)
+schema_entity_name(enum box_schema_object_type type)
 {
 	return object_type_strs[schema_entity_type_to_object(type)];
 }

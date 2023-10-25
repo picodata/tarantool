@@ -53,7 +53,7 @@ extern struct trigger on_replace_func_index;
  */
 int
 access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
-		 enum schema_object_type type,
+		 enum box_schema_object_type type,
 		 enum box_privilege_type priv_type);
 
 #endif /* INCLUDES_TARANTOOL_BOX_ALTER_H */

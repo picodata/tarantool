@@ -4056,13 +4056,13 @@ box_access_check_space(uint32_t space_id, uint16_t access)
 API_EXPORT int
 box_access_check_ddl(
 	const char *name, uint32_t object_id, uint32_t owner_uid,
-    uint32_t object_type, uint16_t access)
+    enum box_schema_object_type object_type, uint16_t access)
 {
 	return access_check_ddl(
 		name,
 		object_id,
 		owner_uid,
-		(enum schema_object_type)object_type,
+		(enum box_schema_object_type)object_type,
 		(enum box_privilege_type)access);
 }
 
