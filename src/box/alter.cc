@@ -71,7 +71,7 @@ box_schema_version_bump(void)
 
 int
 access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
-		 enum schema_object_type type,
+		 enum box_schema_object_type type,
 		 enum box_privilege_type priv_type)
 {
 	struct credentials *cr = effective_user();
@@ -117,7 +117,7 @@ access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 	const char *object_name;
 	const char *pname;
 	if (access & BOX_PRIVILEGE_USAGE) {
-		object_name = schema_object_name(SC_UNIVERSE);
+		object_name = schema_object_name(BOX_SC_UNIVERSE);
 		pname = priv_name(BOX_PRIVILEGE_USAGE);
 		name = "";
 	} else {
@@ -2087,8 +2087,9 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 			return -1;
 		auto def_guard =
 			make_scoped_guard([=] { space_def_delete(def); });
-		if (access_check_ddl(def->name, def->id, def->uid, SC_SPACE,
-				 BOX_PRIVILEGE_CREATE) != 0)
+		if (access_check_ddl(def->name, def->id, def->uid,
+				     BOX_SC_SPACE,
+				     BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		RLIST_HEAD(empty_list);
 		struct space *space = space_new(def, &empty_list);
@@ -2145,7 +2146,7 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		}
 	} else if (new_tuple == NULL) { /* DELETE */
 		if (access_check_ddl(old_space->def->name, old_space->def->id,
-				 old_space->def->uid, SC_SPACE,
+				 old_space->def->uid, BOX_SC_SPACE,
 				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Verify that the space is empty (has no indexes) */
@@ -2246,8 +2247,9 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 			return -1;
 		auto def_guard =
 			make_scoped_guard([=] { space_def_delete(def); });
-		if (access_check_ddl(def->name, def->id, def->uid, SC_SPACE,
-				 BOX_PRIVILEGE_ALTER) != 0)
+		if (access_check_ddl(def->name, def->id, def->uid,
+				     BOX_SC_SPACE,
+				     BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		if (def->id != space_id(old_space)) {
 			diag_set(ClientError, ER_ALTER_SPACE,
@@ -2415,7 +2417,7 @@ on_replace_dd_index(struct trigger * /* trigger */, void *event)
 	if (old_tuple && new_tuple)
 		priv_type = BOX_PRIVILEGE_ALTER;
 	if (access_check_ddl(old_space->def->name, old_space->def->id,
-			 old_space->def->uid, SC_SPACE, priv_type) != 0)
+			 old_space->def->uid, BOX_SC_SPACE, priv_type) != 0)
 		return -1;
 	struct index *old_index = space_index(old_space, iid);
 	struct index_def *old_def = old_index != NULL ? old_index->def : NULL;
@@ -2881,8 +2883,8 @@ user_def_new_from_tuple(struct tuple *tuple)
 	const char *type_str = tuple_field_cstr(tuple, BOX_USER_FIELD_TYPE);
 	if (type_str == NULL)
 		return NULL;
-	enum schema_object_type type = schema_object_type(type_str);
-	if (type != SC_ROLE && type != SC_USER) {
+	enum box_schema_object_type type = schema_object_type(type_str);
+	if (type != BOX_SC_ROLE && type != BOX_SC_USER) {
 		diag_set(ClientError, ER_CREATE_USER,
 			 tt_cstr(name, name_len), "unknown user type");
 		return NULL;
@@ -2910,7 +2912,7 @@ user_def_new_from_tuple(struct tuple *tuple)
 		} else {
 			is_auth_empty = false;
 		}
-		if (!is_auth_empty && user->type == SC_ROLE) {
+		if (!is_auth_empty && user->type == BOX_SC_ROLE) {
 			diag_set(ClientError, ER_CREATE_ROLE, user->name,
 				  "authentication data can not be set for a "\
 				  "role");
@@ -3334,8 +3336,9 @@ on_replace_dd_func(struct trigger * /* trigger */, void *event)
 		auto def_guard = make_scoped_guard([=] {
 			func_def_delete(def);
 		});
-		if (access_check_ddl(def->name, def->fid, def->uid, SC_FUNCTION,
-				 BOX_PRIVILEGE_CREATE) != 0)
+		if (access_check_ddl(def->name, def->fid, def->uid,
+				     BOX_SC_FUNCTION,
+				     BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct trigger *on_rollback =
 			txn_alter_trigger_new(on_create_func_rollback, NULL);
@@ -3357,8 +3360,9 @@ on_replace_dd_func(struct trigger * /* trigger */, void *event)
 		 * Can only delete func if you're the one
 		 * who created it or a superuser.
 		 */
-		if (access_check_ddl(old_func->def->name, fid, uid, SC_FUNCTION,
-				 BOX_PRIVILEGE_DROP) != 0)
+		if (access_check_ddl(old_func->def->name, fid, uid,
+				     BOX_SC_FUNCTION,
+				     BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/* Can only delete func if it has no grants. */
 		bool out;
@@ -3609,7 +3613,7 @@ on_replace_dd_collation(struct trigger * /* trigger */, void *event)
 		struct coll_id *old_coll_id = coll_by_id(old_id);
 		assert(old_coll_id != NULL);
 		if (access_check_ddl(old_coll_id->name, old_coll_id->id,
-				 old_coll_id->owner_id, SC_COLLATION,
+				 old_coll_id->owner_id, BOX_SC_COLLATION,
 				 BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		/*
@@ -3632,7 +3636,7 @@ on_replace_dd_collation(struct trigger * /* trigger */, void *event)
 		if (coll_id_def_new_from_tuple(new_tuple, &new_def) != 0)
 			return -1;
 		if (access_check_ddl(new_def.name, new_def.id, new_def.owner_id,
-				 SC_COLLATION, BOX_PRIVILEGE_CREATE) != 0)
+				 BOX_SC_COLLATION, BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct coll_id *new_coll_id = coll_id_new(&new_def);
 		if (new_coll_id == NULL)
@@ -3697,7 +3701,7 @@ priv_def_create_from_tuple(struct priv_def *priv, struct tuple *tuple)
 		    BOX_PRIV_FIELD_OBJECT_ID, &(priv->object_id)) != 0)
 			return -1;
 	}
-	if (priv->object_type == SC_UNKNOWN) {
+	if (priv->object_type == BOX_SC_UNKNOWN) {
 		diag_set(ClientError, ER_UNKNOWN_SCHEMA_OBJECT,
 			  object_type);
 		return -1;
@@ -3739,17 +3743,17 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 			     priv->object_type, priv_type) != 0)
 		return -1;
 	switch (priv->object_type) {
-	case SC_UNIVERSE:
+	case BOX_SC_UNIVERSE:
 		if (grantor->def->uid != ADMIN) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
-				  schema_object_name(SC_UNIVERSE),
+				  schema_object_name(BOX_SC_UNIVERSE),
 				  name,
 				  grantor->def->name);
 			return -1;
 		}
 		break;
-	case SC_SPACE:
+	case BOX_SC_SPACE:
 	{
 		struct space *space = space_cache_find(priv->object_id);
 		if (space == NULL)
@@ -3758,7 +3762,7 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 		    grantor->def->uid != ADMIN) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
-				  schema_object_name(SC_SPACE), name,
+				  schema_object_name(BOX_SC_SPACE), name,
 				  grantor->def->name);
 			return -1;
 		}
@@ -3769,7 +3773,7 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 		}
 		break;
 	}
-	case SC_FUNCTION:
+	case BOX_SC_FUNCTION:
 	{
 		struct func *func = func_by_id(priv->object_id);
 		if (func == NULL) {
@@ -3780,13 +3784,13 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 		    grantor->def->uid != ADMIN) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
-				  schema_object_name(SC_FUNCTION), name,
+				  schema_object_name(BOX_SC_FUNCTION), name,
 				  grantor->def->name);
 			return -1;
 		}
 		break;
 	}
-	case SC_SEQUENCE:
+	case BOX_SC_SEQUENCE:
 	{
 		struct sequence *seq = sequence_by_id(priv->object_id);
 		if (seq == NULL) {
@@ -3797,16 +3801,16 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 		    grantor->def->uid != ADMIN) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
-				  schema_object_name(SC_SEQUENCE), name,
+				  schema_object_name(BOX_SC_SEQUENCE), name,
 				  grantor->def->name);
 			return -1;
 		}
 		break;
 	}
-	case SC_ROLE:
+	case BOX_SC_ROLE:
 	{
 		struct user *role = user_by_id(priv->object_id);
-		if (role == NULL || role->def->type != SC_ROLE) {
+		if (role == NULL || role->def->type != BOX_SC_ROLE) {
 			diag_set(ClientError, ER_NO_SUCH_ROLE,
 				  role ? role->def->name :
 				  int2str(priv->object_id));
@@ -3822,7 +3826,7 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 			 priv->access != BOX_PRIVILEGE_EXECUTE)) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
-				  schema_object_name(SC_ROLE), name,
+				  schema_object_name(BOX_SC_ROLE), name,
 				  grantor->def->name);
 			return -1;
 		}
@@ -3831,10 +3835,10 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 			return -1;
 		break;
 	}
-	case SC_USER:
+	case BOX_SC_USER:
 	{
 		struct user *user = user_by_id(priv->object_id);
-		if (user == NULL || user->def->type != SC_USER) {
+		if (user == NULL || user->def->type != BOX_SC_USER) {
 			diag_set(ClientError, ER_NO_SUCH_USER,
 				  user ? user->def->name :
 				  int2str(priv->object_id));
@@ -3844,17 +3848,17 @@ priv_def_check(struct priv_def *priv, enum box_privilege_type priv_type)
 		    grantor->def->uid != ADMIN) {
 			diag_set(AccessDeniedError,
 				  priv_name(priv_type),
-				  schema_object_name(SC_USER), name,
+				  schema_object_name(BOX_SC_USER), name,
 				  grantor->def->name);
 			return -1;
 		}
 		break;
 	}
-	case SC_ENTITY_SPACE:
-	case SC_ENTITY_FUNCTION:
-	case SC_ENTITY_SEQUENCE:
-	case SC_ENTITY_ROLE:
-	case SC_ENTITY_USER:
+	case BOX_SC_ENTITY_SPACE:
+	case BOX_SC_ENTITY_FUNCTION:
+	case BOX_SC_ENTITY_SEQUENCE:
+	case BOX_SC_ENTITY_ROLE:
+	case BOX_SC_ENTITY_USER:
 	{
 		/* Only admin may grant privileges on an entire entity. */
 		if (grantor->def->uid != ADMIN) {
@@ -3889,10 +3893,10 @@ grant_or_revoke(struct priv_def *priv)
 	 * Grant a role to a user only when privilege type is 'execute'
 	 * and the role is specified.
 	 */
-	if (priv->object_type == SC_ROLE &&
+	if (priv->object_type == BOX_SC_ROLE &&
 	    !(priv->access & ~BOX_PRIVILEGE_EXECUTE)) {
 		struct user *role = user_by_id(priv->object_id);
-		if (role == NULL || role->def->type != SC_ROLE)
+		if (role == NULL || role->def->type != BOX_SC_ROLE)
 			return 0;
 		if (priv->access) {
 			if (role_grant(grantee, role) != 0)
@@ -4335,7 +4339,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		if (new_def == NULL)
 			return -1;
 		if (access_check_ddl(new_def->name, new_def->id, new_def->uid,
-				 SC_SEQUENCE, BOX_PRIVILEGE_CREATE) != 0)
+				 BOX_SC_SEQUENCE, BOX_PRIVILEGE_CREATE) != 0)
 			return -1;
 		struct trigger *on_rollback =
 			txn_alter_trigger_new(on_create_sequence_rollback, NULL);
@@ -4354,7 +4358,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		seq = sequence_by_id(id);
 		assert(seq != NULL);
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, BOX_PRIVILEGE_DROP) != 0)
+				 BOX_SC_SEQUENCE, BOX_PRIVILEGE_DROP) != 0)
 			return -1;
 		bool out;
 		if (space_has_data(BOX_SEQUENCE_DATA_ID, 0, id, &out) != 0)
@@ -4396,7 +4400,7 @@ on_replace_dd_sequence(struct trigger * /* trigger */, void *event)
 		seq = sequence_by_id(new_def->id);
 		assert(seq != NULL);
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, BOX_PRIVILEGE_ALTER) != 0)
+				 BOX_SC_SEQUENCE, BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
 		struct trigger *on_commit =
 			txn_alter_trigger_new(on_alter_sequence_commit, seq->def);
@@ -4632,7 +4636,7 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 	/* Check we have the correct access type on the sequence.  * */
 	if (is_generated || !stmt->new_tuple) {
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, priv_type) != 0)
+				 BOX_SC_SEQUENCE, priv_type) != 0)
 			return -1;
 	} else {
 		/*
@@ -4640,15 +4644,15 @@ on_replace_dd_space_sequence(struct trigger * /* trigger */, void *event)
 		 * check that it has read and write access.
 		 */
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, BOX_PRIVILEGE_READ) != 0)
+				 BOX_SC_SEQUENCE, BOX_PRIVILEGE_READ) != 0)
 			return -1;
 		if (access_check_ddl(seq->def->name, seq->def->id, seq->def->uid,
-				 SC_SEQUENCE, BOX_PRIVILEGE_WRITE) != 0)
+				 BOX_SC_SEQUENCE, BOX_PRIVILEGE_WRITE) != 0)
 			return -1;
 	}
 	/** Check we have alter access on space. */
 	if (access_check_ddl(space->def->name, space->def->id, space->def->uid,
-			 SC_SPACE, BOX_PRIVILEGE_ALTER) != 0)
+			 BOX_SC_SPACE, BOX_PRIVILEGE_ALTER) != 0)
 		return -1;
 
 	if (stmt->new_tuple != NULL) {			/* INSERT, UPDATE */
