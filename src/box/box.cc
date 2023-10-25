@@ -98,6 +98,7 @@
 #include "memory.h"
 #include "sqlLimit.h"
 #include "tt_sort.h"
+#include "alter.h"
 
 static char status[64] = "unconfigured";
 
@@ -4050,6 +4051,19 @@ box_access_check_space(uint32_t space_id, uint16_t access)
 	if (space == NULL)
 		return -1;
 	return access_check_space(space, access);
+}
+
+API_EXPORT int
+box_access_check_ddl(
+	const char *name, uint32_t object_id, uint32_t owner_uid,
+    uint32_t object_type, uint16_t access)
+{
+	return access_check_ddl(
+		name,
+		object_id,
+		owner_uid,
+		(enum schema_object_type)object_type,
+		(enum box_privilege_type)access);
 }
 
 static inline void
