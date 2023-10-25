@@ -285,7 +285,7 @@ vspace_filter(struct space *source, struct tuple *tuple)
 	if (PRIV_WRDA & cr->universal_access)
 		return true;
 	/* Allow access for a user with space privileges. */
-	if (PRIV_WRDA & entity_access_get(SC_SPACE)[cr->auth_token].effective)
+	if (PRIV_WRDA & entity_access_get(BOX_SC_SPACE)[cr->auth_token].effective)
 		return true;
 	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _space space */
@@ -363,7 +363,7 @@ vfunc_filter(struct space *source, struct tuple *tuple)
 		return true;
 	/* Allow access for a user with function privileges. */
 	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) &
-	    entity_access_get(SC_FUNCTION)[cr->auth_token].effective)
+	    entity_access_get(BOX_SC_FUNCTION)[cr->auth_token].effective)
 		return true;
 	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _func space */
@@ -393,7 +393,7 @@ vsequence_filter(struct space *source, struct tuple *tuple)
 		return true;
 	/* Allow access for a user with sequence privileges. */
 	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) &
-	    entity_access_get(SC_SEQUENCE)[cr->auth_token].effective)
+	    entity_access_get(BOX_SC_SEQUENCE)[cr->auth_token].effective)
 		return true;
 	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
 		return true; /* read access to _sequence space */

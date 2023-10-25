@@ -128,7 +128,7 @@ box_module_reload(const char *name)
 		struct user *user = user_find(credentials->uid);
 		if (user != NULL)
 			diag_set(AccessDeniedError, priv_name(BOX_PRIVILEGE_USAGE),
-				 schema_object_name(SC_UNIVERSE), "",
+				 schema_object_name(BOX_SC_UNIVERSE), "",
 				 user->def->name);
 		return -1;
 	}
@@ -175,7 +175,7 @@ box_process_call(struct call_request *request, struct port *port)
 	} else {
 		if (access_check_universe_object(
 				BOX_PRIVILEGE_EXECUTE | BOX_PRIVILEGE_USAGE,
-				SC_FUNCTION,
+				BOX_SC_FUNCTION,
 				tt_cstr(name, name_len)) != 0)
 			return -1;
 		box_run_on_call(IPROTO_CALL, name, name_len, request->args);

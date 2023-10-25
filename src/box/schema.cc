@@ -488,17 +488,17 @@ sequence_cache_delete(uint32_t id)
 }
 
 const char *
-schema_find_name(enum schema_object_type type, uint32_t object_id)
+schema_find_name(enum box_schema_object_type type, uint32_t object_id)
 {
 	switch (type) {
-	case SC_UNIVERSE:
-	case SC_ENTITY_SPACE:
-	case SC_ENTITY_FUNCTION:
-	case SC_ENTITY_SEQUENCE:
-	case SC_ENTITY_ROLE:
-	case SC_ENTITY_USER:
+	case BOX_SC_UNIVERSE:
+	case BOX_SC_ENTITY_SPACE:
+	case BOX_SC_ENTITY_FUNCTION:
+	case BOX_SC_ENTITY_SEQUENCE:
+	case BOX_SC_ENTITY_ROLE:
+	case BOX_SC_ENTITY_USER:
 		return "";
-	case SC_SPACE:
+	case BOX_SC_SPACE:
 		{
 			struct space *space = space_by_id(object_id);
 			if (space != NULL)
@@ -507,7 +507,7 @@ schema_find_name(enum schema_object_type type, uint32_t object_id)
 				 tt_sprintf("%d", object_id));
 			break;
 		}
-	case SC_FUNCTION:
+	case BOX_SC_FUNCTION:
 		{
 			struct func *func = func_by_id(object_id);
 			if (func != NULL)
@@ -516,7 +516,7 @@ schema_find_name(enum schema_object_type type, uint32_t object_id)
 				 tt_sprintf("%d", object_id));
 			break;
 		}
-	case SC_SEQUENCE:
+	case BOX_SC_SEQUENCE:
 		{
 			struct sequence *seq = sequence_by_id(object_id);
 			if (seq != NULL)
@@ -525,7 +525,7 @@ schema_find_name(enum schema_object_type type, uint32_t object_id)
 				 tt_sprintf("%d", object_id));
 			break;
 		}
-	case SC_ROLE:
+	case BOX_SC_ROLE:
 		{
 			struct user *role = user_by_id(object_id);
 			if (role != NULL)
@@ -534,7 +534,7 @@ schema_find_name(enum schema_object_type type, uint32_t object_id)
 				 tt_sprintf("%d", object_id));
 			break;
 		}
-	case SC_USER:
+	case BOX_SC_USER:
 		{
 			struct user *user = user_by_id(object_id);
 			if (user != NULL)
