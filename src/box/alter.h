@@ -31,6 +31,7 @@
  * SUCH DAMAGE.
  */
 #include "trigger.h"
+#include "user_def.h"
 
 extern struct trigger alter_space_on_replace_space;
 extern struct trigger alter_space_on_replace_index;
@@ -46,5 +47,13 @@ extern struct trigger on_replace_sequence_data;
 extern struct trigger on_replace_space_sequence;
 extern struct trigger on_replace_trigger;
 extern struct trigger on_replace_func_index;
+
+/**
+ * Check access for execution of a ddl operation
+ */
+int
+access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
+		 enum schema_object_type type,
+		 enum box_privilege_type priv_type);
 
 #endif /* INCLUDES_TARANTOOL_BOX_ALTER_H */
