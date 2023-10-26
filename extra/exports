@@ -663,3 +663,9 @@ coio_write_timeout
 authenticate
 user_auth_method_name
 port_c_create
+
+# picodata audit log
+log_create
+log_destroy
+log_new
+log_say
