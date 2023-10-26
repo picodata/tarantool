@@ -187,6 +187,16 @@ struct log {
 };
 
 /**
+ * Allocate a new uninitialized log object.
+ * To initialize the object one must call log_create()
+ * before doing log_say(). To deallocate the object use
+ * log_destroy() and free().
+ * @return pointer to log object (allocation failure is fatal)
+ */
+struct log *
+log_new(void);
+
+/**
  * Create a new log object.
  * @param log		log to initialize
  * @param init_str	box.cfg log option
@@ -207,17 +217,9 @@ log_vsay(struct log *log, int level, bool check_level, const char *module,
 	 va_list ap);
 
 /** Perform log write. */
-static inline int
+int
 log_say(struct log *log, int level, const char *filename,
-	int line, const char *error, const char *format, ...)
-{
-	va_list ap;
-	va_start(ap, format);
-	int total = log_vsay(log, level, true, NULL, filename, line, error,
-			     format, ap);
-	va_end(ap);
-	return total;
-}
+	int line, const char *error, const char *format, ...);
 
 /**
  * Default logger type info.
