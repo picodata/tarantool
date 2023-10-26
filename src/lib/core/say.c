@@ -648,6 +648,12 @@ log_syslog_init(struct log *log, const char *init_str)
 	return 0;
 }
 
+struct log *
+log_new(void)
+{
+	return xmalloc(sizeof(struct log));
+}
+
 /**
  * Initialize logging subsystem to use in daemon mode.
  */
@@ -1468,6 +1474,18 @@ log_vsay(struct log *log, int level, bool check_level, const char *module,
 	}
 out:
 	errno = errsv; /* Preserve the errno. */
+	return total;
+}
+
+int
+log_say(struct log *log, int level, const char *filename,
+	int line, const char *error, const char *format, ...)
+{
+	va_list ap;
+	va_start(ap, format);
+	int total = log_vsay(log, level, true, NULL, filename, line, error,
+			     format, ap);
+	va_end(ap);
 	return total;
 }
 
