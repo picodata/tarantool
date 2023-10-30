@@ -1,10 +1,7 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}centos:7
 
-ARG TNT_VER \
-    GC64
-
-ENV GC64=${GC64:-false} \
+ENV \
     LUAROCK_VSHARD_VERSION=0.1.18 \
     LUAROCK_AVRO_SCHEMA_VERSION=3.0.6 \
     LUAROCK_EXPERATIOND_VERSION=1.1.1 \
@@ -25,6 +22,21 @@ COPY files/luarocks-config.lua /usr/local/etc/tarantool/rocks/config-5.1.lua
 RUN ["groupadd", "tarantool"]
 RUN ["adduser", "-g", "tarantool", "tarantool"]
 
+ARG TARANTOOL_VERSION
+RUN if test -z "${TARANTOOL_VERSION}"; then \
+        echo ""; \
+        echo "Missing docker build arg TARANTOOL_VERSION:"; \
+        echo "Run: "; \
+        echo ""; \
+        echo "  docker build --build-arg TARANTOOL_VERSION=..."; \
+        echo ""; \
+        exit 1; \
+    else \
+        echo ""; \
+        echo "  TARANTOOL_VERSION=${TARANTOOL_VERSION}"; \
+        echo ""; \
+    fi;
+
 # Set yum repository for Postgresql 14 since this version
 # has been removed from pgdg repository.
 RUN echo $'[pg]\n\
@@ -41,8 +53,8 @@ repo_gpgcheck = 1\n'\
     && yum -y install llvm-toolset-7-clang \
     && : "---------- tarantool ----------" \
     && yum install -y  \
-        tarantool-picodata \
-        tarantool-picodata-devel \
+        tarantool-picodata-${TARANTOOL_VERSION} \
+        tarantool-picodata-devel-${TARANTOOL_VERSION} \
         mariadb-libs \
         postgresql14-libs \
         cyrus-sasl \
