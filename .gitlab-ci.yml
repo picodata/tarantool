@@ -257,7 +257,7 @@ sign-astralinux-packages:
   dependencies:
     - build-package-astralinux
 
-deploy-job:
+deploy-packages:
   stage: deploy
   tags:
     - shell_p_t
@@ -361,9 +361,9 @@ deploy-macos:
     - echo $DOCKER_AUTH_RO > ~/.docker/config.json
   image: ${BASE_IMAGE}
   needs:
-    - deploy-job
+    - deploy-packages
 
-check_deployment_rpm:
+check-deployment-rpm:
   extends: .check-deployment
   parallel:
     matrix:
@@ -457,7 +457,18 @@ docker:
     - echo $TAG_SHORT
     - echo $TAG_LONG
   script:
-    - docker build docker/ -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_LONG -t $DOCKER_REGISTRY_PUB/tarantool:latest
+    - >
+      docker build docker/
+      --build-arg TARANTOOL_VERSION=$TAG_LONG
+      -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT
+      -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_LONG
+      -t $DOCKER_REGISTRY_PUB/tarantool:latest
     - docker --config $CI_PROJECT_DIR/.docker/ push -a $DOCKER_REGISTRY_PUB/tarantool
-    - curl -X POST --fail -F token=$TARANTOOL_MODULE_TRIGGER_TOKEN -F ref=master https://git.picodata.io/api/v4/projects/57/trigger/pipeline
-  dependencies: []
+    - >
+      curl -X POST --fail
+      --form token=$TARANTOOL_MODULE_TRIGGER_TOKEN
+      --form ref=master
+      --form variables[TARANTOOL_VERSION]=$TAG_LONG
+      https://git.picodata.io/api/v4/projects/57/trigger/pipeline
+  needs:
+    - deploy-packages
