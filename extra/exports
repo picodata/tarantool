@@ -178,6 +178,8 @@ console_set_output_format
 cord_ibuf_drop
 cord_ibuf_put
 cord_ibuf_take
+cord_is_main
+cord_is_main_dont_create
 cord_slab_cache
 crc32_calc
 crypto_ERR_error_string
@@ -207,6 +209,7 @@ csv_feed
 csv_iterator_create
 csv_next
 csv_setopt
+current_cord_name
 decimal_from_string
 decimal_unpack
 error_find_field
