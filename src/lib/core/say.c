@@ -229,6 +229,12 @@ log_set_format(struct log *log, log_format_func_t format_func)
 	log->format_func = format_func;
 }
 
+struct log *
+log_default_logger()
+{
+	return log_default;
+}
+
 void
 say_set_log_level(int new_level)
 {

@@ -2203,6 +2203,20 @@ cord_is_main(void)
 	return cord() == &main_cord;
 }
 
+bool
+cord_is_main_dont_create(void)
+{
+	return cord_ptr == &main_cord;
+}
+
+const char *
+current_cord_name(void)
+{
+	if (cord_ptr == NULL)
+		return NULL;
+	return cord_name(cord_ptr);
+}
+
 struct slab_cache *
 cord_slab_cache(void)
 {

@@ -261,6 +261,12 @@ void
 log_set_format(struct log *log, log_format_func_t format_func);
 
 /**
+ * @return a default log object.
+ */
+struct log *
+log_default_logger();
+
+/**
  * Set log level for the default logger. Can be used dynamically.
  * @param format	constant level
  */
