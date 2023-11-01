@@ -184,6 +184,8 @@ console_set_output_format
 cord_ibuf_drop
 cord_ibuf_put
 cord_ibuf_take
+cord_is_main
+cord_is_main_dont_create
 cord_slab_cache
 crc32_calc
 crypto_ERR_error_string
@@ -213,6 +215,7 @@ csv_feed
 csv_iterator_create
 csv_next
 csv_setopt
+current_cord_name
 decimal_from_string
 decimal_unpack
 error_find_field
@@ -262,10 +265,13 @@ ibuf_reinit
 ibuf_reserve_slow
 lbox_socket_local_resolve
 lbox_socket_nonblock
+log_default_logger
 log_format
 log_level
 log_level_flightrec
 log_pid
+log_set_format
+log_set_level
 log_write_flightrec_from_lua
 luaJIT_profile_dumpstack
 luaJIT_profile_start

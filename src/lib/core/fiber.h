@@ -949,9 +949,20 @@ cord_name(struct cord *cord)
 	return cord->name;
 }
 
+/** @return a current cord name. */
+API_EXPORT const char *
+current_cord_name(void);
+
 /** True if this cord represents the process main thread. */
 bool
 cord_is_main(void);
+
+/**
+ * Like `cord_is_main` but without creating a new cord
+ * if it doesn't exists.
+ */
+API_EXPORT bool
+cord_is_main_dont_create(void);
 
 /**
  * Delete the latest garbage fiber which couldn't be deleted somewhy before. Can
