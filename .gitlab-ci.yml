@@ -442,7 +442,6 @@ check-deployment-astra:
 docker:
   stage: docker
   only:
-#    - web
     - tags
   variables:
     DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
@@ -456,6 +455,7 @@ docker:
     - TAG_LONG=$(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
     - echo $TAG_SHORT
     - echo $TAG_LONG
+    - echo "TARANTOOL_VERSION=$TAG_LONG" >> build.env
   script:
     - >
       docker build docker/
@@ -464,11 +464,24 @@ docker:
       -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_LONG
       -t $DOCKER_REGISTRY_PUB/tarantool:latest
     - docker --config $CI_PROJECT_DIR/.docker/ push -a $DOCKER_REGISTRY_PUB/tarantool
-    - >
-      curl -X POST --fail
-      --form token=$TARANTOOL_MODULE_TRIGGER_TOKEN
-      --form ref=master
-      --form variables[TARANTOOL_VERSION]=$TAG_LONG
-      https://git.picodata.io/api/v4/projects/57/trigger/pipeline
   needs:
     - deploy-packages
+  artifacts:
+    name: "artifacts-vars-${CI_PIPELINE_ID}"
+    expire_in: 20 hour
+    reports:
+      dotenv: build.env
+
+downstream:
+  stage: docker
+  only:
+    - tags
+  variables:
+    TARANTOOL_VERSION: $TARANTOOL_VERSION
+  trigger:
+    project: picodata/picodata/tarantool-module
+    branch: master
+    strategy: depend
+  needs:
+    - job: docker
+      artifacts: true
