@@ -880,7 +880,8 @@ local function connect(uri, opts)
         end
         if not remote then
             log.verbose(err)
-            box.error(box.error.NO_CONNECTION)
+            local reason = "Connection is not established: " .. err
+            box.error { code = box.error.NO_CONNECTION, reason = reason }
         end
         remote.console_eval = function(line)
             return remote:eval(line)
