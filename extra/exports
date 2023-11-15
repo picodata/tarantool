@@ -676,3 +676,4 @@ log_create
 log_destroy
 log_new
 log_say
+log_set_format_by_name
