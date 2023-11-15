@@ -69,6 +69,7 @@ void
 (*log_write_flightrec)(int level, const char *filename, int line,
 		       const char *error, const char *format, va_list ap);
 
+static const log_format_func_t say_format_funcs[];
 enum say_format log_format = SF_PLAIN;
 enum { SAY_SYSLOG_DEFAULT_PORT = 512 };
 
@@ -229,6 +230,17 @@ log_set_format(struct log *log, log_format_func_t format_func)
 	log->format_func = format_func;
 }
 
+int
+log_set_format_by_name(struct log *log, const char *format)
+{
+	enum say_format say_format = say_format_by_name(format);
+	log_format_func_t format_func = say_format_funcs[say_format];
+	if (format_func == NULL)
+		return -1;
+	log_set_format(log, format_func);
+	return 0;
+}
+
 struct log *
 log_default_logger()
 {
@@ -251,18 +263,9 @@ say_get_log_level(void)
 void
 say_set_log_format(enum say_format format)
 {
-	log_format_func_t format_func;
-
-	switch (format) {
-	case SF_JSON:
-		format_func = say_format_json;
-		break;
-	case SF_PLAIN:
-		format_func = say_format_plain;
-		break;
-	default:
+	log_format_func_t format_func = say_format_funcs[format];
+	if (format_func == NULL)
 		unreachable();
-	}
 
 	log_set_format(log_default, format_func);
 	log_format = format;
@@ -274,6 +277,12 @@ say_set_flightrec_log_level(int new_level)
 	log_level = MAX(new_level, log_default->level);
 	log_level_flightrec = new_level;
 }
+
+static const log_format_func_t say_format_funcs[] = {
+	[SF_PLAIN] = say_format_plain,
+	[SF_JSON] = say_format_json,
+	[say_format_MAX] = NULL,
+};
 
 static const char *say_format_strs[] = {
 	[SF_PLAIN] = "plain",
