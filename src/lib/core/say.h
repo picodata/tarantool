@@ -261,6 +261,16 @@ void
 log_set_format(struct log *log, log_format_func_t format_func);
 
 /**
+ * Set log format by name. Can be used dynamically.
+ *
+ * @param log		log object
+ * @param format_name	format name.
+ * @retval 0 in case of success, -1 otherwise
+ */
+int
+log_set_format_by_name(struct log *log, const char *format);
+
+/**
  * @return a default log object.
  */
 struct log *
