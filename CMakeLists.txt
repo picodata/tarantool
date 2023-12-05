@@ -594,6 +594,12 @@ if (ENABLE_BUNDLED_LIBCURL)
 endif()
 
 #
+# Wal extensions
+#
+set(ENABLE_WAL_EXT ON)
+set(WAL_EXT_SOURCES wal_ext_impl.c lua/wal_ext.c)
+
+#
 # Export libcurl symbols if the library is linked statically.
 #
 if (ENABLE_BUNDLED_LIBCURL OR BUILD_STATIC)
