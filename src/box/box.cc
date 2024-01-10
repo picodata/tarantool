@@ -30,6 +30,8 @@
  */
 #include "box/box.h"
 
+#include "func_cache.h"
+#include "schema_def.h"
 #include "trivia/config.h"
 
 #include <sys/utsname.h>
@@ -5644,15 +5646,9 @@ box_read_ffi_enable(void)
 		box_read_ffi_is_disabled = false;
 }
 
-int
-box_generate_space_id(uint32_t *new_space_id, bool is_temporary)
+static int
+next_u32_id(uint32_t space_id, uint32_t id_range_end, uint32_t *max_id)
 {
-	assert(new_space_id != NULL);
-	uint32_t id_range_begin = !is_temporary ?
-		BOX_SYSTEM_ID_MAX + 1 : BOX_SPACE_ID_TEMPORARY_MIN;
-	uint32_t id_range_end = !is_temporary ?
-		(uint32_t)BOX_SPACE_ID_TEMPORARY_MIN :
-		(uint32_t)BOX_SPACE_MAX + 1;
 	char key_buf[16];
 	char *key_end = key_buf;
 	key_end = mp_encode_array(key_end, 1);
@@ -5662,7 +5658,7 @@ box_generate_space_id(uint32_t *new_space_id, bool is_temporary)
 	auto guard = make_scoped_guard([=] {
 		fiber_set_user(fiber(), orig_credentials);
 	});
-	box_iterator_t *it = box_index_iterator(BOX_SPACE_ID, 0, ITER_LT,
+	box_iterator_t *it = box_index_iterator(space_id, 0, ITER_LT,
 						key_buf, key_end);
 	if (it == NULL)
 		return -1;
@@ -5672,9 +5668,25 @@ box_generate_space_id(uint32_t *new_space_id, bool is_temporary)
 	if (rc != 0)
 		return -1;
 	assert(res != NULL);
-	uint32_t max_id = 0;
-	rc = tuple_field_u32(res, 0, &max_id);
+	rc = tuple_field_u32(res, 0, max_id);
 	assert(rc == 0);
+	return 0;
+}
+
+int
+box_generate_space_id(uint32_t *new_space_id, bool is_temporary)
+{
+	if (box_check_configured() < 0)
+		return -1;
+	assert(new_space_id != NULL);
+	uint32_t id_range_begin = !is_temporary ?
+		BOX_SYSTEM_ID_MAX + 1 : BOX_SPACE_ID_TEMPORARY_MIN;
+	uint32_t id_range_end = !is_temporary ?
+		(uint32_t)BOX_SPACE_ID_TEMPORARY_MIN :
+		(uint32_t)BOX_SPACE_MAX + 1;
+	uint32_t max_id = 0;
+	if (next_u32_id(BOX_SPACE_ID, id_range_end, &max_id) != 0)
+		return -1;
 	if (max_id < id_range_begin)
 		max_id = id_range_begin - 1;
 	*new_space_id = space_cache_find_next_unused_id(max_id);
@@ -5690,6 +5702,35 @@ box_generate_space_id(uint32_t *new_space_id, bool is_temporary)
 		 */
 		if (*new_space_id >= id_range_end)
 			panic("Space id limit is reached");
+	}
+	return 0;
+}
+
+API_EXPORT int
+box_generate_func_id(uint32_t *new_func_id, bool use_reserved_range)
+{
+	if (box_check_configured() < 0)
+		return -1;
+	uint32_t id_range_begin = use_reserved_range ?
+		BOX_FUNCTION_RESERVED_MIN : 1;
+	uint32_t id_range_end = use_reserved_range ?
+		(uint32_t)BOX_FUNCTION_MAX + 1 :
+		(uint32_t)BOX_FUNCTION_RESERVED_MIN;
+	uint32_t max_id = 0;
+	if (next_u32_id(BOX_FUNC_ID, id_range_end, &max_id) != 0)
+		return -1;
+	if (max_id < id_range_begin)
+		max_id = id_range_begin - 1;
+	*new_func_id = func_cache_find_next_unused_id(id_range_begin - 1);
+	/* Try again if overflowed. */
+	if (*new_func_id >= id_range_end) {
+		*new_func_id =
+			func_cache_find_next_unused_id(id_range_begin - 1);
+		/* Second overflow means all ids are occupied. */
+		if (*new_func_id >= id_range_end) {
+			diag_set(ClientError, ER_CANT_GENERATE, "function id");
+			return -1;
+		}
 	}
 	return 0;
 }

@@ -3074,7 +3074,8 @@ end
 box.schema.func = {}
 box.schema.func.create = function(name, opts)
     opts = opts or {}
-    check_param_table(opts, { setuid = 'boolean',
+    check_param_table(opts, { id = 'number',
+                              setuid = 'boolean',
                               if_not_exists = 'boolean',
                               language = 'string', body = 'string',
                               is_deterministic = 'boolean',
@@ -3108,12 +3109,18 @@ box.schema.func.create = function(name, opts)
     if opts.takes_raw_args then
         opts.opts.takes_raw_args = opts.takes_raw_args
     end
-    _func:auto_increment{session.euid(), name, opts.setuid, opts.language,
-                         opts.body, opts.routine_type, opts.param_list,
-                         opts.returns, opts.aggregate, opts.sql_data_access,
-                         opts.is_deterministic, opts.is_sandboxed,
-                         opts.is_null_call, opts.exports, opts.opts,
-                         opts.comment, opts.created, opts.last_altered}
+    if opts.id == nil then
+        opts.id = internal.generate_func_id(false)
+        if opts.id == nil then
+            box.error()
+        end
+    end
+    _func:insert{opts.id, session.euid(), name, opts.setuid, opts.language,
+                  opts.body, opts.routine_type, opts.param_list,
+                  opts.returns, opts.aggregate, opts.sql_data_access,
+                  opts.is_deterministic, opts.is_sandboxed,
+                  opts.is_null_call, opts.exports, opts.opts,
+                  opts.comment, opts.created, opts.last_altered}
 end
 
 box.schema.func.drop = function(name, opts)
