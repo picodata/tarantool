@@ -322,7 +322,7 @@ struct errcode_record {
 	/*267 */_(ER_EXCEEDED_VDBE_MAX_STEPS,	"Reached a limit on max executed vdbe opcodes. Limit: %u") \
 	/*268 */_(ER_ILLEGAL_OPTIONS,		"Illegal options: %s")   \
 	/*269 */_(ER_ILLEGAL_OPTIONS_FORMAT,    "Each option in third argument must be a table containing only one key value pair")   \
-	/*270 */_(ER_UNUSED4,			"") \
+	/*270 */_(ER_CANT_GENERATE,		"Can't generate %s") \
 	/*271 */_(ER_UNUSED5,			"") \
 	/*272 */_(ER_SCHEMA_UPGRADE_IN_PROGRESS, "Schema upgrade is already in progress") \
 	/*273 */_(ER_UNUSED7,			"") \
