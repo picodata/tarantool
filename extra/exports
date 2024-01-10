@@ -59,6 +59,7 @@ box_error_last
 box_error_message
 box_error_set
 box_error_type
+box_generate_func_id
 box_ibuf_read_range
 box_ibuf_reserve
 box_ibuf_write_range

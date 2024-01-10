@@ -873,6 +873,10 @@ boxk(int type, uint32_t space_id, const char *format, ...);
 int
 box_generate_space_id(uint32_t *new_space_id, bool is_temporary);
 
+/** Generate unique id for a function. */
+API_EXPORT int
+box_generate_func_id(uint32_t *new_func_id, bool use_reserved_range);
+
 /**
  * Broadcast the identification of the instance
  */

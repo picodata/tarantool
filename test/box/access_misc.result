@@ -181,7 +181,7 @@ gs = box.schema.space.create('guest_space')
 --
 box.schema.func.create('guest_func')
 ---
-- error: Read access to space '_func' is denied for user 'guest'
+- error: Write access to space '_func' is denied for user 'guest'
 ...
 session.su('admin', box.schema.user.grant, "guest", "read", "universe")
 ---
