@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include "assoc.h"
+#include "schema_def.h"
 
 /** ID -> func dictionary. */
 static struct mh_i32ptr_t *funcs;
@@ -85,6 +86,16 @@ func_by_name(const char *name, uint32_t name_len)
 	if (func == mh_end(funcs_by_name))
 		return NULL;
 	return (struct func *)mh_strnptr_node(funcs_by_name, func)->val;
+}
+
+uint32_t
+func_cache_find_next_unused_id(uint32_t cur_id)
+{
+	for (cur_id++; cur_id <= BOX_FUNCTION_MAX; cur_id++) {
+		if (func_by_id(cur_id) == NULL)
+			return cur_id;
+	}
+	return cur_id;
 }
 
 void
