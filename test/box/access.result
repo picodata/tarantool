@@ -1302,7 +1302,7 @@ box.schema.user.create('test')
 ...
 box.schema.func.create('test')
 ---
-- error: Read access to space '_func' is denied for user 'guest'
+- error: Write access to space '_func' is denied for user 'guest'
 ...
 box.session.su('admin')
 ---
@@ -1508,7 +1508,7 @@ box.schema.user.create('test_user')
 ...
 box.schema.func.create('test_func')
 ---
-- error: Read access to space '_func' is denied for user 'tester'
+- error: Write access to space '_func' is denied for user 'tester'
 ...
 box.session.su("admin")
 ---

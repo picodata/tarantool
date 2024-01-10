@@ -40,7 +40,7 @@ extern "C" {
 enum {
 	BOX_ENGINE_MAX = 3, /* + 1 to the actual number of engines */
 	BOX_SPACE_MAX = INT32_MAX,
-	BOX_FUNCTION_MAX = 32000,
+	BOX_FUNCTION_MAX = INT32_MAX,
 	BOX_INDEX_MAX = 128,
 	BOX_NAME_MAX = 65000,
 	BOX_INVALID_NAME_MAX = 64,
@@ -65,6 +65,13 @@ enum {
 	 * choose an id from outside this range.
 	 */
 	BOX_SPACE_ID_TEMPORARY_MIN = (1 << 30),
+	/**
+	 * Start of the range of reserved function ids. By default functions get
+	 * ids from the default range (smaller than BOX_FUNCTION_RESERVED_MIN),
+	 * but the user is free to choose an id from the reserved range
+	 * explicitly.
+	 */
+	BOX_FUNCTION_RESERVED_MIN = 32001,
 };
 static_assert(BOX_INVALID_NAME_MAX <= BOX_NAME_MAX,
 	      "invalid name max is less than name max");
