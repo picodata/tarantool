@@ -91,6 +91,13 @@ struct func *
 func_by_name(const char *name, uint32_t name_len);
 
 /**
+ * Find minimal unused id, which is greater than cur_id.
+ * If there is no available id, BOX_FUNCTION_MAX + 1 is returned.
+ */
+uint32_t
+func_cache_find_next_unused_id(uint32_t cur_id);
+
+/**
  * Register that there is a @a holder of type @a type that is dependent
  * on function @a func.
  * The function must be in cache (asserted).
