@@ -587,6 +587,7 @@ uri_escape
 uri_unescape
 uuid_nil
 uuid_unpack
+xlog_remove_file_impl
 _say
 _say_strerror
 
