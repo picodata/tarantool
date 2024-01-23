@@ -17,12 +17,12 @@ if(APPLE)
         /usr/local/opt/openldap/include
         /opt/local/include
         NO_CMAKE_SYSTEM_PATH)
-    find_path(LDAP_LIBRARIES NAMES ldap PATHS
+    find_library(LDAP_LIBRARIES NAMES ldap PATHS
         /usr/local/lib
         /usr/local/opt/openldap/lib
         /opt/local/lib
         NO_CMAKE_SYSTEM_PATH)
-    find_path(LBER_LIBRARIES NAMES lber PATHS
+    find_library(LBER_LIBRARIES NAMES lber PATHS
         /usr/local/lib
         /usr/local/opt/openldap/lib
         /opt/local/lib
