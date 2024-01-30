@@ -39,14 +39,7 @@ RUN if test -z "${TARANTOOL_VERSION}"; then \
 
 # Set yum repository for Postgresql 14 since this version
 # has been removed from pgdg repository.
-RUN echo $'[pg]\n\
-name=PostgreSQL 14 RHEL/CentOS $releasever - $basearch\n\
-baseurl=https://download.postgresql.org/pub/repos/yum/14/redhat/rhel-7-$basearch\n\
-enabled=1\n\
-gpgcheck=1\n\
-gpgkey=https://download.postgresql.org/pub/repos/yum/RPM-GPG-KEY-PGDG-14\n\
-repo_gpgcheck = 1\n'\
->> /etc/yum.repos.d/pg.repo \
+RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rpm -E %{rhel}`-x86_64/pgdg-redhat-repo-latest.noarch.rpm \
     && rpm --import https://download.picodata.io/tarantool-picodata/el/RPM-GPG-KEY-kdy \
     && yum install -y https://download.picodata.io/tarantool-picodata/el/7/x86_64/picodata-release-1.1.1.0-1.el7.x86_64.rpm \
     && yum -y install epel-release centos-release-scl-rh \
