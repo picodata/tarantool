@@ -40,8 +40,7 @@ RUN if test -z "${TARANTOOL_VERSION}"; then \
 # Set yum repository for Postgresql 14 since this version
 # has been removed from pgdg repository.
 RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rpm -E %{rhel}`-x86_64/pgdg-redhat-repo-latest.noarch.rpm \
-    && rpm --import https://download.picodata.io/tarantool-picodata/el/RPM-GPG-KEY-kdy \
-    && yum install -y https://download.picodata.io/tarantool-picodata/el/7/x86_64/picodata-release-1.1.1.0-1.el7.x86_64.rpm \
+    && curl -L https://download.picodata.io/tarantool-picodata/install.sh | bash \
     && yum -y install epel-release centos-release-scl-rh \
     && yum -y install llvm-toolset-7-clang \
     && : "---------- tarantool ----------" \
@@ -71,7 +70,8 @@ RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
         gperftools-libs \
     && ln -s /usr/lib64/libprofiler.so.0 /usr/lib64/libprofiler.so \
     && ln -s $(cat /etc/ld.so.conf.d/postgresql-pgdg-libs.conf | cut -f 1-3 -d '/') /usr/include/postgresql \
-    && mkdir -p /rocks \
+    && sed -i "s|http://rocks.tarantool.org/|https://download.binary.picodata.io/luarocks-tnt/|g" /usr/share/tarantool/luarocks/core/hardcoded.lua \
+    && mkdir -p /.rocks \
     && tarantoolctl rocks install lua-term \
     && tarantoolctl rocks install vshard $LUAROCK_VSHARD_VERSION \
     && tarantoolctl rocks install checks $LUAROCK_CHECKS_VERSION \
@@ -88,7 +88,7 @@ RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
     && tarantoolctl rocks install gis $LUAROCK_TARANTOOL_GIS_VERSION \
     && tarantoolctl rocks install gperftools $LUAROCK_TARANTOOL_GPERFTOOLS_VERSION \
     && : "---------- remove build deps ----------" \
-    && rm -rf /rocks \
+    && rm -rf /.rocks \
     && yum -y remove \
         git \
         cmake \
