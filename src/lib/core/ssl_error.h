@@ -6,11 +6,6 @@
 #pragma once
 
 #include "trivia/config.h"
-
-#if defined(ENABLE_SSL)
-# include "ssl_error_impl.h"
-#else /* !defined(ENABLE_SSL) */
-
 #include <stddef.h>
 
 #include "exception.h"
@@ -38,5 +33,3 @@ public:
 };
 
 #endif /* defined(__cplusplus) */
-
-#endif /* !defined(ENABLE_SSL) */
