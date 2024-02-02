@@ -71,6 +71,14 @@ enum iostream_flag {
 	 * Set if the iostream is encrypted (e.g. with SSL/TLS).
 	 */
 	IOSTREAM_IS_ENCRYPTED = 1 << 0,
+	/**
+	 * Set if the encrypted iostream is ready for read/write.
+	 */
+	SSL_IOSTREAM_SESSION_READY = 1 << 1,
+	/**
+	 * Set if last read/write call on encrypted iostream return an error.
+	 */
+	SSL_IOSTREAM_POISON = 1 << 2,
 };
 
 /**

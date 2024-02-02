@@ -47,6 +47,7 @@
 #include <fcntl.h>
 #include <tarantool_ev.h>
 #include <errno.h>
+#include <openssl/ssl.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -214,6 +215,27 @@ ssize_t sio_write(int fd, const void *buf, size_t count);
  * The diagnostics is not set in case of sio_wouldblock() errors.
  */
 ssize_t sio_writev(int fd, const struct iovec *iov, int iovcnt);
+
+/**
+ * Read *up to* 'count' bytes from a ssl socket.
+ * The diagnostics is not set for ssl_is_want_error() errors.
+ */
+int
+ssl_sio_read(SSL *ssl, int fd, void *buf, size_t count);
+
+/**
+ * Write up to 'count' bytes to a ssl socket.
+ * The diagnostics is not set in case of ssl_is_want_error() errors.
+ */
+int
+ssl_sio_write(SSL *ssl, int fd, const void *buf, size_t count);
+
+/**
+ * Write to a ssl socket with iovec.
+ * The diagnostics is not set in case of ssl_is_want_error() errors.
+ */
+int
+ssl_sio_writev(SSL *ssl, int fd, const struct iovec *iov, int iovcnt);
 
 /**
  * Send a message on a socket.
