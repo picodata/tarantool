@@ -13,10 +13,6 @@
 #include "trivia/config.h"
 #include "trivia/util.h"
 
-#if defined(ENABLE_SSL)
-# error unimplemented
-#endif
-
 const struct type_info type_SSLError = make_type("SSLError", NULL);
 
 struct error *

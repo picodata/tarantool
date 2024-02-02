@@ -464,6 +464,7 @@ endif()
 #
 # OpenSSL
 #
+SET(ENABLE_SSL ON)
 
 option(OPENSSL_USE_STATIC_LIBS "Link OpenSSL statically"
     ${BUILD_STATIC})

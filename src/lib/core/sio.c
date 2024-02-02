@@ -50,6 +50,17 @@
 static_assert(SMALL_STATIC_SIZE > NI_MAXHOST + NI_MAXSERV,
 	      "static buffer should fit host name");
 
+static inline bool
+ssl_is_want_error(SSL *ssl, int err)
+{
+	int ssl_err = SSL_get_error(ssl, err);
+	return ssl_err == SSL_ERROR_WANT_READ ||
+	       ssl_err == SSL_ERROR_WANT_WRITE ||
+	       ssl_err == SSL_ERROR_WANT_ACCEPT ||
+	       ssl_err == SSL_ERROR_WANT_CONNECT ||
+	       ssl_err == SSL_ERROR_ZERO_RETURN;
+}
+
 /**
  * Safely print a socket description to the given buffer, with correct overflow
  * checks and all.
@@ -330,6 +341,17 @@ sio_read(int fd, void *buf, size_t count)
 	return n;
 }
 
+int
+ssl_sio_read(SSL *ssl, int fd, void *buf, size_t count)
+{
+	int n = SSL_read(ssl, buf, (int)count);
+	if (n <= 0 && !ssl_is_want_error(ssl, n))
+		diag_set(SocketError, sio_socketname(fd), "ssl_read(%zd)",
+			 count);
+
+	return n;
+}
+
 ssize_t
 sio_write(int fd, const void *buf, size_t count)
 {
@@ -337,6 +359,18 @@ sio_write(int fd, const void *buf, size_t count)
 	ssize_t n = write(fd, buf, count);
 	if (n < 0 && !sio_wouldblock(errno))
 		diag_set(SocketError, sio_socketname(fd), "write(%zd)", count);
+	return n;
+}
+
+int
+ssl_sio_write(SSL *ssl, int fd, const void *buf, size_t count)
+{
+	assert(count);
+	int n = SSL_write(ssl, buf, (int)count);
+	if (n <= 0 && !ssl_is_want_error(ssl, n))
+		diag_set(SocketError, sio_socketname(fd), "ssl_write(%zd)",
+			 count);
+
 	return n;
 }
 
@@ -348,6 +382,28 @@ sio_writev(int fd, const struct iovec *iov, int iovcnt)
 	if (n < 0 && !sio_wouldblock(errno))
 		diag_set(SocketError, sio_socketname(fd), "writev(%d)", iovcnt);
 	return n;
+}
+
+int
+ssl_sio_writev(SSL *ssl, int fd, const struct iovec *iov, int iovcnt)
+{
+	int cnt = iovcnt < IOV_MAX ? iovcnt : IOV_MAX;
+
+	int written = 0;
+	for (int i = 0; i < cnt; ++i) {
+		const void *buffer = iov[i].iov_base;
+		int r = ssl_sio_write(ssl, fd, buffer, iov[i].iov_len);
+		if (r < 0) {
+			if (ssl_is_want_error(ssl, r) || written > 0)
+				return written;
+			else
+				return r;
+		}
+		written += r;
+		if ((size_t)r != iov[i].iov_len)
+			break;
+	}
+	return written;
 }
 
 ssize_t

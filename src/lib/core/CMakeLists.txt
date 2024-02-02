@@ -61,6 +61,8 @@ else()
     list(APPEND core_sources  tt_compression.c)
 endif()
 
+SET(SSL_SOURCES ssl_impl.c ssl_error.cc)
+
 if(ENABLE_SSL)
     list(APPEND core_sources ${SSL_SOURCES})
 else()
