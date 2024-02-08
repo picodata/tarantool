@@ -56,6 +56,7 @@
 #include "wal.h"
 #include "txn_limbo.h"
 #include "raft.h"
+#include "tt_uuid.h"
 
 #include <stdlib.h>
 
@@ -581,6 +582,13 @@ relay_status_update(struct cmsg *msg)
 	struct relay_status_msg *status = (struct relay_status_msg *)msg;
 	struct relay *relay = status->relay;
 	relay->tx_seen_time = ev_monotonic_now(loop());
+
+	say_verbose(
+		"update tx_seen_time replica %d (%s), time: %f",
+		relay->replica->id,
+		tt_uuid_str(&relay->replica->uuid),
+		relay->tx_seen_time);
+
 	relay_check_status_needs_update(relay);
 }
 
@@ -595,6 +603,12 @@ tx_status_update(struct cmsg *msg)
 	vclock_copy(&relay->tx.vclock, &status->vclock);
 	relay->tx.txn_lag = status->txn_lag;
 	relay->tx.vclock_sync = status->vclock_sync;
+
+	say_verbose(
+		"tx status update %d (%s), vclock: %s",
+		relay->replica->id,
+		tt_uuid_str(&relay->replica->uuid),
+		vclock_to_string(&status->vclock));
 
 	struct replication_ack ack;
 	ack.source = status->relay->replica->id;
@@ -752,6 +766,16 @@ relay_reader_f(va_list ap)
 			coio_read_xrow_timeout_xc(relay->io, &ibuf, &xrow,
 					replication_disconnect_timeout());
 			xrow_decode_applier_heartbeat_xc(&xrow, last_recv_ack);
+
+			say_verbose("got applier heartbeat %d (%s): "
+				    "{xrow.tm: %f, vclock: %s,"
+					"vclock_sync: %" PRIu64 "}",
+				    relay->replica->id,
+				    tt_uuid_str(&relay->replica->uuid),
+				    xrow.tm,
+				    vclock_to_string(&last_recv_ack->vclock),
+				    last_recv_ack->vclock_sync);
+
 			/*
 			 * Replica send us last replicated transaction
 			 * timestamp which is needed for relay lag
@@ -828,10 +852,23 @@ relay_send_heartbeat_on_timeout(struct relay *relay)
 	 * network error. IOW transient hangs are tolerated without leader
 	 * switchover.
 	 */
-	if (!relay->need_new_vclock_sync &&
+
+	bool skip_heartbeat = !relay->need_new_vclock_sync &&
 	    (now - relay->last_heartbeat_time <= replication_timeout ||
-	    now - relay->tx_seen_time >= replication_disconnect_timeout()))
+	    now - relay->tx_seen_time >= replication_disconnect_timeout());
+
+	say_verbose("maybe send heartbeat for replica %d (%s): "
+		    "{need_new_vclock_sync: %d, n-lrt: %f, n-tst: %f, will_send: %d}",
+			    relay->replica->id,
+			    tt_uuid_str(&relay->replica->uuid),
+			    relay->need_new_vclock_sync,
+			    now - relay->last_heartbeat_time,
+			    now - relay->tx_seen_time,
+				skip_heartbeat);
+
+	if (skip_heartbeat)
 		return;
+
 	relay_send_heartbeat(relay);
 }
 
@@ -940,6 +977,18 @@ relay_check_status_needs_update(struct relay *relay)
 	relay_schedule_pending_gc(relay, send_vclock);
 
 	double tx_idle = ev_monotonic_now(loop()) - relay->tx_seen_time;
+	say_verbose(
+		"check status needs update %d (%s), tx_idle: %f,"
+		 "sum_status_vclock: %" PRId64 ", sum_send_vclock: %" PRId64
+		 ", status_vclock_sync: %" PRIu64 ", ack_vclock_sync: %" PRIu64,
+		relay->replica->id,
+		tt_uuid_str(&relay->replica->uuid),
+		tx_idle,
+		vclock_sum(&status_msg->vclock),
+		vclock_sum(send_vclock),
+		status_msg->vclock_sync,
+		last_recv_ack->vclock_sync);
+
 	if (vclock_sum(&status_msg->vclock) ==
 	    vclock_sum(send_vclock) && tx_idle <= replication_timeout &&
 	    status_msg->vclock_sync == last_recv_ack->vclock_sync)
@@ -1040,6 +1089,10 @@ relay_subscribe_f(va_list ap)
 		 */
 		relay_check_status_needs_update(relay);
 	}
+
+	say_verbose("send hb fiber is closed (replica %d, %s",
+		    relay->replica->id,
+		    tt_uuid_str(&relay->replica->uuid));
 
 	/*
 	 * Clear garbage collector trigger and WAL watcher.
