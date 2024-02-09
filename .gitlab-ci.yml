@@ -2,6 +2,11 @@ variables:
     # set larger git depth, so git describe works properly
     GIT_DEPTH: 0
     USER: 'tarantool'
+    DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
+    DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
+  # k8s runner config
+    KUBERNETES_CPU_REQUEST: 4
+    KUBERNETES_MEMORY_REQUEST: "8Gi"
 
 stages:
   - test
@@ -32,8 +37,17 @@ test-ubuntu:
     tags: [docker]
     image: docker-public.binary.picodata.io/tarantool-testing:latest
     script:
+      - TAG_SHORT=$(git describe | awk -F- '{print $1}')
+      - TAG_LONG=$(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
+      - echo "TAG_LONG=$TAG_LONG" >> build.env
+      - echo "TAG_SHORT=$TAG_SHORT" >> build.env
       - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk test-release
+    artifacts:
+      name: "artifacts-vars-${CI_PIPELINE_ID}"
+      expire_in: 20 hour
+      reports:
+        dotenv: build.env
 
 test_mac-m1:
     extends: .test
@@ -341,7 +355,7 @@ deploy-packages:
   tags:
     - shell_p_t
   only:
-#    - web
+    - web
     - tags
   before_script:
     - eval $(ssh-agent -s)
@@ -527,38 +541,33 @@ check-deployment-astra:
     - apt-get update
     - apt-get install -y tarantool-picodata=${VER}-1 tarantool-picodata-dev=${VER}-1
 
-docker:
-  stage: docker
-  only:
-    - tags
-  variables:
-    DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
-    DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
-  tags:
-    - shell_p_t
+.kaniko-image:
+  image:
+    name: docker-public.binary.picodata.io/kaniko-project/executor:v1.20.1-debug
+    entrypoint: ['']
+    pull_policy: [if-not-present]
   before_script:
-    - mkdir -p $CI_PROJECT_DIR/.docker
-    - echo $DOCKER_AUTH_RW > $CI_PROJECT_DIR/.docker/config.json
-    - TAG_SHORT=$(git describe | awk -F- '{print $1}')
-    - TAG_LONG=$(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
-    - echo $TAG_SHORT
-    - echo $TAG_LONG
-    - echo "TARANTOOL_VERSION=$TAG_LONG" >> build.env
+    - mkdir -p /kaniko/.docker
+    - echo "$DOCKER_AUTH_CONFIG" > /kaniko/.docker/config.json
+  tags: ["docker"]
   script:
     - >
-      docker build docker/
-      --build-arg TARANTOOL_VERSION=$TAG_LONG
-      -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT
-      -t $DOCKER_REGISTRY_PUB/tarantool:$TAG_LONG
-      -t $DOCKER_REGISTRY_PUB/tarantool:latest
-    - docker --config $CI_PROJECT_DIR/.docker/ push -a $DOCKER_REGISTRY_PUB/tarantool
+      /kaniko/executor --context $CI_PROJECT_DIR --dockerfile ${DOCKERFILE}
+      --build-arg TARANTOOL_VERSION=$TAG_LONG ${PUSH_DOCKER}
+      --cache=false --cache-run-layers=true --single-snapshot --compressed-caching=false --use-new-run --snapshot-mode=redo --cleanup
+      --destination $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT --destination $DOCKER_REGISTRY_PUB/tarantool:$TAG_LONG --destination $DOCKER_REGISTRY_PUB/tarantool:latest
+
+build-on-tag:
+  stage: docker
+  extends: .kaniko-image
+  only:
+    - tags
   needs:
     - deploy-packages
-  artifacts:
-    name: "artifacts-vars-${CI_PIPELINE_ID}"
-    expire_in: 20 hour
-    reports:
-      dotenv: build.env
+    - test-ubuntu
+  variables:
+    PUSH_DOCKER: ""
+    DOCKERFILE: docker/Dockerfile
 
 downstream:
   stage: docker
@@ -571,5 +580,5 @@ downstream:
     branch: master
     strategy: depend
   needs:
-    - job: docker
+    - job: build-on-tag
       artifacts: true
