@@ -16,8 +16,8 @@ ENV \
     LUAROCK_TARANTOOL_PROMETHEUS_VERSION=1.0.4 \
     LUAROCK_TARANTOOL_GPERFTOOLS_VERSION=1.0.1
 
-COPY files/luarocks-config_centos.lua /usr/local/etc/luarocks/config-5.1.lua
-COPY files/luarocks-config.lua /usr/local/etc/tarantool/rocks/config-5.1.lua
+COPY docker/files/luarocks-config_centos.lua /usr/local/etc/luarocks/config-5.1.lua
+COPY docker/files/luarocks-config.lua /usr/local/etc/tarantool/rocks/config-5.1.lua
 
 RUN ["groupadd", "tarantool"]
 RUN ["adduser", "-g", "tarantool", "tarantool"]
@@ -126,12 +126,12 @@ RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
 VOLUME /var/lib/tarantool
 WORKDIR /opt/tarantool
 
-COPY files/tarantool-entrypoint.lua /usr/local/bin/
-COPY files/tarantool_set_config.lua /usr/local/bin/
-COPY files/docker-entrypoint_centos.sh /usr/local/bin/docker-entrypoint.sh
-COPY files/console /usr/local/bin/
-COPY files/tarantool_is_up /usr/local/bin/
-COPY files/tarantool.default /usr/local/etc/default/tarantool
+COPY docker/files/tarantool-entrypoint.lua /usr/local/bin/
+COPY docker/files/tarantool_set_config.lua /usr/local/bin/
+COPY docker/files/docker-entrypoint_centos.sh /usr/local/bin/docker-entrypoint.sh
+COPY docker/files/console /usr/local/bin/
+COPY docker/files/tarantool_is_up /usr/local/bin/
+COPY docker/files/tarantool.default /usr/local/etc/default/tarantool
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 
