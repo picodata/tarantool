@@ -8,6 +8,7 @@ _CPack_Packages
 *.gcov
 .git-ignore/
 .pc/
+oss-fuzz/
 coverity/
 coverage/
 coverage.info
