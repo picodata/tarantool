@@ -72,9 +72,9 @@ class Supervisor:
         self.latest_n_inputs = 0
         self.latest_new_path = self.start_time
 
-    def criterias_satisfied(self) -> bool:
+    def criteria_satisfied(self) -> bool:
         """Indicates whether stopping criteria of the corresponding fuzzer
-        are satisfied. E.g. it was running long enogh and covered paths."""
+        are satisfied. E.g. it was running long enough and covered enough paths."""
 
         # Coverage increased at least twice in comparison with corpus
         cov = False
@@ -164,7 +164,5 @@ class Supervisor:
 # The script takes the fuzzing target name as the first argument.
 # Then it runs the fuzzing target until either stopping criterias are satisfied
 # or fuzzer detects a bug and fails.
-# TODO: support running several fuzzers
 if __name__ == "__main__":
     Supervisor(sys.argv[1]).run()
-    pass
