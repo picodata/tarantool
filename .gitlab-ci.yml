@@ -79,9 +79,10 @@ fuzz-check-build:
     script:
       # Clone oss-fuzz instead of adding it as a submodule
       # as we don't want it to be checked by static analyzers - it's used only for fuzzing
-      - git clone https://github.com/google/oss-fuzz.git
+      - git clone --depth=1 https://github.com/google/oss-fuzz.git
       - cd oss-fuzz
       # Checkout a fixed oss-fuzz commit to guarantee reproducible builds
+      - git fetch --depth=1 origin e8e124996508f1e4ffe566896638c7213ab440d5
       - git checkout e8e124996508f1e4ffe566896638c7213ab440d5
       - python3 infra/helper.py build_image --no-pull --external ..
       - python3 infra/helper.py build_fuzzers --external .. --sanitizer=address
@@ -96,9 +97,10 @@ fuzz-run:
     script:
       # Clone oss-fuzz instead of adding it as a submodule
       # as we don't want it to be checked by static analyzers - it's used only for fuzzing
-      - git clone https://github.com/google/oss-fuzz.git
+      - git clone --depth=1 https://github.com/google/oss-fuzz.git
       - cd oss-fuzz
       # Checkout a fixed oss-fuzz commit to guarantee reproducible builds
+      - git fetch --depth=1 origin e8e124996508f1e4ffe566896638c7213ab440d5
       - git checkout e8e124996508f1e4ffe566896638c7213ab440d5
       - python3 infra/helper.py build_image --no-pull --external ..
       - python3 infra/helper.py build_fuzzers --external .. --sanitizer=address
