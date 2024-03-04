@@ -1,8 +1,9 @@
 import time
 import subprocess
-import sys
+from argparse import ArgumentParser
 from enum import Enum, auto
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class MsgType(Enum):
@@ -62,8 +63,10 @@ class Supervisor:
     """A wrapper to run the fuzzer until stopping criteria are satisfied
     or an error is encountered"""
 
-    def __init__(self, fuzzer_name: str):
+    def __init__(self, fuzzer_name: str, libfuzzer_log: Path, corpus_dir: Path):
         self.fuzzer_name = fuzzer_name
+        self.libfuzzer_log = libfuzzer_log
+        self.corpus_dir = corpus_dir
         self.start_time = time.monotonic()
         self.init_cov = None
         self.latest_cov = None
@@ -122,6 +125,8 @@ class Supervisor:
                 "run_fuzzer",
                 "--external",
                 ".",
+                "--corpus-dir",
+                self.corpus_dir.resolve(),
                 self.fuzzer_name,
                 # after this all options go directly to the fuzzer
                 "--",
@@ -130,39 +135,63 @@ class Supervisor:
                 # TODO: not all fuzzers have associated dictionaries
                 f"-dict={self.fuzzer_name}.dict",
                 # By default address sanitizer is used
-                # By default corpus {fuzzer_name}_corpus will be loaded
+                # By default corpus {fuzzer_name}_corpus will be loaded from oss-fuzz build directory
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
 
-        for line in proc.stdout:
-            msg = parse_line(line)
-            # if it is not a conventional log message print and continue
-            if not msg:
-                print(line.strip("\n"), end="\r\n")
-                continue
-            else:
-                print(msg, end="\r\n")
-            self.update_stats(msg)
-            if self.criterias_satisfied():
-                print(f"Fuzzer {self.fuzzer_name} satisfied criteria")
-                proc.kill()
-                return
+        with self.libfuzzer_log.open("w") as libfuzzer_log:
+            for line in proc.stdout:
+                libfuzzer_log.write(line)
+                msg = parse_line(line)
+                # if it is not a conventional log message print and continue
+                if not msg:
+                    print(line.strip("\n"), end="\r\n")
+                    continue
+
+                # On pulse print the current state
+                if msg.ty == MsgType.pulse:
+                    print(vars(self), end="\r\n")
+
+                self.update_stats(msg)
+                if self.criteria_satisfied():
+                    print(f"Fuzzer {self.fuzzer_name} satisfied criteria")
+                    proc.kill()
+                    return
 
         outs, errs = proc.communicate(timeout=15)
         print(outs)
         print(errs)
         code = proc.poll()
-        if code != 0 and (not self.criterias_satisfied()):
+        if code != 0 and (not self.criteria_satisfied()):
             raise Exception(
                 f"Fuzzer {self.fuzzer_name} stopped without satisfying criteria. Exit code: {code}"
             )
 
 
 # The script takes the fuzzing target name as the first argument.
-# Then it runs the fuzzing target until either stopping criterias are satisfied
+# Then it runs the fuzzing target until either stopping criteria are satisfied
 # or fuzzer detects a bug and fails.
 if __name__ == "__main__":
-    Supervisor(sys.argv[1]).run()
+    parser = ArgumentParser(
+        prog="Fuzzer Supervisor",
+        description="Runs a supplied fuzzer target until either stopping criteria\
+ are satisfied or fuzzer detects a bug and fails",
+    )
+    parser.add_argument("fuzzer_target_name")
+    parser.add_argument(
+        "--libfuzzer-log",
+        required=True,
+        type=Path,
+        help="File where libfuzzer log will be written",
+    )
+    parser.add_argument(
+        "--corpus-dir",
+        required=True,
+        type=Path,
+        help="Directory where libuzzer generated corpus will be stored",
+    )
+    args = parser.parse_args()
+    Supervisor(args.fuzzer_target_name, args.libfuzzer_log, args.corpus_dir).run()
