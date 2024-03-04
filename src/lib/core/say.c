@@ -661,7 +661,7 @@ log_syslog_init(struct log *log, const char *init_str)
 	}
 
 	if (opts.facility == syslog_facility_MAX)
-		log->syslog_facility = SYSLOG_LOCAL7;
+		log->syslog_facility = SYSLOG_USER;
 	else
 		log->syslog_facility = opts.facility;
 	say_free_syslog_opts(&opts);
