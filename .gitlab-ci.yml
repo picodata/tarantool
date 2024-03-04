@@ -119,7 +119,11 @@ fuzz-run:
       - python3 infra/helper.py build_image --no-pull --external ..
       - python3 infra/helper.py build_fuzzers --external .. --sanitizer=address
       - cd ..
-      - python3 test/fuzz/fuzz_until.py swim_proto_meta_fuzzer
+      - mkdir swim_proto_meta_corpus
+      - |
+        python3 test/fuzz/fuzz_until.py swim_proto_meta_fuzzer \
+        --libfuzzer-log swim_proto_meta.log \
+        --corpus-dir swim_proto_meta_corpus
 
 .pack:
   tags:
