@@ -119,7 +119,7 @@ def post_handle(env, response):
 
 def other_handle(env, response, method, code):
     headers = [("Content-Type", "text/plain"), ("method", method)]
-    body = [method.encode('utf-8')]
+    body = []
     for key,value in iter(env.items()):
         if "HTTP_" in key:
             headers.append((key[5:].lower(), value))
