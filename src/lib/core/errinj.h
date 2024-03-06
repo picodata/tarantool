@@ -102,6 +102,8 @@ struct errinj {
 	_(ERRINJ_IPROTO_SET_VERSION, ERRINJ_INT, {.iparam = -1}) \
 	_(ERRINJ_IPROTO_TX_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_IPROTO_WRITE_ERROR_DELAY, ERRINJ_BOOL, {.bparam = false})\
+	_(ERRINJ_LIMBO_PROMOTE_ACK_SLEEP, ERRINJ_BOOL, {.bparam = false})\
+	_(ERRINJ_LIMBO_WRITE_PROMOTE_SLEEP, ERRINJ_BOOL, {.bparam = false})\
 	_(ERRINJ_LOG_ROTATE, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_MAIN_MAKE_FILE_ON_RETURN, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_MEMTX_DELAY_GC, ERRINJ_BOOL, {.bparam = false}) \
@@ -178,6 +180,9 @@ struct errinj {
 	_(ERRINJ_WAL_BREAK_LSN, ERRINJ_INT, {.iparam = -1}) \
 	_(ERRINJ_WAL_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_WAL_DELAY_COUNTDOWN, ERRINJ_INT, {.iparam = -1}) \
+	_(ERRINJ_WAL_DELAY_ON_XROW_TYPE, ERRINJ_INT, {.iparam = -1}) \
+	_(ERRINJ_WAL_DELAY_ON_XROW_TYPE_SLEEP, ERRINJ_BOOL, {.bparam = false}) \
+	_(ERRINJ_WAL_ERROR_ON_XROW_TYPE, ERRINJ_INT, {.iparam = -1}) \
 	_(ERRINJ_WAL_FALLOCATE, ERRINJ_INT, {.iparam = 0}) \
 	_(ERRINJ_WAL_IO, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_WAL_ROTATE, ERRINJ_BOOL, {.bparam = false}) \
