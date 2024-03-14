@@ -381,6 +381,9 @@ ssl_iostream_create_supported(struct iostream *io, int fd,
 	io->fd = fd;
 	io->data = ssl;
 	io->vtab = &ssl_iostream_vtab;
+#ifndef NDEBUG
+	io->owner = NULL;
+#endif
 	return 0;
 }
 
