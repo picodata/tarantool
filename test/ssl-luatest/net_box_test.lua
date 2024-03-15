@@ -65,8 +65,8 @@ g.test_client_close_connection = function()
         }
         t.assert_not_equals(box.cfg.listen, nil)
 
-        _G['client_connected'] = false
-        _G['client_disconnected'] = false
+        rawset(_G, 'client_connected', false)
+        rawset(_G, 'client_disconnected', false)
         box.session.on_connect(function()
             _G['client_connected'] = true
         end)
@@ -129,12 +129,13 @@ g.test_server_drop_connection = function()
     end, { certs_file('self-sign-key.pem'), certs_file('self-sign-cert.pem') })
 
     g.client:exec(function(srv_uri)
-        _G['connection'] = require('net.box').connect({
+        local conn = require('net.box').connect({
             uri = srv_uri,
             params = {
                 transport = 'ssl',
             }
         })
+        rawset(_G, 'connection', conn)
         t.assert_equals(_G['connection'].error, nil)
         t.assert_equals(_G['connection']:eval('return 21 * 2'), 42)
     end, { srv_uri })
