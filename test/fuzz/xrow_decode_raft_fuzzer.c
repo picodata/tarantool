@@ -47,6 +47,8 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 
 	row.body[0] = body;
 	row.bodycnt = 1;
+	row.type = IPROTO_RAFT;
+	row.group_id = GROUP_LOCAL;
 
 	struct raft_request request = {0};
 	struct vclock vclock = {0};
