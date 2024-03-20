@@ -113,9 +113,14 @@ mp_decode_vclock(const char **data, struct vclock *vclock)
 		if (mp_typeof(**data) != MP_UINT)
 			return -1;
 		uint32_t id = mp_decode_uint(data);
+		if (id >= VCLOCK_MAX)
+			return -1;
 		if (mp_typeof(**data) != MP_UINT)
 			return -1;
 		int64_t lsn = mp_decode_uint(data);
+		int64_t prev_lsn = vclock_get(vclock, id);
+		if (lsn <= prev_lsn)
+			return -1;
 		if (lsn > 0)
 			vclock_follow(vclock, id, lsn);
 	}
