@@ -25,6 +25,17 @@ teardown(void)
 int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
+	// Need at least 2 bytes for header values `type` and `group_id`
+	if (size < 2)
+		return -1;
+	struct xrow_header row = {0};
+	row.type = data[0];
+	row.group_id = data[1];
+	// Shift pointers now that header valuas are read,
+	// everything else is reserved for body
+	data += 2;
+	size -= 2;
+
 	const char *d = (const char *)data;
 	const char *end = (const char *)data + size;
 	if (mp_check(&d, end) != 0)
@@ -34,7 +45,6 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	body.iov_base = (void *)data;
 	body.iov_len = size;
 
-	struct xrow_header row = {0};
 	row.body[0] = body;
 	row.bodycnt = 1;
 
