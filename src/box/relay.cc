@@ -585,11 +585,16 @@ tx_status_update(struct cmsg *msg)
 	}
 	trigger_run(&replicaset.on_ack, &ack);
 
-	static const struct cmsg_hop route[] = {
-		{relay_status_update, NULL}
-	};
-	cmsg_init(msg, route);
-	cpipe_push(&status->relay->relay_pipe, msg);
+	if (status->relay->tx.is_paired) {
+		static const struct cmsg_hop route[] = {
+			{relay_status_update, NULL}
+		};
+		cmsg_init(msg, route);
+		cpipe_push(&status->relay->relay_pipe, msg);
+	} else {
+		assert(msg->hop->pipe == NULL);
+		cmsg_init(msg, NULL);
+	}
 }
 
 /**
