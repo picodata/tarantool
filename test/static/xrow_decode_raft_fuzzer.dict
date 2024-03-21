@@ -1,0 +1,2 @@
+# IPROTO_RAFT and GROUP_LOCAL
+header="\x1E\x01"
