@@ -86,6 +86,7 @@ coverage:
       - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk test-coverage
 
+# TODO: move out shared setup for fuzzing jobs
 # Check that fuzzing works
 fuzz-check-build:
     extends: .test
@@ -98,9 +99,34 @@ fuzz-check-build:
       # Checkout a fixed oss-fuzz commit to guarantee reproducible builds
       - git fetch --depth=1 origin e8e124996508f1e4ffe566896638c7213ab440d5
       - git checkout e8e124996508f1e4ffe566896638c7213ab440d5
-      - python3 infra/helper.py build_image --no-pull --external ..
       - python3 infra/helper.py build_fuzzers --external .. --sanitizer=address
       - python3 infra/helper.py check_build --external .. --sanitizer=address
+
+# Generate coverage report
+fuzz-coverage:
+    extends: .test
+    tags: [shell_p_t]
+    when: manual
+    script:
+      # Clone oss-fuzz instead of adding it as a submodule
+      # as we don't want it to be checked by static analyzers - it's used only for fuzzing
+      - git clone --depth=1 https://github.com/google/oss-fuzz.git
+      - cd oss-fuzz
+      # Checkout a fixed oss-fuzz commit to guarantee reproducible builds
+      - git fetch --depth=1 origin e8e124996508f1e4ffe566896638c7213ab440d5
+      - git checkout e8e124996508f1e4ffe566896638c7213ab440d5
+      - python3 infra/helper.py build_fuzzers --external .. --sanitizer=coverage
+      # `coverage` command requires corpus folders to be located in
+      # `oss-fuzz/build/corpus/{project_name}`
+      # TODO: find out why they are not located there by default
+      - mkdir -p build/corpus/tarantool
+      - cp -r ../test/static/corpus/* build/corpus/tarantool
+      # add `_fuzzer` postfix to corpus folders
+      - (cd build/corpus/tarantool && for i in *; do mv "$i" "${i%.}_fuzzer"; done)
+      - python3 infra/helper.py coverage --no-serve --external ..
+    artifacts:
+      paths:
+        - oss-fuzz/build/out/tarantool/report
 
 # Run fuzzers until they satisfy stop criterias
 # XXX: Just a stub for now, it probably needs a custom runner
