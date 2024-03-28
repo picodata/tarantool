@@ -235,6 +235,9 @@ C and Lua/C modules.
 %if 0%{?rhel} >= 7
          -DENABLE_BUNDLED_LDAP:BOOL=OFF \
 %endif
+%if 0%{?rhel} == 7
+         -DENABLE_BUNDLED_OPENSSL:BOOL=ON \
+%endif
          -DENABLE_WERROR:BOOL=ON \
          -DENABLE_DIST:BOOL=ON
 
