@@ -74,7 +74,7 @@ class Supervisor:
         self.init_ft = None
         self.latest_ft = None
         self.latest_n_inputs = 0
-        self.latest_new_path = self.start_time
+        self.latest_cov_inc = self.start_time
 
     def criteria_satisfied(self) -> bool:
         """Indicates whether stopping criteria of the corresponding fuzzer
@@ -94,14 +94,16 @@ class Supervisor:
         # At least 100_000 fuzzer test runs
         n_inputs = self.latest_n_inputs > 100_000
 
-        # Last new path was discovered 2 hours ago
-        new_path = (time.monotonic() - self.latest_new_path) > 2 * 60 * 60
+        # Last coverage increase was detected 2 hours ago
+        cov_inc = (time.monotonic() - self.latest_cov_inc) > 2 * 60 * 60
 
-        return (cov or ft or not self.wait_2x_cov) and n_inputs and new_path
+        return (cov or ft or not self.wait_2x_cov) and n_inputs and cov_inc
 
     def update_stats(self, msg: Msg):
         self.latest_n_inputs = msg.n_inputs
         if msg.cov:
+            if self.latest_cov and msg.cov > self.latest_cov:
+                self.latest_cov_inc = time.monotonic()
             self.latest_cov = msg.cov
         if msg.ft:
             self.latest_ft = msg.ft
@@ -109,9 +111,6 @@ class Supervisor:
         if msg.ty == MsgType.INITED:
             self.init_cov = msg.cov
             self.init_ft = msg.ft
-
-        if msg.ty == MsgType.NEW:
-            self.latest_new_path = time.monotonic()
 
     def run(self):
         """Run the corresponding fuzzer until either stopping criteria are
@@ -122,9 +121,6 @@ class Supervisor:
         proc = subprocess.Popen(
             [
                 f"./oss-fuzz/build/out/tarantool/{self.fuzzer_name}_fuzzer",
-
-                # reduction might slow down both fuzzer and superviser
-                "-reduce_inputs=0",
 
                 # Read from both corpus folders, write only to the first
                 self.corpus_dir.resolve(),
