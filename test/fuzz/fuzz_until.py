@@ -67,7 +67,7 @@ class Supervisor:
         self.fuzzer_name = fuzzer_name
         self.libfuzzer_log = libfuzzer_log
         self.corpus_dir = corpus_dir
-        self.wait_2x_cov = self.wait_2x_cov
+        self.wait_2x_cov = wait_2x_cov
         self.start_time = time.monotonic()
         self.init_cov = None
         self.latest_cov = None
@@ -121,20 +121,14 @@ class Supervisor:
         print(f"Running {self.fuzzer_name}")
         proc = subprocess.Popen(
             [
-                "python3",
-                "oss-fuzz/infra/helper.py",
-                "run_fuzzer",
-                "--external",
-                ".",
-                "--corpus-dir",
-                self.corpus_dir.resolve(),
-                self.fuzzer_name,
-                # after this all options go directly to the fuzzer
-                "--",
+                f"./oss-fuzz/build/out/tarantool/{self.fuzzer_name}_fuzzer",
+
                 # reduction might slow down both fuzzer and superviser
                 "-reduce_inputs=0",
-                # By default address sanitizer is used
-                # By default corpus {fuzzer_name}_corpus will be loaded from oss-fuzz build directory
+
+                # Read from both corpus folders, write only to the first
+                self.corpus_dir.resolve(),
+                f"test/static/corpus/{self.fuzzer_name}"
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -142,7 +136,7 @@ class Supervisor:
         )
 
         with self.libfuzzer_log.open("w") as libfuzzer_log:
-            for line in proc.stdout:
+            for line in proc.stderr:
                 msg = parse_line(line)
                 # Add timestamp in seconds relative to the starting time of a fuzzer
                 line = f"{time.monotonic() - self.start_time}s {line}"
@@ -159,7 +153,8 @@ class Supervisor:
                 self.update_stats(msg)
                 if self.criteria_satisfied():
                     print(f"Fuzzer {self.fuzzer_name} satisfied criteria")
-                    proc.kill()
+                    proc.terminate()
+                    proc.wait(timeout=15)
                     return
 
         outs, errs = proc.communicate(timeout=15)
@@ -175,6 +170,7 @@ class Supervisor:
 # The script takes the fuzzing target name as the first argument.
 # Then it runs the fuzzing target until either stopping criteria are satisfied
 # or fuzzer detects a bug and fails.
+# Fuzzers should be built first. See README.md for instructions.
 if __name__ == "__main__":
     parser = ArgumentParser(
         prog="Fuzzer Supervisor",
