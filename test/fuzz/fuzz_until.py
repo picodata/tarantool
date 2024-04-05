@@ -63,10 +63,11 @@ class Supervisor:
     """A wrapper to run the fuzzer until stopping criteria are satisfied
     or an error is encountered"""
 
-    def __init__(self, fuzzer_name: str, libfuzzer_log: Path, corpus_dir: Path):
+    def __init__(self, fuzzer_name: str, libfuzzer_log: Path, corpus_dir: Path, wait_2x_cov: bool):
         self.fuzzer_name = fuzzer_name
         self.libfuzzer_log = libfuzzer_log
         self.corpus_dir = corpus_dir
+        self.wait_2x_cov = self.wait_2x_cov
         self.start_time = time.monotonic()
         self.init_cov = None
         self.latest_cov = None
@@ -96,7 +97,7 @@ class Supervisor:
         # Last new path was discovered 2 hours ago
         new_path = (time.monotonic() - self.latest_new_path) > 2 * 60 * 60
 
-        return (cov or ft) and n_inputs and new_path
+        return (cov or ft or not self.wait_2x_cov) and n_inputs and new_path
 
     def update_stats(self, msg: Msg):
         self.latest_n_inputs = msg.n_inputs
@@ -132,8 +133,6 @@ class Supervisor:
                 "--",
                 # reduction might slow down both fuzzer and superviser
                 "-reduce_inputs=0",
-                # TODO: not all fuzzers have associated dictionaries
-                f"-dict={self.fuzzer_name}.dict",
                 # By default address sanitizer is used
                 # By default corpus {fuzzer_name}_corpus will be loaded from oss-fuzz build directory
             ],
@@ -144,8 +143,10 @@ class Supervisor:
 
         with self.libfuzzer_log.open("w") as libfuzzer_log:
             for line in proc.stdout:
-                libfuzzer_log.write(line)
                 msg = parse_line(line)
+                # Add timestamp in seconds relative to the starting time of a fuzzer
+                line = f"{time.monotonic() - self.start_time}s {line}"
+                libfuzzer_log.write(line)
                 # if it is not a conventional log message print and continue
                 if not msg:
                     print(line.strip("\n"), end="\r\n")
@@ -193,5 +194,10 @@ if __name__ == "__main__":
         type=Path,
         help="Directory where libuzzer generated corpus will be stored",
     )
+    parser.add_argument(
+        "--wait-2x-cov",
+        action="store_true",
+        help="Enables 'coverage increased at least twice' criteria",
+    )
     args = parser.parse_args()
-    Supervisor(args.fuzzer_target_name, args.libfuzzer_log, args.corpus_dir).run()
+    Supervisor(args.fuzzer_target_name, args.libfuzzer_log, args.corpus_dir, args.wait_2x_cov).run()
