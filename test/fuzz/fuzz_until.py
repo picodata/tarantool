@@ -63,7 +63,9 @@ class Supervisor:
     """A wrapper to run the fuzzer until stopping criteria are satisfied
     or an error is encountered"""
 
-    def __init__(self, fuzzer_name: str, libfuzzer_log: Path, corpus_dir: Path, wait_2x_cov: bool):
+    def __init__(
+        self, fuzzer_name: str, libfuzzer_log: Path, corpus_dir: Path, wait_2x_cov: bool
+    ):
         self.fuzzer_name = fuzzer_name
         self.libfuzzer_log = libfuzzer_log
         self.corpus_dir = corpus_dir
@@ -121,10 +123,9 @@ class Supervisor:
         proc = subprocess.Popen(
             [
                 f"./oss-fuzz/build/out/tarantool/{self.fuzzer_name}_fuzzer",
-
                 # Read from both corpus folders, write only to the first
                 self.corpus_dir.resolve(),
-                f"test/static/corpus/{self.fuzzer_name}"
+                f"test/static/corpus/{self.fuzzer_name}",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -192,4 +193,6 @@ if __name__ == "__main__":
         help="Enables 'coverage increased at least twice' criteria",
     )
     args = parser.parse_args()
-    Supervisor(args.fuzzer_target_name, args.libfuzzer_log, args.corpus_dir, args.wait_2x_cov).run()
+    Supervisor(
+        args.fuzzer_target_name, args.libfuzzer_log, args.corpus_dir, args.wait_2x_cov
+    ).run()
