@@ -1,3 +1,6 @@
+%global _lto_cflags %{_lto_cflags} -Wno-lto-type-mismatch
+
+
 # Enable systemd for on RHEL >= 7 and Fedora >= 15
 %if (0%{?fedora} >= 15 || 0%{?rhel} >= 7 || 0%{?sle_version} >= 1500 || "%{?_build_vendor}" == "alt" || "%{?mandriva_os}" == "linux")
 %bcond_without systemd
