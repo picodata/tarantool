@@ -151,7 +151,10 @@ class Supervisor:
                 if self.criteria_satisfied():
                     print(f"Fuzzer {self.fuzzer_name} satisfied criteria")
                     proc.terminate()
-                    proc.wait(timeout=15)
+                    try:
+                        proc.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
                     return
 
         outs, errs = proc.communicate(timeout=15)
