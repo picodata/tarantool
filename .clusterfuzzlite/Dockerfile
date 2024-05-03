@@ -1,4 +1,4 @@
-FROM gcr.io/oss-fuzz-base/base-builder
+FROM gcr.io/oss-fuzz-base/base-builder@sha256:18dbdf179a389cb000834fcd32ca5492923710f10226f7be816112525e98edc3
 RUN apt-get update && apt-get install -y \
     build-essential cmake make coreutils sed lld \
     autoconf automake libtool zlib1g-dev \
