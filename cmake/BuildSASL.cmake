@@ -22,7 +22,7 @@ macro(sasl_build)
     include(ExternalProject)
     ExternalProject_Add(bundled-sasl
         DEPENDS ${LDAP_OPENSSL_DEPS}
-        SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/cyrus-sasl-2.1.28
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/cyrus-sasl-${SASL_VERSION}
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             "CC=${CMAKE_C_COMPILER}"
             "CFLAGS=${DEPENDENCY_CFLAGS}"

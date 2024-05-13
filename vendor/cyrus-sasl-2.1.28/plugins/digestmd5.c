@@ -56,6 +56,7 @@
 #endif
 #include <fcntl.h>
 #include <ctype.h>
+#include <time.h>
 
 /* DES support */
 #ifdef WITH_DES

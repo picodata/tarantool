@@ -43,6 +43,7 @@
  */
 
 #include <config.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #ifdef HAVE_UNISTD_H

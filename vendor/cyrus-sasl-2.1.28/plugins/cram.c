@@ -52,6 +52,7 @@
 #include <sys/stat.h>
 #endif
 #include <fcntl.h>
+#include <time.h>
 
 #include <sasl.h>
 #include <saslplug.h>
