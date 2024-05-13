@@ -4,8 +4,8 @@ macro(ldap_build)
     message(STATUS "Choosing bundled LDAP")
 
     # https://git.openldap.org/openldap/openldap
-    set(LDAP_VERSION 2.6.4)
-    set(LDAP_HASH fee2b0dca212b41c87976d0414f30f12)
+    set(LDAP_VERSION 2.6.7)
+    set(LDAP_HASH cf71b4b455ab8dfc8fdd4e247d697ccd)
     set(LDAP_URL https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-${LDAP_VERSION}.tgz)
 
     # Reusing approach from BuildLibCURL.cmake
@@ -14,7 +14,13 @@ macro(ldap_build)
     include(ExternalProject)
     ExternalProject_Add(bundled-ldap
         DEPENDS ${LDAP_OPENSSL_DEPS} bundled-sasl
-        SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/openldap-2.6.4
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/vendor/openldap-${LDAP_VERSION}
+        # PATCH_COMMAND
+            # OpenLDAP builds everything (including MAN pages) unconditionally,
+            # thus we have to patch its sources so as not to install soelim (Groff).
+            #
+            # NB: This should be done manually every time we update the vendored sources!
+            # sed -i.old "/SUBDIRS/s/clients servers tests doc//" Makefile.in
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             "CC=${CMAKE_C_COMPILER}"
             "CFLAGS=${DEPENDENCY_CFLAGS}"
