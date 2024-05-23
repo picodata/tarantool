@@ -114,9 +114,6 @@ sql_trigger_begin(struct Parse *parse)
 	trigger->tr_tm = trigger_def->tr_tm;
 	trigger->pWhen = sqlExprDup(trigger_def->when, EXPRDUP_REDUCE);
 	trigger->pColumns = sqlIdListDup(trigger_def->cols);
-	if ((trigger->pWhen != NULL && trigger->pWhen == NULL) ||
-	    (trigger->pColumns != NULL && trigger->pColumns == NULL))
-		goto trigger_cleanup;
 	assert(parse->parsed_ast.trigger == NULL);
 	parse->parsed_ast.trigger = trigger;
 	parse->parsed_ast_type = AST_TYPE_TRIGGER;
