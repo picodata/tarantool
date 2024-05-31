@@ -4,6 +4,7 @@ variables:
     USER: 'tarantool'
     DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
+    KANIKO_REGISTRY_MIRROR: docker-proxy.binary.picodata.io
     # k8s runner config
     KUBERNETES_CPU_REQUEST: 4
     KUBERNETES_MEMORY_REQUEST: "8Gi"
