@@ -4273,9 +4273,27 @@ on_replace_dd_schema(struct trigger * /* trigger */, void *event)
 
 /** Unregister the replica affected by the change. */
 static int
-on_replace_cluster_clear_id(struct trigger *trigger, void * /* event */)
+on_replace_cluster_clear_id(struct trigger *trigger, void *event)
 {
-	replica_clear_id((struct replica *)trigger->data);
+	struct replica *replica = (struct replica *)trigger->data;
+	struct txn_stmt *stmt = (struct txn_stmt *)event;
+	(void)stmt;
+	if (replica->id == instance_id) {
+		assert(stmt->row->replica_id != 0 ||
+		       recovery_state != FINISHED_RECOVERY);
+		if (recovery_state == FINISHED_RECOVERY) {
+			diag_set(ClientError, ER_LOCAL_INSTANCE_ID_IS_READ_ONLY,
+				 (unsigned)instance_id);
+			struct diag *diag = diag_get();
+			replicaset_foreach(replica) {
+				if (replica->applier != NULL)
+					applier_kill(replica->applier,
+						     diag_last_error(diag));
+			}
+			diag_clear(diag);
+		}
+	}
+	replica_clear_id(replica);
 	return 0;
 }
 
@@ -4400,17 +4418,12 @@ on_replace_dd_cluster(struct trigger *trigger, void *event)
 		if (replica_check_id(replica_id) != 0)
 			return -1;
 		/*
-		 * It's okay to update the instance id (drop, then insert) while
-		 * it is joining to a cluster as long as the id is set by the
-		 * time bootstrap is complete, which is checked in box_cfg()
-		 * anyway.
-		 *
-		 * For example, the replica could be deleted from the _cluster
-		 * space on the master manually before rebootstrap, in which
-		 * case it will replay this operation during the final join
-		 * stage.
+		 * It's okay to delete the instance id when the deletion is coming from
+		 * the master or doing recovery (i.e., after we already applied the
+		 * deletion from the master).
 		 */
-		if (!replicaset.is_joining && replica_id == instance_id) {
+		if (replica_id == instance_id && stmt->row->replica_id == 0 &&
+		    recovery_state == FINISHED_RECOVERY) {
 			diag_set(ClientError, ER_LOCAL_INSTANCE_ID_IS_READ_ONLY,
 				 (unsigned)replica_id);
 			return -1;
