@@ -194,6 +194,10 @@ extern const char *iproto_flag_bit_strs[];
 	 * authentication method.
 	 */								\
 	_(AUTH_TYPE, 0x5b, MP_STR)					\
+	/**
+	 * Extra keys used in pending RAFT_PROMOTE requests.
+	 */								\
+	_(PREV_TERM, 0x71, MP_UINT)
 
 #define IPROTO_KEY_MEMBER(s, v, ...) IPROTO_ ## s = v,
 
