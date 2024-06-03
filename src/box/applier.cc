@@ -1558,12 +1558,11 @@ applier_synchro_filter_tx(struct stailq *rows)
 							req->replica_id);
 	switch (row->type) {
 	case IPROTO_RAFT_PROMOTE:
+		/* Nopify if it's a stale PROMOTE. */
+		if (req->term < txn_limbo.promote_greatest_term)
+			break;
+		FALLTHROUGH;
 	case IPROTO_RAFT_DEMOTE:
-		/*
-		 * Never need to be nopified. Every PROMOTE / DEMOTE is either a
-		 * valid one or is a split brain. There is no such thing as an
-		 * "old already applied promotion".
-		 */
 		return 0;
 	case IPROTO_RAFT_CONFIRM:
 		if (req->lsn > confirmed_lsn)
@@ -1606,6 +1605,10 @@ applier_synchro_filter_tx(struct stailq *rows)
 	}
 nopify:
 	stailq_foreach_entry(item, rows, next) {
+		if (iproto_type_is_synchro_request(item->row.type)) {
+			struct synchro_request *req = &item->req.synchro;
+			say_info("nopify %s", synchro_request_to_string(req));
+		}
 		row = &item->row;
 		row->type = IPROTO_NOP;
 		row->bodycnt = 0;
