@@ -2679,10 +2679,6 @@ box_issue_promote(int64_t promote_lsn)
 	int rc = 0;
 	uint64_t term = box_raft()->term;
 	uint64_t promote_term = txn_limbo.promote_greatest_term;
-	assert(promote_lsn >= 0);
-	rc = box_check_election_term_intact(term);
-	if (rc != 0)
-		return rc;
 
 	txn_limbo_begin(&txn_limbo);
 	rc = box_check_election_term_intact(term);
@@ -2696,7 +2692,6 @@ box_issue_promote(int64_t promote_lsn)
 end:
 	if (rc == 0) {
 		txn_limbo_commit(&txn_limbo);
-		assert(txn_limbo_is_empty(&txn_limbo));
 	} else {
 		txn_limbo_rollback(&txn_limbo);
 	}
@@ -2754,6 +2749,8 @@ box_promote_qsync(void)
 	assert(raft->state == RAFT_STATE_LEADER);
 	if (txn_limbo_replica_term(&txn_limbo, instance_id) == raft->term)
 		return 0;
+	if (txn_limbo_is_trying_to_promote(&txn_limbo))
+		return 0;
 	int64_t wait_lsn = box_wait_limbo_acked(TIMEOUT_INFINITY);
 	if (wait_lsn < 0)
 		return -1;
@@ -2802,9 +2799,11 @@ box_promote(void)
 		!txn_limbo.is_frozen_until_promotion;
 	if (box_election_mode != ELECTION_MODE_OFF)
 		is_leader = is_leader && raft->state == RAFT_STATE_LEADER;
-
 	if (is_leader)
 		return 0;
+	if (txn_limbo_is_trying_to_promote(&txn_limbo))
+		return 0;
+
 	switch (box_election_mode) {
 	case ELECTION_MODE_OFF:
 		if (box_try_wait_confirm(2 * replication_synchro_timeout) != 0)
