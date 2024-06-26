@@ -119,3 +119,34 @@ g.test_prepared_stmt_execution = function()
     end)
 end
 
+g.test_cross_session_stmt_execution = function()
+    g.server:exec(function()
+        local fiber = require('fiber')
+
+        -- Prepare the statement in the current session.
+        local s = box.prepare('INSERT INTO t VALUES (?)')
+
+        local new_session = function(stmt_id)
+            local ffi = require('ffi')
+            local slab_cache = ffi.C.cord_slab_cache()
+            local mem_chunk = ffi.new("struct obuf_impl[1]")
+            local obuf = ffi.cast('struct obuf *', mem_chunk)
+            ffi.C.obuf_create(obuf, slab_cache, 1024)
+
+            -- Execute with C API the statement that was prepared
+            -- in a parent session
+            local buf = ffi.cast('char *', '\x91\xd9\x01C')
+            ffi.C.sql_execute_prepared_ext(stmt_id, buf, 1024, obuf)
+
+            ffi.C.obuf_destroy(obuf)
+        end
+
+        local f = fiber.new(new_session, s.stmt_id)
+        f:set_joinable(true)
+        f:join()
+
+        -- Check the result.
+        local res = box.execute([[SELECT * FROM t WHERE a = 'C']])
+        t.assert_equals(res.rows[1][1], 'C')
+    end)
+end
