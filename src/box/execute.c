@@ -200,9 +200,8 @@ sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region,
 
 int
 sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
-		     uint32_t bind_count, struct port *port,
-		     struct region *region,
-		     uint64_t vdbe_max_steps)
+		     uint32_t bind_count, uint64_t vdbe_max_steps,
+		     struct region *region, struct port *port)
 {
 
 	if (!session_check_stmt_id(current_session(), stmt_id)) {
@@ -221,8 +220,8 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 	if (sql_stmt_busy(stmt)) {
 		const char *sql_str = sql_stmt_query_str(stmt);
 		return sql_prepare_and_execute(sql_str, strlen(sql_str), bind,
-					       bind_count, port, region,
-					       vdbe_max_steps);
+					       bind_count, vdbe_max_steps,
+					       region, port);
 	}
 	/*
 	 * Clear all set from previous execution cycle values to be bound and
@@ -260,8 +259,8 @@ sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
 		return -1;
 	}
 
-	if (sql_execute_prepared(stmt_id, bind, (uint32_t)bind_count, &port,
-				 &fiber()->gc, vdbe_max_steps) != 0) {
+	if (sql_execute_prepared(stmt_id, bind, (uint32_t)bind_count,
+				 vdbe_max_steps, &fiber()->gc, &port) != 0) {
 		region_truncate(&fiber()->gc, region_svp);
 		return -1;
 	}
@@ -295,7 +294,7 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
 	}
 
 	if (sql_prepare_and_execute(sql, len, bind, (uint32_t)bind_count,
-				    &port, &fiber()->gc, vdbe_max_steps) != 0) {
+				    vdbe_max_steps, &fiber()->gc, &port) != 0) {
 		region_truncate(&fiber()->gc, region_svp);
 		return -1;
 	}
@@ -315,9 +314,8 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
 
 int
 sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
-			uint32_t bind_count, struct port *port,
-			struct region *region,
-			uint64_t vdbe_max_steps)
+			uint32_t bind_count, uint64_t vdbe_max_steps,
+			struct region *region, struct port *port)
 {
 	struct sql_stmt *stmt;
 	if (sql_stmt_compile(sql, len, NULL, &stmt, NULL) != 0)
