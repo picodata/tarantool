@@ -246,6 +246,74 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 }
 
 int
+sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
+			 uint64_t vdbe_max_steps, struct obuf *out_buf)
+{
+	struct port port;
+	struct sql_bind *bind = NULL;
+
+	size_t region_svp = region_used(&fiber()->gc);
+
+	int bind_count = sql_bind_list_decode(mp_params, &bind);
+	if (bind_count < 0) {
+		region_truncate(&fiber()->gc, region_svp);
+		return -1;
+	}
+
+	if (sql_execute_prepared(stmt_id, bind, (uint32_t)bind_count, &port,
+				 &fiber()->gc, vdbe_max_steps) != 0) {
+		region_truncate(&fiber()->gc, region_svp);
+		return -1;
+	}
+
+	struct obuf_svp out_svp = obuf_create_svp(out_buf);
+	if (port_dump_msgpack(&port, out_buf) != 0) {
+		obuf_rollback_to_svp(out_buf, &out_svp);
+		port_destroy(&port);
+		region_truncate(&fiber()->gc, region_svp);
+		return -1;
+	}
+
+	port_destroy(&port);
+	region_truncate(&fiber()->gc, region_svp);
+	return 0;
+}
+
+int
+sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
+			    uint64_t vdbe_max_steps, struct obuf *out_buf)
+{
+	struct port port;
+	struct sql_bind *bind = NULL;
+
+	size_t region_svp = region_used(&fiber()->gc);
+
+	int bind_count = sql_bind_list_decode(mp_params, &bind);
+	if (bind_count < 0) {
+		region_truncate(&fiber()->gc, region_svp);
+		return -1;
+	}
+
+	if (sql_prepare_and_execute(sql, len, bind, (uint32_t)bind_count,
+				    &port, &fiber()->gc, vdbe_max_steps) != 0) {
+		region_truncate(&fiber()->gc, region_svp);
+		return -1;
+	}
+
+	struct obuf_svp out_svp = obuf_create_svp(out_buf);
+	if (port_dump_msgpack(&port, out_buf) != 0) {
+		obuf_rollback_to_svp(out_buf, &out_svp);
+		port_destroy(&port);
+		region_truncate(&fiber()->gc, region_svp);
+		return -1;
+	}
+
+	port_destroy(&port);
+	region_truncate(&fiber()->gc, region_svp);
+	return 0;
+}
+
+int
 sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 			uint32_t bind_count, struct port *port,
 			struct region *region,
