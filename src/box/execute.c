@@ -160,7 +160,7 @@ sql_unprepare(uint32_t stmt_id)
 }
 
 /**
- * Execute prepared SQL statement.
+ * Run prepared SQL statement's bytecode.
  *
  * This function uses region to allocate memory for temporary
  * objects. After this function, region will be in the same state
@@ -175,8 +175,8 @@ sql_unprepare(uint32_t stmt_id)
  * @retval -1 Error.
  */
 static inline int
-sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region,
-	    uint64_t vdbe_max_steps)
+sql_stmt_run_vdbe(struct sql_stmt *stmt, uint64_t vdbe_max_steps,
+		  struct region *region, struct port *port)
 {
 	int rc, column_count = sql_column_count(stmt);
 	rmean_collect(rmean_box, IPROTO_EXECUTE, 1);
@@ -198,17 +198,11 @@ sql_execute(struct sql_stmt *stmt, struct port *port, struct region *region,
 	return 0;
 }
 
-int
-sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
-		     uint32_t bind_count, uint64_t vdbe_max_steps,
-		     struct region *region, struct port *port)
+static int
+sql_stmt_execute(struct sql_stmt *stmt, const struct sql_bind *bind,
+		 uint32_t bind_count, uint64_t vdbe_max_steps,
+		 struct region *region, struct port *port)
 {
-
-	if (!session_check_stmt_id(current_session(), stmt_id)) {
-		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
-		return -1;
-	}
-	struct sql_stmt *stmt = sql_stmt_cache_find(stmt_id);
 	assert(stmt != NULL);
 	if (!sql_stmt_schema_version_is_valid(stmt)) {
 		if (sql_reprepare(&stmt) != 0) {
@@ -234,7 +228,7 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 	enum sql_serialization_format format = sql_column_count(stmt) > 0 ?
 					       DQL_EXECUTE : DML_EXECUTE;
 	port_sql_create(port, stmt, format, false);
-	if (sql_execute(stmt, port, region, vdbe_max_steps) != 0) {
+	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0) {
 		port_destroy(port);
 		sql_stmt_reset(stmt);
 		return -1;
@@ -242,6 +236,20 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 	sql_stmt_reset(stmt);
 
 	return 0;
+}
+
+int
+sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
+		     uint32_t bind_count, uint64_t vdbe_max_steps,
+		     struct region *region, struct port *port)
+{
+	if (!session_check_stmt_id(current_session(), stmt_id)) {
+		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
+		return -1;
+	}
+	struct sql_stmt *stmt = sql_stmt_cache_find(stmt_id);
+	return sql_stmt_execute(stmt, bind, bind_count, vdbe_max_steps,
+				region, port);
 }
 
 int
@@ -254,28 +262,38 @@ sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
 	size_t region_svp = region_used(&fiber()->gc);
 
 	int bind_count = sql_bind_list_decode(mp_params, &bind);
-	if (bind_count < 0) {
-		region_truncate(&fiber()->gc, region_svp);
-		return -1;
-	}
+	if (bind_count < 0)
+		goto cleanup;
 
-	if (sql_execute_prepared(stmt_id, bind, (uint32_t)bind_count,
-				 vdbe_max_steps, &fiber()->gc, &port) != 0) {
-		region_truncate(&fiber()->gc, region_svp);
-		return -1;
+	struct sql_stmt *stmt = sql_stmt_cache_find(stmt_id);
+	if (stmt == NULL) {
+		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
+		goto cleanup;
 	}
+	/*
+	 * If the statement was prepared in some other session,
+	 * we borrow it and add to the current session.
+	 */
+	if (!session_check_stmt_id(current_session(), stmt_id)) {
+		session_add_stmt_id(current_session(), stmt_id);
+	}
+	if (sql_stmt_execute(stmt, bind, (uint32_t)bind_count, vdbe_max_steps,
+			     &fiber()->gc, &port) != 0)
+		goto cleanup;
 
 	struct obuf_svp out_svp = obuf_create_svp(out_buf);
 	if (port_dump_msgpack(&port, out_buf) != 0) {
 		obuf_rollback_to_svp(out_buf, &out_svp);
 		port_destroy(&port);
-		region_truncate(&fiber()->gc, region_svp);
-		return -1;
+		goto cleanup;
 	}
 
 	port_destroy(&port);
 	region_truncate(&fiber()->gc, region_svp);
 	return 0;
+cleanup:
+	region_truncate(&fiber()->gc, region_svp);
+	return -1;
 }
 
 int
@@ -325,7 +343,7 @@ sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 					   DQL_EXECUTE : DML_EXECUTE;
 	port_sql_create(port, stmt, format, true);
 	if (sql_bind(stmt, bind, bind_count) == 0 &&
-		sql_execute(stmt, port, region, vdbe_max_steps) == 0)
+		sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) == 0)
 		return 0;
 	port_destroy(port);
 	return -1;
