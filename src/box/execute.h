@@ -71,9 +71,8 @@ sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
 
 int
 sql_execute_prepared(uint32_t query_id, const struct sql_bind *bind,
-		     uint32_t bind_count, struct port *port,
-		     struct region *region,
-		     uint64_t vdbe_max_steps);
+		     uint32_t bind_count, uint64_t vdbe_max_steps,
+		     struct region *region, struct port *port);
 
 /**
  * Prepare and execute an SQL statement (exported version).
@@ -93,18 +92,18 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
  * @param len Length of @a sql.
  * @param bind Array of parameters.
  * @param bind_count Length of @a bind.
- * @param[out] port Port to store SQL response.
+ * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
  * @param region Runtime allocator for temporary objects
  *        (columns, tuples ...).
+ * @param[out] port Port to store SQL response.
  *
  * @retval  0 Success.
  * @retval -1 Client or memory error.
  */
 int
 sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
-			uint32_t bind_count, struct port *port,
-			struct region *region,
-			uint64_t vdbe_max_steps);
+			uint32_t bind_count, uint64_t vdbe_max_steps,
+			struct region *region, struct port *port);
 
 int
 sql_stmt_finalize(struct sql_stmt *stmt);
