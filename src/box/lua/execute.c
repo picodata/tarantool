@@ -518,14 +518,16 @@ lbox_execute(struct lua_State *L)
 	 */
 	if (lua_type(L, 1) == LUA_TSTRING) {
 		const char *sql = lua_tolstring(L, 1, &length);
-		if (sql_prepare_and_execute(sql, length, bind, bind_count, &port,
-					    &fiber()->gc, vdbe_max_steps) != 0)
+		if (sql_prepare_and_execute(sql, length, bind, bind_count,
+					    vdbe_max_steps, &fiber()->gc,
+					    &port) != 0)
 			goto error;
 	} else {
 		assert(lua_type(L, 1) == LUA_TNUMBER);
 		lua_Integer query_id = lua_tointeger(L, 1);
-		if (sql_execute_prepared(query_id, bind, bind_count, &port,
-					 &fiber()->gc, vdbe_max_steps) != 0)
+		if (sql_execute_prepared(query_id, bind, bind_count,
+					 vdbe_max_steps, &fiber()->gc,
+					 &port) != 0)
 			goto error;
 	}
 	port_dump_lua(&port, L, false);
