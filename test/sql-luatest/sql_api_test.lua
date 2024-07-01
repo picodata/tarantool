@@ -38,6 +38,8 @@ g.before_all(function()
             uint32_t stmt_id, const char *mp_params,
             uint64_t vdbe_max_steps, struct obuf *out_buf);
 
+        int sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id);
+
     ]]
     g.server = server:new({alias = 'sql_api'})
     g.server:start()
@@ -148,5 +150,22 @@ g.test_cross_session_stmt_execution = function()
         -- Check the result.
         local res = box.execute([[SELECT * FROM t WHERE a = 'C']])
         t.assert_equals(res.rows[1][1], 'C')
+    end)
+end
+
+g.test_stmt_prepare = function()
+    g.server:exec(function()
+        local res
+
+        local ffi = require('ffi')
+        local stmt_id = ffi.new('uint32_t[1]')
+
+        -- Prepare the statement.
+        res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id)
+        t.assert_equals(res, 0)
+
+        -- Check the prepared statement.
+        res = box.execute(tonumber(stmt_id[0]), {'ABC'})
+        t.assert_equals(res.rows[1][1], 'ABC')
     end)
 end
