@@ -597,7 +597,7 @@ port_destroy
 cord_slab_cache
 obuf_create
 obuf_destroy
-sql_prepare
+sql_prepare_ext
 sql_stmt_finalize
 sql_unprepare
 sql_stmt_query_str

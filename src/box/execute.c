@@ -107,38 +107,78 @@ sql_reprepare(struct sql_stmt **stmt)
 }
 
 /**
- * Compile statement and save it to the global holder;
- * update session hash with prepared statement ID (if
- * it's not already there).
+ * Find or create prepared statement by its SQL query.
+ * If statement is outdated or not found in the statement
+ * cache, it will be compiled and added to the cache. Also,
+ * the statement ID will be added to the list of available
+ * statements in the current session.
+ *
+ * @param sql SQL query.
+ * @param len Length of the query.
+ * @param stmt_id Pointer to store statement ID.
+ * @param stmt Pointer to store statement.
+ *
+ * @retval  0 Success.
+ * @retval -1 Error.
+ */
+static int
+sql_stmt_find_or_create(const char *sql, int len,
+			uint32_t *stmt_id, struct sql_stmt **stmt)
+{
+	uint32_t new_id = sql_stmt_calculate_id(sql, len);
+	struct sql_stmt *new_stmt = sql_stmt_cache_find(new_id);
+	rmean_collect(rmean_box, IPROTO_PREPARE, 1);
+	if (new_stmt == NULL) {
+		if (sql_stmt_compile(sql, len, NULL, &new_stmt, NULL) != 0)
+			return -1;
+		if (sql_stmt_cache_insert(new_stmt) != 0) {
+			sql_stmt_finalize(new_stmt);
+			return -1;
+		}
+	} else {
+		if (!sql_stmt_schema_version_is_valid(new_stmt) &&
+		    !sql_stmt_busy(new_stmt)) {
+			if (sql_reprepare(&new_stmt) != 0)
+				return -1;
+		}
+	}
+	assert(new_stmt != NULL);
+	/* Add id to the list of available statements in session. */
+	if (!session_check_stmt_id(current_session(), new_id))
+		session_add_stmt_id(current_session(), new_id);
+	*stmt_id = new_id;
+	*stmt = new_stmt;
+	return 0;
+}
+
+/**
+ * Find or create prepared statement by its SQL query.
+ * Returns compiled statement into provided port.
  */
 int
 sql_prepare(const char *sql, int len, struct port *port)
 {
-	uint32_t stmt_id = sql_stmt_calculate_id(sql, len);
-	struct sql_stmt *stmt = sql_stmt_cache_find(stmt_id);
-	rmean_collect(rmean_box, IPROTO_PREPARE, 1);
-	if (stmt == NULL) {
-		if (sql_stmt_compile(sql, len, NULL, &stmt, NULL) != 0)
-			return -1;
-		if (sql_stmt_cache_insert(stmt) != 0) {
-			sql_stmt_finalize(stmt);
-			return -1;
-		}
-	} else {
-		if (!sql_stmt_schema_version_is_valid(stmt) &&
-		    !sql_stmt_busy(stmt)) {
-			if (sql_reprepare(&stmt) != 0)
-				return -1;
-		}
-	}
-	assert(stmt != NULL);
-	/* Add id to the list of available statements in session. */
-	if (!session_check_stmt_id(current_session(), stmt_id))
-		session_add_stmt_id(current_session(), stmt_id);
+	uint32_t stmt_id = 0;
+	struct sql_stmt *stmt = NULL;
+	if (sql_stmt_find_or_create(sql, len, &stmt_id, &stmt) != 0)
+		return -1;
 	enum sql_serialization_format format = sql_column_count(stmt) > 0 ?
 					   DQL_PREPARE : DML_PREPARE;
 	port_sql_create(port, stmt, format, false);
 
+	return 0;
+}
+
+/**
+ * Find or create prepared statement by its SQL query.
+ * Returns compiled statement ID.
+ */
+int
+sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id)
+{
+	struct sql_stmt *stmt = NULL;
+	if (sql_stmt_find_or_create(sql, len, stmt_id, &stmt) != 0)
+		return -1;
 	return 0;
 }
 
