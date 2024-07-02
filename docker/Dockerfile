@@ -1,5 +1,5 @@
 ARG BASE_IMAGE
-FROM ${BASE_IMAGE}centos:7
+FROM ${BASE_IMAGE}rockylinux:8
 
 ENV \
     LUAROCK_VSHARD_VERSION=0.1.18 \
@@ -39,15 +39,16 @@ RUN if test -z "${TARANTOOL_VERSION}"; then \
 
 # Set yum repository for Postgresql 14 since this version
 # has been removed from pgdg repository.
-RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rpm -E %{rhel}`-x86_64/pgdg-redhat-repo-latest.noarch.rpm \
+RUN dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rpm -E %{rhel}`-x86_64/pgdg-redhat-repo-latest.noarch.rpm \
+    && dnf -qy module disable postgresql \
+    && dnf --enablerepo=powertools install perl-IPC-Run -y \
     && curl -L https://download.picodata.io/tarantool-picodata/install.sh | bash \
-    && yum -y install epel-release centos-release-scl-rh \
-    && yum -y install llvm-toolset-7-clang \
+    && dnf -y install epel-release \
     && : "---------- tarantool ----------" \
-    && yum install -y  \
+    && dnf install -y  \
         tarantool-picodata-${TARANTOOL_VERSION} \
         tarantool-picodata-devel-${TARANTOOL_VERSION} \
-        mariadb-libs \
+        mariadb-devel \
         postgresql14-libs \
         cyrus-sasl \
         libev \
@@ -85,11 +86,12 @@ RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
     && tarantoolctl rocks install memcached $LUAROCK_MEMCACHED_VERSION \
     && tarantoolctl rocks install metrics $LUAROCK_METRICS_VERSION \
     && tarantoolctl rocks install prometheus $LUAROCK_TARANTOOL_PROMETHEUS_VERSION \
+    && sed -i "s/#error 'To use the proj_api.h/#define ACCEPT_USR_OF_DEPRECATED_PROJ_API_H 1/g" /usr/include/proj_api.h \
     && tarantoolctl rocks install gis $LUAROCK_TARANTOOL_GIS_VERSION \
     && tarantoolctl rocks install gperftools $LUAROCK_TARANTOOL_GPERFTOOLS_VERSION \
     && : "---------- remove build deps ----------" \
     && rm -rf /.rocks \
-    && yum -y remove \
+    && dnf -y remove \
         git \
         cmake \
         postgresql14-devel \
@@ -115,13 +117,13 @@ RUN yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
     && rm -r /root/.gnupg/ \
     && chmod +x /usr/local/bin/gosu \
     && mkdir -p /var/lib/tarantool \
-    && chown tarantool:tarantool /var/lib/tarantool \
     && mkdir -p /opt/tarantool \
-    && chown tarantool:tarantool /opt/tarantool \
     && mkdir -p /var/run/tarantool \
+    && chown tarantool:tarantool /var/lib/tarantool \
+    && chown tarantool:tarantool /opt/tarantool \
     && chown tarantool:tarantool /var/run/tarantool \
     && chown tarantool:tarantool /etc/tarantool \
-    && ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh
+    && ln -s /usr/local/bin/docker-entrypoint.sh /entrypoint.sh
 
 VOLUME /var/lib/tarantool
 WORKDIR /opt/tarantool
@@ -133,7 +135,7 @@ COPY docker/files/console /usr/local/bin/
 COPY docker/files/tarantool_is_up /usr/local/bin/
 COPY docker/files/tarantool.default /usr/local/etc/default/tarantool
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 
 HEALTHCHECK CMD tarantool_is_up
 
