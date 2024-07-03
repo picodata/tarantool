@@ -169,7 +169,7 @@ pack-on-tag:
 
 .kaniko-image:
   image:
-    name: docker-public.binary.picodata.io/kaniko-project/executor:v1.20.1-debug
+    name: docker-public.binary.picodata.io/kaniko-project/executor:v1.23.1-debug
     entrypoint: ['']
     pull_policy: [if-not-present]
   before_script:
@@ -179,15 +179,15 @@ pack-on-tag:
   script:
     - >
       /kaniko/executor --context $CI_PROJECT_DIR --dockerfile ${DOCKERFILE}
-      --build-arg TARANTOOL_VERSION=$TAG_LONG ${PUSH_DOCKER}
+      --build-arg TARANTOOL_VERSION=$CI_COMMIT_TAG ${PUSH_DOCKER}
       --cache=false --cache-run-layers=true --single-snapshot --compressed-caching=false --use-new-run --snapshot-mode=redo --cleanup
-      --destination $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT --destination $DOCKER_REGISTRY_PUB/tarantool:$TAG_LONG --destination $DOCKER_REGISTRY_PUB/tarantool:latest
+      --destination $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG --destination $DOCKER_REGISTRY_PUB/tarantool:latest
 
 build-docker-on-tag:
   stage: docker
   extends: .kaniko-image
-  only:
-    - tags
+  rules:
+    - if: $CI_COMMIT_TAG
   needs:
     - pack-on-tag
   variables:
