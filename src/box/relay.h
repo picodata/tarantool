@@ -65,7 +65,7 @@ relay_new(struct replica *replica);
 
 /** Cancel a running relay. Called on shutdown. */
 void
-relay_cancel(struct relay *relay);
+relay_cancel_thread(struct relay *relay);
 
 /** Destroy and delete the relay */
 void
@@ -122,6 +122,12 @@ relay_push_raft(struct relay *relay, const struct raft_request *req);
  */
 void
 relay_filter_raft(struct xrow_header *packet, uint32_t version_id);
+
+/**
+ * Cancel the relay.
+ */
+void
+relay_cancel(struct relay *relay);
 
 #if defined(__cplusplus)
 } /* extern "C" */
