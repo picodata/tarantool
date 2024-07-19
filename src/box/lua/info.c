@@ -697,6 +697,13 @@ lbox_schema_version(struct lua_State *L)
 	return 1;
 }
 
+static int
+lbox_stmt_cache_version(struct lua_State *L)
+{
+	luaL_pushuint64(L, stmt_cache_schema_version());
+	return 1;
+}
+
 static const struct luaL_Reg lbox_info_dynamic_meta[] = {
 	{"id", lbox_info_id},
 	{"uuid", lbox_info_uuid},
@@ -719,6 +726,7 @@ static const struct luaL_Reg lbox_info_dynamic_meta[] = {
 	{"election", lbox_info_election},
 	{"synchro", lbox_info_synchro},
 	{"schema_version", lbox_schema_version},
+	{"statement_version", lbox_stmt_cache_version},
 	{NULL, NULL}
 };
 
