@@ -67,7 +67,7 @@ sqlVdbeCreate(Parse * pParse)
 	db->pVdbe = p;
 	p->magic = VDBE_MAGIC_INIT;
 	p->pParse = pParse;
-	p->schema_ver = box_schema_version();
+	p->schema_ver = stmt_cache_schema_version();
 	assert(pParse->aLabel == 0);
 	assert(pParse->nLabel == 0);
 	assert(pParse->nOpAlloc == 0);

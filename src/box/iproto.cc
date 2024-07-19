@@ -58,7 +58,7 @@
 #include "tuple_convert.h"
 #include "session.h"
 #include "xrow.h"
-#include "schema.h" /* schema_version */
+#include "schema.h"
 #include "replication.h" /* instance_uuid */
 #include "iproto_constants.h"
 #include "iproto_features.h"
@@ -1277,7 +1277,7 @@ iproto_connection_resume(struct iproto_connection *con)
 	if (iproto_enqueue_batch(con, con->p_ibuf) != 0) {
 		struct error *e = box_error_last();
 		error_log(e);
-		iproto_write_error(&con->io, e, ::schema_version, 0);
+		iproto_write_error(&con->io, e, box_schema_version(), 0);
 		iproto_connection_close(con);
 	}
 }
@@ -1366,7 +1366,7 @@ iproto_connection_on_input(ev_loop *loop, struct ev_io *watcher,
 	} catch (Exception *e) {
 		e->log();
 		/* Best effort at sending the error message to the client. */
-		iproto_write_error(io, e, ::schema_version, 0);
+		iproto_write_error(io, e, box_schema_version(), 0);
 		iproto_connection_close(con);
 	}
 }
@@ -2020,9 +2020,10 @@ static int
 tx_check_msg(struct iproto_msg *msg)
 {
 	uint64_t new_schema_version = msg->header.schema_version;
-	if (new_schema_version != 0 && new_schema_version != schema_version) {
+	if (new_schema_version != 0 &&
+	    new_schema_version != box_schema_version()) {
 		diag_set(ClientError, ER_WRONG_SCHEMA_VERSION,
-			 new_schema_version, schema_version);
+			 new_schema_version, box_schema_version());
 		return -1;
 	}
 	enum iproto_type type = (enum iproto_type)msg->header.type;
@@ -2058,7 +2059,7 @@ tx_reply_error(struct iproto_msg *msg)
 {
 	struct obuf *out = msg->connection->tx.p_obuf;
 	iproto_reply_error(out, diag_last_error(&fiber()->diag),
-			   msg->header.sync, ::schema_version);
+			   msg->header.sync, box_schema_version());
 	iproto_wpos_create(&msg->wpos, out);
 }
 
@@ -2073,7 +2074,7 @@ tx_reply_iproto_error(struct cmsg *m)
 	struct obuf *out = msg->connection->tx.p_obuf;
 	struct obuf_svp header = obuf_create_svp(out);
 	iproto_reply_error(out, diag_last_error(&msg->diag),
-			   msg->header.sync, ::schema_version);
+			   msg->header.sync, box_schema_version());
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &header);
 }
@@ -2117,7 +2118,7 @@ tx_process_begin(struct cmsg *m)
 	}
 	out = msg->connection->tx.p_obuf;
 	header = obuf_create_svp(out);
-	iproto_reply_ok(out, msg->header.sync, ::schema_version);
+	iproto_reply_ok(out, msg->header.sync, box_schema_version());
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &header);
 	return;
@@ -2143,7 +2144,7 @@ tx_process_commit(struct cmsg *m)
 
 	out = msg->connection->tx.p_obuf;
 	header = obuf_create_svp(out);
-	iproto_reply_ok(out, msg->header.sync, ::schema_version);
+	iproto_reply_ok(out, msg->header.sync, box_schema_version());
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &header);
 	return;
@@ -2169,7 +2170,7 @@ tx_process_rollback(struct cmsg *m)
 
 	out = msg->connection->tx.p_obuf;
 	header = obuf_create_svp(out);
-	iproto_reply_ok(out, msg->header.sync, ::schema_version);
+	iproto_reply_ok(out, msg->header.sync, box_schema_version());
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &header);
 	return;
@@ -2198,7 +2199,7 @@ tx_process1(struct cmsg *m)
 		goto error;
 	if (tuple && tuple_to_obuf(tuple, out))
 		goto error;
-	iproto_reply_select(out, &svp, msg->header.sync, ::schema_version,
+	iproto_reply_select(out, &svp, msg->header.sync, box_schema_version(),
 			    tuple != 0);
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &svp);
@@ -2268,13 +2269,14 @@ tx_process_select(struct cmsg *m)
 		assert(packed_pos != NULL);
 		if (iproto_reply_select_with_position(out, &svp,
 						      msg->header.sync,
-						      ::schema_version, count,
+						      box_schema_version(),
+						      count,
 						      packed_pos,
 						      packed_pos_end) != 0)
 			goto discard;
 	} else {
 		iproto_reply_select(out, &svp, msg->header.sync,
-				    ::schema_version, count);
+				    box_schema_version(), count);
 	}
 	region_truncate(&fiber()->gc, region_svp);
 	iproto_wpos_create(&msg->wpos, out);
@@ -2390,7 +2392,7 @@ tx_process_call(struct cmsg *m)
 	}
 
 	iproto_reply_select(out, &svp, msg->header.sync,
-			    ::schema_version, count);
+			    box_schema_version(), count);
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &svp);
 	return;
@@ -2432,26 +2434,26 @@ tx_process_misc(struct cmsg *m)
 			box_process_auth(&msg->auth, con->salt,
 					 IPROTO_SALT_SIZE);
 			iproto_reply_ok_xc(out, msg->header.sync,
-					   ::schema_version);
+					   box_schema_version());
 			break;
 		case IPROTO_PING:
 			iproto_reply_ok_xc(out, msg->header.sync,
-					   ::schema_version);
+					   box_schema_version());
 			break;
 		case IPROTO_ID:
 			tx_process_id(con, &msg->id);
 			iproto_reply_id_xc(out, box_auth_type, msg->header.sync,
-					   ::schema_version);
+					   box_schema_version());
 			break;
 		case IPROTO_VOTE_DEPRECATED:
 			iproto_reply_vclock_xc(out, instance_vclock,
 					       msg->header.sync,
-					       ::schema_version);
+					       box_schema_version());
 			break;
 		case IPROTO_VOTE:
 			box_process_vote(&ballot);
 			iproto_reply_vote_xc(out, &ballot, msg->header.sync,
-					     ::schema_version);
+					     box_schema_version());
 			break;
 		case IPROTO_WATCH:
 			session_watch(con->session, msg->header.sync,
@@ -2558,7 +2560,8 @@ tx_process_sql(struct cmsg *m)
 	struct obuf_svp header_svp;
 	if (is_unprepare) {
 		header_svp = obuf_create_svp(out);
-		if (iproto_reply_ok(out, msg->header.sync, schema_version) != 0)
+		if (iproto_reply_ok(out, msg->header.sync,
+				    box_schema_version()) != 0)
 			goto error;
 		iproto_wpos_create(&msg->wpos, out);
 		tx_end_msg(msg, &header_svp);
@@ -2575,7 +2578,8 @@ tx_process_sql(struct cmsg *m)
 		goto error;
 	}
 	port_destroy(&port);
-	iproto_reply_sql(out, &header_svp, msg->header.sync, schema_version);
+	iproto_reply_sql(out, &header_svp, msg->header.sync,
+			 box_schema_version());
 	iproto_wpos_create(&msg->wpos, out);
 	tx_end_msg(msg, &header_svp);
 	return;
@@ -2631,7 +2635,8 @@ tx_process_replication(struct cmsg *m)
 		  * written row. Do not push it on top.
 		  */
 	} catch (Exception *e) {
-		iproto_write_error(io, e, ::schema_version, msg->header.sync);
+		iproto_write_error(io, e, box_schema_version(),
+				   msg->header.sync);
 	}
 	struct obuf_svp empty = obuf_create_svp(msg->connection->tx.p_obuf);
 	tx_end_msg(msg, &empty);
@@ -3065,7 +3070,7 @@ iproto_session_push(struct session *session, struct port *port)
 		return -1;
 	}
 	iproto_reply_chunk(con->tx.p_obuf, &svp, iproto_session_sync(session),
-			   ::schema_version);
+			   box_schema_version());
 	tx_push(con, &svp);
 	return 0;
 }

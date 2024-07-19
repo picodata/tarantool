@@ -155,6 +155,41 @@ g.test_temporary_create = function()
     end)
 end
 
+-- check that temporary spaces don't update box schema version
+-- but still update the statement one.
+g.test_schema_version = function()
+    g.server:exec(function()
+        local box_version = box.info.schema_version
+        local stmt_cache_version = box.info.statement_version
+        local op = 0
+        local s = box.schema.space.create('temp', { type = 'temporary' })
+        op = op + 1
+        t.assert_equals(box.info.schema_version, box_version)
+        t.assert_equals(box.info.statement_version, stmt_cache_version + op)
+
+        s:format {{'a', 'unsigned'}}
+        op = op + 1
+        t.assert_equals(box.info.schema_version, box_version)
+        t.assert_equals(box.info.statement_version, stmt_cache_version + op)
+
+        s:create_index('pk')
+        op = op + 1
+        t.assert_equals(box.info.schema_version, box_version)
+        t.assert_equals(box.info.statement_version, stmt_cache_version + op)
+
+        s:truncate()
+        -- truncate doesn't update statement version
+        t.assert_equals(box.info.schema_version, box_version)
+        t.assert_equals(box.info.statement_version, stmt_cache_version + op)
+
+        s:drop()
+        -- drop the space with its primary key index
+        op = op + 2
+        t.assert_equals(box.info.schema_version, box_version)
+        t.assert_equals(box.info.statement_version, stmt_cache_version + op)
+    end)
+end
+
 -- check which features aren't supported for temporary spaces
 g.test_temporary_dont_support = function()
     g.server:exec(function()
