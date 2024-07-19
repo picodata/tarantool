@@ -2381,7 +2381,7 @@ case OP_TTransaction: {
  */
 case OP_IteratorOpen: {
 	struct VdbeCursor *cur = p->apCsr[pOp->p1];
-	if (box_schema_version() != p->schema_ver &&
+	if (stmt_cache_schema_version() != p->schema_ver &&
 	    (pOp->p5 & OPFLAG_SYSTEMSP) == 0) {
 		p->expired = 1;
 		diag_set(ClientError, ER_SQL_EXECUTE, "schema version has "\
