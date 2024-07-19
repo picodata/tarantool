@@ -46,7 +46,7 @@ struct func;
 /**
  * See `box_schema_version`.
  */
-extern uint64_t schema_version;
+extern struct version schema_version;
 extern uint32_t dd_version_id;
 
 /** Triggers invoked after schema initialization. */
@@ -66,10 +66,32 @@ dd_check_is_disabled(void);
 /**
  * Returns the current version of the database schema, an unsigned number
  * that goes up when there is a major change in the schema, i.e., on DDL
- * operations (\sa IPROTO_SCHEMA_VERSION).
+ * operations that should be propagated to the netbox clients via IPROTO
+ * (\sa IPROTO_SCHEMA_VERSION).
  */
 API_EXPORT uint64_t
 box_schema_version(void);
+
+/**
+ * Bump the schema version for the netbox clients.
+ */
+void
+box_bump_schema_version(void);
+
+/**
+ * Returns the current version of the database schema, an unsigned number
+ * that goes up on every schema change. Current schema version is used to
+ * invalidate prepared statements in the statement cache if there was a
+ * schema change.
+ */
+uint64_t
+stmt_cache_schema_version(void);
+
+/**
+ * Bump the schema version for the statement cache.
+ */
+void
+stmt_cache_bump_schema_version(void);
 
 /** \endcond public */
 

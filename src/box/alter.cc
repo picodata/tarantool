@@ -63,13 +63,6 @@
 
 /* {{{ Auxiliary functions and methods. */
 
-static void
-box_schema_version_bump(void)
-{
-	++schema_version;
-	box_broadcast_schema();
-}
-
 int
 access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 		 enum box_schema_object_type type,
@@ -1584,6 +1577,14 @@ TruncateIndex::~TruncateIndex()
 	index_abort_create(new_index);
 }
 
+static inline void
+schema_version_bump(struct space *space)
+{
+	if (!space_is_temporary(space))
+		box_bump_schema_version();
+	stmt_cache_bump_schema_version();
+}
+
 /**
  * UpdateSchemaVersion - increment schema_version. Used on
  * in alter_space_do(), i.e. when creating or dropping
@@ -1600,8 +1601,7 @@ public:
 void
 UpdateSchemaVersion::alter(struct alter_space *alter)
 {
-    (void)alter;
-    box_schema_version_bump();
+	schema_version_bump(alter->old_space);
 }
 
 /**
@@ -2185,7 +2185,7 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		 * AlterSpaceOps are registered in case of space
 		 * create.
 		 */
-		box_schema_version_bump();
+		schema_version_bump(space);
 		/*
 		 * So may happen that until the DDL change record
 		 * is written to the WAL, the space is used for
@@ -2279,7 +2279,7 @@ on_replace_dd_space(struct trigger * /* trigger */, void *event)
 		 * deleting the space from the space_cache, since no
 		 * AlterSpaceOps are registered in case of space drop.
 		 */
-		box_schema_version_bump();
+		schema_version_bump(old_space);
 		struct trigger *on_commit =
 			txn_alter_trigger_new(on_drop_space_commit, old_space);
 		if (on_commit == NULL)
@@ -5002,7 +5002,12 @@ on_replace_dd_trigger(struct trigger * /* trigger */, void *event)
 
 	txn_stmt_on_rollback(stmt, on_rollback);
 	txn_stmt_on_commit(stmt, on_commit);
-	box_schema_version_bump();
+	/*
+	 * The triggers are not supported for temporary spaces,
+	 * so we always bump box schema version.
+	 */
+	box_bump_schema_version();
+	stmt_cache_bump_schema_version();
 	return 0;
 }
 

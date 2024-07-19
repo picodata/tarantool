@@ -85,7 +85,7 @@ error:
 static bool
 sql_stmt_schema_version_is_valid(struct sql_stmt *stmt)
 {
-	return sql_stmt_schema_version(stmt) == box_schema_version();
+	return sql_stmt_schema_version(stmt) == stmt_cache_schema_version();
 }
 
 /**
