@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "schema.h"
+#include "box.h"
 #include "sequence.h"
 #include "assoc.h"
 #include "alter.h"
@@ -57,9 +58,18 @@
  */
 
 static struct mh_i32ptr_t *sequences;
+
+/** Schema version. */
+struct version {
+	/** Version of the schema used for iproto operations via netbox. */
+	uint64_t box;
+	/** Version of the schema used for statement cache invalidation. */
+	uint64_t stmt_cache;
+};
+
 /** Public change counter. On its update clients need to fetch
  *  new space data from the instance. */
-uint64_t schema_version = 0;
+struct version schema_version = {0, 0};
 
 /** Persistent version of the schema, stored in _schema["version"]. */
 uint32_t dd_version_id = 0;
@@ -77,7 +87,26 @@ struct entity_access entity_access;
 API_EXPORT uint64_t
 box_schema_version(void)
 {
-	return schema_version;
+	return schema_version.box;
+}
+
+void
+box_bump_schema_version(void)
+{
+	schema_version.box++;
+	box_broadcast_schema();
+}
+
+uint64_t
+stmt_cache_schema_version(void)
+{
+	return schema_version.stmt_cache;
+}
+
+void
+stmt_cache_bump_schema_version(void)
+{
+	schema_version.stmt_cache++;
 }
 
 uint32_t
