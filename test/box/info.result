@@ -89,6 +89,7 @@ t
   - schema_version
   - signature
   - sql
+  - statement_version
   - status
   - synchro
   - uptime
