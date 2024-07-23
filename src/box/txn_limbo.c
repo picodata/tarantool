@@ -743,7 +743,15 @@ txn_limbo_confirm_txns(struct txn_limbo *limbo, int64_t lsn)
 {
 	assert(limbo->owner_id != REPLICA_ID_NIL || txn_limbo_is_empty(limbo));
 	assert(limbo == &txn_limbo);
-	assert(limbo->confirmed_lsn <= lsn);
+	/*
+	 * In the normal async worker path, confirmed_lsn is always
+	 * monotonically increasing. However, the promote path calls
+	 * txn_limbo_write_promote_confirm (bumping confirmed_lsn to
+	 * self_lsn) before txn_limbo_apply_promote calls this function
+	 * with the promote's req->lsn. In that case confirmed_lsn may
+	 * already be ahead, but we still need to iterate the queue and
+	 * complete pending entries.
+	 */
 	struct txn_limbo_entry *e, *tmp;
 	rlist_foreach_entry_safe(e, &limbo->queue, in_queue, tmp) {
 		/*
@@ -775,7 +783,11 @@ txn_limbo_confirm_txns(struct txn_limbo *limbo, int64_t lsn)
 					vclock_follow(&limbo->confirmed_vclock,
 						      limbo->owner_id, e->lsn);
 				} else {
-					assert(limbo->confirmed_lsn == lsn);
+					/*
+					 * In the promote path confirmed_lsn
+					 * may be ahead.
+					 */
+					assert(limbo->confirmed_lsn >= lsn);
 				}
 			}
 		} else if (e->txn->signature == TXN_SIGNATURE_UNKNOWN) {

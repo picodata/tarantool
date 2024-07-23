@@ -91,6 +91,7 @@ g.test_assert_last_entry_lsn_is_positive = function(cg)
     cg.replica:exec(function(f)
         box.error.injection.set('ERRINJ_WAL_DELAY', false)
         require('fiber').find(f):join()
+        box.ctl.wait_rw()
     end, {f})
     cg.master:exec(function()
         box.cfg{replication_synchro_quorum=1}
