@@ -1,3 +1,14 @@
+default:
+  tags:
+    - docker
+  retry:
+    max: 1
+    when:
+      - scheduler_failure
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+
 variables:
     # set larger git depth, so git describe works properly
     GIT_DEPTH: 0
@@ -6,8 +17,9 @@ variables:
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
     KANIKO_REGISTRY_MIRROR: docker-proxy.binary.picodata.io
     # k8s runner config
-    KUBERNETES_CPU_REQUEST: 4
-    KUBERNETES_MEMORY_REQUEST: "8Gi"
+    KUBERNETES_CPU_REQUEST: 6
+    KUBERNETES_CPU_LIMIT: 6
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
     # Helps to tolerate spurious network failures
     GET_SOURCES_ATTEMPTS: 3
 
@@ -17,37 +29,40 @@ stages:
   - pack
   - docker
 
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
 .test:
-    stage: test
-    before_script:
-      - git submodule update --init --recursive
-      - git submodule foreach --recursive 'git clean -xffd'
-      - git clean -xffd
+  stage: test
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+    GIT_SUBMODULE_STRATEGY: recursive
+
+.parallel:
+  parallel:
+    matrix:
+      - BUILD_PROFILE: [release, debug]
+
 
 luacheck:
     extends: .test
-    tags: [docker]
     image: docker-public.binary.picodata.io/tarantool-testing:latest
     script:
       - make -f .test.mk luacheck
 
 test-ubuntu:
-    extends: .test
-    retry: 2
-    tags: [docker]
-    image: docker-public.binary.picodata.io/tarantool-testing:latest
-    script:
-      - TAG_SHORT=$(git describe | awk -F- '{print $1}')
-      - TAG_LONG=$(git describe --long | sed -n 's/^\([0-9\.]*\)-\([0-9]*\)-\([a-z0-9]*\)/\1.\2/p')
-      - echo "TAG_LONG=$TAG_LONG" >> build.env
-      - echo "TAG_SHORT=$TAG_SHORT" >> build.env
-      - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
-      - make -f .test.mk test-release
-    artifacts:
-      name: "artifacts-vars-${CI_PIPELINE_ID}"
-      expire_in: 20 hour
-      reports:
-        dotenv: build.env
+  extends:
+    - .test
+    - .parallel
+  image: docker-public.binary.picodata.io/tarantool-testing:latest
+  script:
+    - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
+    - make -f .test.mk test-$BUILD_PROFILE
 
 test_mac-m1:
     extends: .test
@@ -68,23 +83,22 @@ checkpatch:
 
 # run long tests and coverage on release build
 coverage:
-    extends: .test
-    stage: build
-    only:
-      - web
-      - tags
-    retry: 2
-    tags: [docker]
-    image: docker-public.binary.picodata.io/tarantool-testing:latest
-    variables:
-      TEST_RUN_RETRIES: 3
-      SERVER_START_TIMEOUT: 400
-      REPLICATION_SYNC_TIMEOUT: 400
-      TEST_TIMEOUT: 420
-      NO_OUTPUT_TIMEOUT: 440
-    script:
-      - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
-      - make -f .test.mk test-coverage
+  extends: .test
+  stage: build
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web"
+  retry: 2
+  image: docker-public.binary.picodata.io/tarantool-testing:latest
+  variables:
+    TEST_RUN_RETRIES: 3
+    SERVER_START_TIMEOUT: 400
+    REPLICATION_SYNC_TIMEOUT: 400
+    TEST_TIMEOUT: 420
+    NO_OUTPUT_TIMEOUT: 440
+  script:
+    - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
+    - make -f .test.mk test-coverage
 
 # TODO: move out shared setup for fuzzing jobs
 # Check that fuzzing works
@@ -175,13 +189,12 @@ pack-on-tag:
   before_script:
     - mkdir -p /kaniko/.docker
     - echo "$DOCKER_AUTH_CONFIG" > /kaniko/.docker/config.json
-  tags: ["docker"]
   script:
     - >
       /kaniko/executor --context $CI_PROJECT_DIR --dockerfile ${DOCKERFILE}
       --build-arg TARANTOOL_VERSION=$CI_COMMIT_TAG ${PUSH_DOCKER}
       --cache=false --cache-run-layers=true --single-snapshot --compressed-caching=false --use-new-run --snapshot-mode=redo --cleanup
-      --destination $DOCKER_REGISTRY_PUB/tarantool:$TAG_SHORT --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG --destination $DOCKER_REGISTRY_PUB/tarantool:latest
+      --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG --destination $DOCKER_REGISTRY_PUB/tarantool:latest
 
 build-docker-on-tag:
   stage: docker
@@ -196,10 +209,10 @@ build-docker-on-tag:
 
 run-tntmodule-tests-on-tag:
   stage: docker
-  only:
-    - tags
+  rules:
+    - if: $CI_COMMIT_TAG
   variables:
-    TARANTOOL_VERSION: $TARANTOOL_VERSION
+    TARANTOOL_VERSION: $CI_COMMIT_TAG
   trigger:
     project: picodata/picodata/tarantool-module
     branch: master
