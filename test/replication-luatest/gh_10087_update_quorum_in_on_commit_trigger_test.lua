@@ -11,6 +11,7 @@ g_one_member_cluster.before_all(function(cg)
     -- Make `_cluster` space synchronous.
     cg.master:exec(function()
         box.ctl.promote()
+        box.ctl.wait_rw()
         box.space._cluster:alter{is_sync = true}
     end)
 end)
@@ -58,6 +59,7 @@ g_three_member_cluster.before_all(function(cg)
     -- Make `_cluster` space synchronous.
     cg.master:exec(function()
         box.ctl.promote()
+        box.ctl.wait_rw()
         box.space._cluster:alter{is_sync = true}
     end)
 
