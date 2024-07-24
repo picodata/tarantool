@@ -38,6 +38,7 @@ workflow:
 
 .test:
   stage: test
+  interruptible: true
   variables:
     GIT_STRATEGY: clone
     GIT_DEPTH: 0
