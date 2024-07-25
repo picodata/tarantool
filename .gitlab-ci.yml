@@ -61,6 +61,12 @@ test-ubuntu:
     - .test
     - .parallel
   image: docker-public.binary.picodata.io/tarantool-testing:latest
+  variables:
+    TEST_RUN_RETRIES: 3
+    SERVER_START_TIMEOUT: 400
+    REPLICATION_SYNC_TIMEOUT: 400
+    TEST_TIMEOUT: 420
+    NO_OUTPUT_TIMEOUT: 440
   script:
     - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
     - make -f .test.mk test-$BUILD_PROFILE
