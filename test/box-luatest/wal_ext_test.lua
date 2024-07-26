@@ -134,8 +134,24 @@ g.test_new_old_extension_replicated = function()
         return lsn
     end)
 
-    -- wait until data has been replicated
-    require('fiber').sleep(2)
+        local function check_vclock_synchronized()
+                local function get_vclock(node_name)
+                        return g.rs:get_server(node_name)
+                                :exec(function() return box.info.vclock end)
+                end
+                local master_vclock = get_vclock("master")
+                local replica_vclock = get_vclock("replica")
+
+                t.assert_equals(
+                        master_vclock,
+                        replica_vclock,
+                        'Vclocks are not synchronized'
+                )
+        end
+        t.helpers.retrying(
+                {timeout = 2, delay = 0.1},
+                check_vclock_synchronized
+        )
 
     g.rs:get_server('replica'):exec(function(lsn)
         local fio = require('fio')
