@@ -55,7 +55,7 @@ struct auth_md5_authenticator {
  * Never fails.
  */
 static void
-client_password_prepare(char *client_pass,
+client_password_prepare(char client_pass[static MD5_PASSWD_LEN],
 			const void *password,
 			uint32_t password_len,
 			const char *user,
