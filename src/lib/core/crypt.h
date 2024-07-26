@@ -41,4 +41,5 @@
  */
 void
 md5_encrypt(const char *password, size_t password_len,
-	    const char *salt, size_t salt_len, char *buf);
+	    const char *salt, size_t salt_len,
+	    char buf[static MD5_PASSWD_LEN]);
