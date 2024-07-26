@@ -75,26 +75,31 @@ g.test_replication = function()
     })
     g.rs:start()
 
-    local master_lsn = g.rs:get_server('master'):exec(function()
+    -- write something on master
+    g.rs:get_server('master'):exec(function()
         box.schema.space.create('test'):create_index('pk')
 
         box.space.test:insert({ 1, "1" })
         box.space.test:insert({ 2, "2" })
         box.space.test:update(2, { { '=', 2, '3' } })
         box.space.test:delete(1)
-
-        return box.info.lsn
     end)
 
-    -- wait until data has been replicated
-    require('fiber').sleep(2)
+    local function check_vclock_synchronized()
+        local function get_vclock(node_name)
+                return g.rs:get_server(node_name)
+                    :exec(function() return box.info.vclock end)
+        end
+        local master_vclock = get_vclock("master")
+        local replica_vclock = get_vclock("replica")
 
-    local replica_lsn = g.rs:get_server('replica'):exec(function()
-        t.assert_equals(box.space.test:len(), 1)
-        return box.info.replication[1].lsn
-    end)
-
-    t.assert_equals(master_lsn, replica_lsn)
+        t.assert_equals(
+            master_vclock,
+            replica_vclock,
+            'Vclocks are not synchronized'
+        )
+    end
+    t.helpers.retrying({timeout = 2, delay = 0.1}, check_vclock_synchronized)
 end
 
 g.test_anon_replication = function()
@@ -130,26 +135,34 @@ g.test_anon_replication = function()
     })
     g.rs:start()
 
-    local master_lsn = g.rs:get_server('master'):exec(function()
+    -- write something on master
+    g.rs:get_server('master'):exec(function()
         box.schema.space.create('test'):create_index('pk')
 
         box.space.test:insert({ 1, "1" })
         box.space.test:insert({ 2, "2" })
         box.space.test:update(2, { { '=', 2, '3' } })
         box.space.test:delete(1)
-
-        return box.info.lsn
     end)
 
-    -- wait until data has been replicated
-    require('fiber').sleep(2)
+    local function check_vclock_synchronized()
+        local function get_vclock(node_name)
+                return g.rs:get_server(node_name)
+                    :exec(function() return box.info.vclock end)
+        end
+        local master_vclock = get_vclock("master")
+        local replica_vclock = get_vclock("replica")
 
-    local replica_lsn = g.rs:get_server('replica'):exec(function()
-        t.assert_equals(box.space.test:len(), 1)
-        return box.info.replication[1].lsn
-    end)
-
-    t.assert_equals(master_lsn, replica_lsn)
+        t.assert_equals(
+            master_vclock,
+            replica_vclock,
+            'Vclocks are not synchronized'
+        )
+    end
+    t.helpers.retrying(
+        {timeout = 2, delay = 0.1},
+        check_vclock_synchronized
+    )
 end
 
 g.test_plain_replication_to_ssl_master = function()
