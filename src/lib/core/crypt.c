@@ -31,33 +31,29 @@
 
 #include <string.h>
 
-/** Convert bytes to hex values.  */
+/** Convert bytes to hex values. */
 static void
-bytes_to_hex(uint8_t b[16], char *s)
+bytes_to_hex(const uint8_t in[static 16], char out[static 32])
 {
 	static const char *hex = "0123456789abcdef";
 	int q, w;
 
 	for (q = 0, w = 0; q < 16; q++) {
-		s[w++] = hex[(b[q] >> 4) & 0x0F];
-		s[w++] = hex[b[q] & 0x0F];
+		out[w++] = hex[(in[q] >> 4) & 0x0F];
+		out[w++] = hex[in[q] & 0x0F];
 	}
-	s[w] = '\0';
 }
 
 /**
  * Calculates the MD5 sum of the bytes in a buffer.
  *
- * @param buff the buffer containing the bytes that you want the MD5 sum of.
- * @param len  number of bytes in the buffer.
+ * @param buf the buffer containing the bytes that you want the MD5 sum of.
+ * @param len number of bytes in the buffer.
  *
- * @param hexsum the MD5 sum as a '\0'-terminated string of
- *		 hexadecimal digits.  an MD5 sum is 16 bytes long.
- *		 each byte is represented by two hexadecimal
- *		 characters.  you thus need to provide an array
- *		 of 33 characters, including the trailing '\0'.
- *		 errstr  filled with a constant-string error message
- *		 on failure return; NULL on success.
+ * @param hexsum the resulting MD5 sum as a non-null-terminated string of
+ *		 hexadecimal digits which is exactly 32 bytes long.
+ *		 Each input byte is represented by two hexadecimal
+ *		 characters.
  *
  * @note MD5 is described in RFC 1321.
  *
@@ -65,29 +61,31 @@ bytes_to_hex(uint8_t b[16], char *s)
  *
  */
 static void
-md5_hash(const void *buff, size_t len, char *hexsum)
+md5_hash(const void *buf, size_t len, char out[static 32])
 {
 	uint8_t sum[MD5_DIGEST_LENGTH];
 
 	struct cryptohash_ctx *ctx = cryptohash_create(CRYPTOHASH_MD5);
 	cryptohash_init(ctx);
-	cryptohash_update(ctx, buff, len);
+	cryptohash_update(ctx, buf, len);
 	cryptohash_final(ctx, sum, sizeof(sum));
-	bytes_to_hex(sum, hexsum);
+	bytes_to_hex(sum, out);
 	cryptohash_free(ctx);
 }
 
 void
 md5_encrypt(const char *password, size_t password_len,
-	    const char *salt, size_t salt_len, char *buf)
+	    const char *salt, size_t salt_len,
+	    char out[static MD5_PASSWD_LEN])
 {
 	if (password_len + salt_len == 0) {
-		memcpy(buf, "md5", strlen("md5"));
-		md5_hash("", 0, buf + strlen("md5"));
+		memcpy(out, "md5", strlen("md5"));
+		md5_hash("", 0, out + strlen("md5"));
 		return;
 	}
 
 	char *crypt_buf = xmalloc(password_len + salt_len);
+
 	/*
 	 * Place salt at the end because it may be known by users trying to
 	 * crack the MD5 output.
@@ -95,8 +93,8 @@ md5_encrypt(const char *password, size_t password_len,
 	memcpy(crypt_buf, password, password_len);
 	memcpy(crypt_buf + password_len, salt, salt_len);
 
-	memcpy(buf, "md5", strlen("md5"));
-	md5_hash(crypt_buf, password_len + salt_len, buf + strlen("md5"));
+	memcpy(out, "md5", strlen("md5"));
+	md5_hash(crypt_buf, password_len + salt_len, out + strlen("md5"));
 
 	free(crypt_buf);
 }
