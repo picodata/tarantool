@@ -1149,7 +1149,10 @@ run_script_f(va_list ap)
 		lua_settop(L, 0);
 		goto end;
 	}
-	if (debugging) {
+	if (cb) {
+		/* Do nothing! */
+		say_info("skipped luaL_loadfile due to picodata callback");
+	} else if (debugging) {
 		if (path == NULL || access(path, F_OK) != 0) {
 			diag_set(SystemError, "Expected script name");
 			goto error;
