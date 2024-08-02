@@ -171,14 +171,32 @@ sql_prepare(const char *sql, int len, struct port *port)
 
 /**
  * Find or create prepared statement by its SQL query.
- * Returns compiled statement ID.
+ * Returns compiled statement ID and session ID.
  */
 int
-sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id)
+sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id, uint64_t *session_id)
 {
 	struct sql_stmt *stmt = NULL;
 	if (sql_stmt_find_or_create(sql, len, stmt_id, &stmt) != 0)
 		return -1;
+	*session_id = current_session()->id;
+	return 0;
+}
+
+int
+sql_unprepare_ext(uint32_t stmt_id, uint64_t session_id)
+{
+	struct session *session = session_find(session_id);
+	if (session == NULL) {
+		diag_set(ClientError, ER_NO_SUCH_SESSION, session_id);
+		return -1;
+	}
+	if (!session_check_stmt_id(session, stmt_id)) {
+		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
+		return -1;
+	}
+	session_remove_stmt_id(session, stmt_id);
+	sql_stmt_unref(stmt_id);
 	return 0;
 }
 

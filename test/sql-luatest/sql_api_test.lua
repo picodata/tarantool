@@ -38,8 +38,10 @@ g.before_all(function()
             uint32_t stmt_id, const char *mp_params,
             uint64_t vdbe_max_steps, struct obuf *out_buf);
 
-        int sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id);
-
+        int sql_prepare_ext(
+            const char *sql, int len,
+            uint32_t *stmt_id, uint64_t *sid);
+        int sql_unprepare_ext(uint32_t stmt_id, uint64_t sid);
     ]]
     g.server = server:new({alias = 'sql_api'})
     g.server:start()
@@ -159,13 +161,92 @@ g.test_stmt_prepare = function()
 
         local ffi = require('ffi')
         local stmt_id = ffi.new('uint32_t[1]')
+        local session_id = ffi.new('uint64_t[1]')
 
         -- Prepare the statement.
-        res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id)
+        res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id, session_id)
         t.assert_equals(res, 0)
 
         -- Check the prepared statement.
         res = box.execute(tonumber(stmt_id[0]), {'ABC'})
         t.assert_equals(res.rows[1][1], 'ABC')
+
+        -- Unprepare the statement
+        res = ffi.C.sql_unprepare_ext(
+            tonumber(stmt_id[0]), tonumber(session_id[0]))
+        t.assert_equals(res, 0)
+
+        -- Calling unprepare again returns error
+        res = ffi.C.sql_unprepare_ext(
+            tonumber(stmt_id[0]), tonumber(session_id[0]))
+        t.assert_not_equals(res, 0)
+        local err = tostring(box.error.last())
+        local s = string.format(
+            "Prepared statement with id %u does not exist",
+            tonumber(stmt_id[0]))
+        t.assert_str_contains(err, s)
+
+        -- Check unprepare from invalid session
+        -- returns error
+        local wrong_sid = tonumber(session_id[0]) + 1
+        res = ffi.C.sql_unprepare_ext(tonumber(stmt_id[0]), wrong_sid)
+        t.assert_not_equals(res, 0)
+        err = tostring(box.error.last())
+        s = string.format("Session %u does not exist", wrong_sid)
+        t.assert_str_contains(err, s)
+
+        -- Check statement was deleted
+        res = box.execute(tonumber(stmt_id[0]), {'ABC'})
+        t.assert_not_equals(res, 0)
+    end)
+end
+
+g.test_unprepare_from_other_session = function()
+    g.server:exec(function()
+        local fiber = require('fiber')
+
+        local res, err, ok
+
+        local ffi = require('ffi')
+        local stmt_id = ffi.new('uint32_t[1]')
+        local session_id = ffi.new('uint64_t[1]')
+
+        -- Prepare the statement.
+        res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id, session_id)
+        t.assert_equals(res, 0)
+
+        -- Check the prepared statement.
+        res = box.execute(tonumber(stmt_id[0]), {'ABC'})
+        t.assert_equals(res.rows[1][1], 'ABC')
+
+        local new_session = function(stmt_id, session_id)
+            local ffi = require('ffi')
+            local id = tonumber(stmt_id[0])
+            local sid = tonumber(session_id[0])
+
+            -- Unprepare the statement
+            res = ffi.C.sql_unprepare_ext(id, sid)
+            t.assert_equals(res, 0)
+
+            -- Check we get an error when trying to unprepare
+            -- invalid statement from other session
+            res = ffi.C.sql_unprepare_ext(id, sid)
+            err = tostring(box.error.last())
+            local s = string.format(
+                "Prepared statement with id %u does not exist", id)
+            t.assert_str_contains(err, s)
+        end
+
+        local f = fiber.new(new_session, stmt_id, session_id)
+        f:set_joinable(true)
+        ok, res = f:join()
+
+        if not ok then
+            error(res:unpack())
+        end
+
+        -- Check statement was deleted
+        res = box.execute(tonumber(stmt_id[0]), {'ABC'})
+        t.assert_not_equals(res, 0)
     end)
 end
