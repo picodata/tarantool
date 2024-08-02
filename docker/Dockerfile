@@ -69,6 +69,7 @@ RUN dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
         geos-devel \
         openssl-devel \
         gperftools-libs \
+        findutils \
     && ln -s /usr/lib64/libprofiler.so.0 /usr/lib64/libprofiler.so \
     && ln -s $(cat /etc/ld.so.conf.d/postgresql-pgdg-libs.conf | cut -f 1-3 -d '/') /usr/include/postgresql \
     && sed -i "s|http://rocks.tarantool.org/|https://download.binary.picodata.io/luarocks-tnt/|g" /usr/share/tarantool/luarocks/core/hardcoded.lua \
