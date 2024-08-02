@@ -599,7 +599,7 @@ obuf_create
 obuf_destroy
 sql_prepare_ext
 sql_stmt_finalize
-sql_unprepare
+sql_unprepare_ext
 sql_stmt_query_str
 sql_stmt_calculate_id
 sql_execute_prepared_ext
