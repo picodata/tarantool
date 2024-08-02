@@ -137,14 +137,25 @@ int
 sql_prepare(const char *sql, int len, struct port *port);
 
 /**
+ * Unprepare statement from the session (exported version).
+ *
+ * @param stmt_id ID of prepared stmt.
+ * @param sid session ID.
+ */
+int
+sql_unprepare_ext(uint32_t stmt_id, uint64_t sid);
+
+/**
  * Prepare statement (exported version).
  *
  * @param sql UTF-8 encoded SQL query.
  * @param len Length of @param sql in bytes.
  * @param[out] stmt_id Prepared statement ID.
+ * @param[out] session_id session ID.
  */
 int
-sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id);
+sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id,
+		uint64_t *session_id);
 
 #if defined(__cplusplus)
 } /* extern "C" { */
