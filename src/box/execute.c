@@ -289,9 +289,11 @@ sql_stmt_execute(struct sql_stmt *stmt, const struct sql_bind *bind,
 	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0) {
 		port_destroy(port);
 		sql_stmt_reset(stmt);
+		sql_unbind(stmt);
 		return -1;
 	}
 	sql_stmt_reset(stmt);
+	sql_unbind(stmt);
 
 	return 0;
 }
