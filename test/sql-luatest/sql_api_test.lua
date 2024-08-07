@@ -163,6 +163,9 @@ g.test_stmt_prepare = function()
         local stmt_id = ffi.new('uint32_t[1]')
         local session_id = ffi.new('uint64_t[1]')
 
+        local initial_stmt_count = box.info.sql().cache.stmt_count
+        local initial_cache_size = box.info.sql().cache.size
+
         -- Prepare the statement.
         res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id, session_id)
         t.assert_equals(res, 0)
@@ -175,6 +178,9 @@ g.test_stmt_prepare = function()
         res = ffi.C.sql_unprepare_ext(
             tonumber(stmt_id[0]), tonumber(session_id[0]))
         t.assert_equals(res, 0)
+
+        t.assert_equals(box.info.sql().cache.stmt_count, initial_stmt_count)
+        t.assert_equals(box.info.sql().cache.size, initial_cache_size)
 
         -- Calling unprepare again returns error
         res = ffi.C.sql_unprepare_ext(

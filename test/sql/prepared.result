@@ -855,11 +855,11 @@ execute(s.stmt_id, {{[':a'] = 1}, {[':b'] = 2}, {[':c'] = 3}});
  | ---
  | - metadata:
  |   - name: COLUMN_1
- |     type: integer
+ |     type: any
  |   - name: COLUMN_2
- |     type: integer
+ |     type: any
  |   - name: COLUMN_3
- |     type: integer
+ |     type: any
  |   rows:
  |   - [1, 2, 3]
  | ...
@@ -867,11 +867,11 @@ execute(s.stmt_id, {{[':a'] = 1}, {[':b'] = 2}});
  | ---
  | - metadata:
  |   - name: COLUMN_1
- |     type: integer
+ |     type: any
  |   - name: COLUMN_2
- |     type: integer
+ |     type: any
  |   - name: COLUMN_3
- |     type: boolean
+ |     type: any
  |   rows:
  |   - [1, 2, null]
  | ...
@@ -879,11 +879,11 @@ execute(s.stmt_id);
  | ---
  | - metadata:
  |   - name: COLUMN_1
- |     type: boolean
+ |     type: any
  |   - name: COLUMN_2
- |     type: boolean
+ |     type: any
  |   - name: COLUMN_3
- |     type: boolean
+ |     type: any
  |   rows:
  |   - [null, null, null]
  | ...
