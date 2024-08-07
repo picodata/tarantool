@@ -809,7 +809,7 @@ s:execute({42})
 ---
 - metadata:
   - name: COLUMN_1
-    type: integer
+    type: any
   rows:
   - [42]
 ...
