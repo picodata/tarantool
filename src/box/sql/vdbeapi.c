@@ -431,11 +431,12 @@ sql_unbind(struct sql_stmt *stmt)
 		assert(rc == 0);
 		(void) rc;
 		/*
-		 * We should re-set boolean type - unassigned
-		 * binding slots are assumed to contain NULL
-		 * value, which has boolean type.
+		 * We should re-set any type - parameters
+		 * are assigned type any during compilation.
+		 * During execution actual types are assigned,
+		 * so reset back to any.
 		 */
-		sql_bind_type(v, i, "boolean");
+		sql_bind_type(v, i, "any");
 	}
 }
 
