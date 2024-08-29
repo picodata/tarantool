@@ -331,14 +331,25 @@ sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
 		goto cleanup;
 	}
 	/*
-	 * If the statement was prepared in some other session,
-	 * we borrow it and add to the current session.
+	 * If the statement was prepared in some other session, we borrow
+	 * it and add to the current session until execution is finished.
+	 * It is required to prevent the statement from being removed out
+	 * of the cache while the statement is being executed. Then the
+	 * statement is removed out of the current session to restore the
+	 * original session state.
 	 */
+	bool stmt_is_borrowed = false;
 	if (!session_check_stmt_id(current_session(), stmt_id)) {
 		session_add_stmt_id(current_session(), stmt_id);
+		stmt_is_borrowed = true;
 	}
-	if (sql_stmt_execute(stmt, bind, (uint32_t)bind_count, vdbe_max_steps,
-			     &fiber()->gc, &port) != 0)
+	int rc = sql_stmt_execute(stmt, bind, (uint32_t)bind_count,
+				  vdbe_max_steps, &fiber()->gc, &port);
+	if (stmt_is_borrowed) {
+		session_remove_stmt_id(current_session(), stmt_id);
+		sql_stmt_unref(stmt_id);
+	}
+	if (rc != 0)
 		goto cleanup;
 
 	struct obuf_svp out_svp = obuf_create_svp(out_buf);

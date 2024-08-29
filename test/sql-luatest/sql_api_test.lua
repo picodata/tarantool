@@ -119,6 +119,7 @@ g.test_prepared_stmt_execution = function()
         res = box.execute([[SELECT * FROM t WHERE a = 'B']])
         t.assert_equals(res.rows[1][1], 'B')
 
+        s:unprepare()
         ffi.C.obuf_destroy(obuf)
     end)
 end
@@ -140,7 +141,8 @@ g.test_cross_session_stmt_execution = function()
             -- Execute with C API the statement that was prepared
             -- in a parent session
             local buf = ffi.cast('char *', '\x91\xd9\x01C')
-            ffi.C.sql_execute_prepared_ext(stmt_id, buf, 1024, obuf)
+            local rc = ffi.C.sql_execute_prepared_ext(stmt_id, buf, 1024, obuf)
+            t.assert_equals(rc, 0)
 
             ffi.C.obuf_destroy(obuf)
         end
@@ -152,6 +154,8 @@ g.test_cross_session_stmt_execution = function()
         -- Check the result.
         local res = box.execute([[SELECT * FROM t WHERE a = 'C']])
         t.assert_equals(res.rows[1][1], 'C')
+
+        s:unprepare()
     end)
 end
 
@@ -254,5 +258,97 @@ g.test_unprepare_from_other_session = function()
         -- Check statement was deleted
         res = box.execute(tonumber(stmt_id[0]), {'ABC'})
         t.assert_not_equals(res, 0)
+    end)
+end
+
+g.test_execution_references = function()
+    g.server:exec(function()
+        local res, buf
+        local id, sid
+
+        local ffi = require('ffi')
+        local slab_cache = ffi.C.cord_slab_cache()
+        local mem_chunk = ffi.new("struct obuf_impl[1]")
+        local obuf = ffi.cast('struct obuf *', mem_chunk)
+        ffi.C.obuf_create(obuf, slab_cache, 1024)
+        local stmt_id = ffi.new('uint32_t[1]')
+        local session_id = ffi.new('uint64_t[1]')
+        local initial_stmt_count = box.info.sql().cache.stmt_count
+
+        -- Prepare the statement.
+        res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id, session_id)
+        t.assert_equals(res, 0)
+        t.assert_equals(box.info.sql().cache.stmt_count, initial_stmt_count + 1)
+        id = tonumber(stmt_id[0])
+        sid = tonumber(session_id[0])
+
+        -- Check that execution of the statement from the session where
+        -- it was prepared, does not delete the statement from cache.
+        buf = ffi.cast('char *', '\x91\xd9\x01A')
+        res = ffi.C.sql_execute_prepared_ext(id, buf, 1024, obuf)
+        t.assert_equals(res, 0)
+        t.assert_equals(
+            box.info.sql().cache.stmt_count,
+            initial_stmt_count + 1
+        )
+        ffi.C.obuf_destroy(obuf)
+
+        -- Unprepare the statement
+        res = ffi.C.sql_unprepare_ext(id, sid)
+        t.assert_equals(res, 0)
+        t.assert_equals(box.info.sql().cache.stmt_count, initial_stmt_count)
+    end)
+end
+
+g.test_execution_references_from_other_session = function()
+    g.server:exec(function()
+        local res, ok
+        local fiber = require('fiber')
+        local ffi = require('ffi')
+        local stmt_id = ffi.new('uint32_t[1]')
+        local session_id = ffi.new('uint64_t[1]')
+        local initial_stmt_count = box.info.sql().cache.stmt_count
+
+        -- Prepare the statement.
+        t.assert_equals(box.info.sql().cache.stmt_count, initial_stmt_count)
+        res = ffi.C.sql_prepare_ext('VALUES (?)', 10, stmt_id, session_id)
+        t.assert_equals(res, 0)
+        t.assert_equals(box.info.sql().cache.stmt_count, 1)
+
+        local new_session = function(id)
+            local buf
+            local ffi = require('ffi')
+            local slab_cache = ffi.C.cord_slab_cache()
+            local mem_chunk = ffi.new("struct obuf_impl[1]")
+            local obuf = ffi.cast('struct obuf *', mem_chunk)
+            ffi.C.obuf_create(obuf, slab_cache, 1024)
+
+            -- Check that execution of the statement from the session,
+            -- different from the one where it was prepared, does not
+            -- delete the statement from cache.
+            buf = ffi.cast('char *', '\x91\xd9\x01A')
+            res = ffi.C.sql_execute_prepared_ext(id, buf, 1024, obuf)
+            t.assert_equals(res, 0)
+            t.assert_equals(
+                box.info.sql().cache.stmt_count,
+                initial_stmt_count + 1
+            )
+            ffi.C.obuf_destroy(obuf)
+        end
+
+        local id = tonumber(stmt_id[0])
+        local f = fiber.new(new_session, id)
+        f:set_joinable(true)
+        ok, res = f:join()
+
+        if not ok then
+            error(res:unpack())
+        end
+
+        -- Unprepare the statement
+        local sid = tonumber(session_id[0])
+        res = ffi.C.sql_unprepare_ext(id, sid)
+        t.assert_equals(res, 0)
+        t.assert_equals(box.info.sql().cache.stmt_count, initial_stmt_count)
     end)
 end
