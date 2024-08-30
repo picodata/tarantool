@@ -323,7 +323,7 @@ struct errcode_record {
 	/*268 */_(ER_ILLEGAL_OPTIONS,		"Illegal options: %s")   \
 	/*269 */_(ER_ILLEGAL_OPTIONS_FORMAT,    "Each option in third argument must be a table containing only one key value pair")   \
 	/*270 */_(ER_CANT_GENERATE,		"Can't generate %s") \
-	/*271 */_(ER_UNUSED5,			"") \
+	/*271 */_(ER_SQL_STATEMENT_BUSY,	"SQL statement %d is busy") \
 	/*272 */_(ER_SCHEMA_UPGRADE_IN_PROGRESS, "Schema upgrade is already in progress") \
 	/*273 */_(ER_UNUSED7,			"") \
 	/*274 */_(ER_UNCONFIGURED,		"Please call box.cfg{} first") \
