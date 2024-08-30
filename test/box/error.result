@@ -489,6 +489,7 @@ t;
  |   268: box.error.ILLEGAL_OPTIONS
  |   269: box.error.ILLEGAL_OPTIONS_FORMAT
  |   270: box.error.CANT_GENERATE
+ |   271: box.error.SQL_STATEMENT_BUSY
  |   272: box.error.SCHEMA_UPGRADE_IN_PROGRESS
  |   274: box.error.UNCONFIGURED
  |   278: box.error.IN_ANOTHER_PROMOTE

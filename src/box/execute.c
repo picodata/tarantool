@@ -195,6 +195,15 @@ sql_unprepare_ext(uint32_t stmt_id, uint64_t session_id)
 		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
 		return -1;
 	}
+	struct sql_stmt *stmt = sql_stmt_cache_find(stmt_id);
+	if (stmt == NULL) {
+		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
+		return -1;
+	}
+	if (sql_stmt_busy(stmt)) {
+		diag_set(ClientError, ER_SQL_STATEMENT_BUSY, stmt_id);
+		return -1;
+	}
 	session_remove_stmt_id(session, stmt_id);
 	sql_stmt_unref(stmt_id);
 	return 0;
