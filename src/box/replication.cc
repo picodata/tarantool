@@ -42,6 +42,7 @@
 #include "raft.h"
 #include "relay.h"
 #include "sio.h"
+#include "tweaks.h"
 
 uint32_t instance_id = REPLICA_ID_NIL;
 struct tt_uuid INSTANCE_UUID;
@@ -57,6 +58,9 @@ double replication_sync_timeout = 300.0; /* seconds */
 bool replication_skip_conflict = false;
 bool replication_anon = false;
 int replication_threads = 1;
+
+bool replication_synchro_timeout_rollback_enabled = true;
+TWEAK_BOOL(replication_synchro_timeout_rollback_enabled);
 
 struct replicaset replicaset;
 

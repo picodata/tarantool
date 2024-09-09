@@ -65,6 +65,14 @@ string when decoded in Lua.
 https://tarantool.io/compat/binary_data_decoding
 ]]
 
+local REPLICATION_SYNCHRO_TIMEOUT_COMPAT_BRIEF = [[
+Determines whether the replication_synchro_timeout option rolls back
+transactions or it only used to wait confirmation in promote/demote and
+gc-checkpointing.
+
+https://tarantool.io/compat/replication_synchro_timeout
+]]
+
 -- Returns an action callback that toggles a tweak.
 local function tweak_action(tweak_name, old_tweak_value, new_tweak_value)
     return function(is_new)
@@ -125,6 +133,13 @@ local options = {
             tweaks.yaml_decode_binary_as_string = not is_new
             tweaks.msgpack_decode_binary_as_string = not is_new
         end,
+    },
+    replication_synchro_timeout = {
+        default = 'old',
+        obsolete = nil,
+        brief = REPLICATION_SYNCHRO_TIMEOUT_COMPAT_BRIEF,
+        action = tweak_action(
+            'replication_synchro_timeout_rollback_enabled', true, false),
     },
 }
 
