@@ -23,6 +23,8 @@ cfg_filter(box.cfg)
  |     - auto
  |   - - checkpoint_count
  |     - 2
+ |   - - checkpoint_enabled
+ |     - true
  |   - - checkpoint_interval
  |     - 3600
  |   - - checkpoint_wal_threshold
@@ -163,6 +165,8 @@ cfg_filter(box.cfg)
  |     - auto
  |   - - checkpoint_count
  |     - 2
+ |   - - checkpoint_enabled
+ |     - true
  |   - - checkpoint_interval
  |     - 3600
  |   - - checkpoint_wal_threshold

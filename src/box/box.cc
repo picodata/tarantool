@@ -2939,6 +2939,13 @@ box_set_readahead(void)
 }
 
 void
+box_set_checkpoint_enabled(void)
+{
+	bool enabled = cfg_getb("checkpoint_enabled");
+	gc_set_checkpoint_enabled(enabled);
+}
+
+void
 box_set_checkpoint_count(void)
 {
 	int checkpoint_count = cfg_geti("checkpoint_count");

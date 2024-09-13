@@ -179,6 +179,10 @@ struct gc_state {
 	 * a checkpoint as soon as possible despite the schedule.
 	 */
 	bool checkpoint_is_pending;
+	/**
+	 * Checkpoints are disabled if this flag is not set.
+	 */
+	bool checkpoint_is_enabled;
 };
 extern struct gc_state gc;
 
@@ -253,6 +257,13 @@ gc_delay_unref(void);
  */
 void
 gc_advance(const struct vclock *vclock);
+
+/**
+ * Toggle checkpoint machinery on/off.
+ * When set to false, gc_checkpoint will return with an error.
+ */
+void
+gc_set_checkpoint_enabled(bool enabled);
 
 /**
  * Update the minimal number of checkpoints to preserve.

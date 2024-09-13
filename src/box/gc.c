@@ -107,6 +107,9 @@ gc_init(on_garbage_collection_f on_garbage_collection)
 	/* Don't delete any files until recovery is complete. */
 	gc.min_checkpoint_count = INT_MAX;
 
+	/* Checkpoints should be enabled by default. */
+	gc.checkpoint_is_enabled = true;
+
 	gc.wal_cleanup_delay = TIMEOUT_INFINITY;
 	gc.delay_ref = 0;
 	gc.is_paused = true;
@@ -419,6 +422,12 @@ gc_advance(const struct vclock *vclock)
 }
 
 void
+gc_set_checkpoint_enabled(bool enabled)
+{
+	gc.checkpoint_is_enabled = enabled;
+}
+
+void
 gc_set_min_checkpoint_count(int min_checkpoint_count)
 {
 	gc.min_checkpoint_count = min_checkpoint_count;
@@ -481,6 +490,14 @@ gc_do_checkpoint(bool is_scheduled)
 	int rc;
 	struct wal_checkpoint checkpoint;
 	int64_t limbo_rollback_count = txn_limbo.rollback_count;
+
+	if (!gc.checkpoint_is_enabled) {
+		diag_set(ClientError, ER_SYSTEM,
+			 "Snapshots are temporarily disabled. "
+			 "Use box.cfg{checkpoint_enabled = true} "
+			 "to restore the default behavior.");
+		return -1;
+	}
 
 	assert(!gc.checkpoint_is_in_progress);
 	gc.checkpoint_is_in_progress = true;

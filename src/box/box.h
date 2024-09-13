@@ -327,6 +327,7 @@ void box_set_io_collect_interval(void);
 void box_set_snap_io_rate_limit(void);
 void box_set_too_long_threshold(void);
 void box_set_readahead(void);
+void box_set_checkpoint_enabled(void);
 void box_set_checkpoint_count(void);
 void box_set_checkpoint_interval(void);
 void box_set_checkpoint_wal_threshold(void);
