@@ -33,6 +33,7 @@
 #include "iproto_constants.h"
 #include "journal.h"
 #include "box.h"
+#include "gc.h"
 #include "raft.h"
 #include "tt_static.h"
 #include "session.h"
@@ -1218,10 +1219,12 @@ int
 txn_limbo_req_prepare(struct txn_limbo *limbo,
 		      const struct synchro_request *req)
 {
+	struct error *e;
+
 	assert(latch_is_locked(&limbo->promote_latch));
 
 	if (txn_limbo_filter_generic(limbo, req) < 0)
-		return -1;
+		goto error;
 
 	/*
 	 * Guard against new transactions appearing during WAL write. It is
@@ -1239,7 +1242,7 @@ txn_limbo_req_prepare(struct txn_limbo *limbo,
 	limbo->is_in_rollback = true;
 	if (txn_limbo_filter_request(limbo, req) < 0) {
 		limbo->is_in_rollback = false;
-		return -1;
+		goto error;
 	}
 	/* Prepare for request execution and fine-grained filtering. */
 	switch (req->type) {
@@ -1260,6 +1263,16 @@ txn_limbo_req_prepare(struct txn_limbo *limbo,
 	 */
 	}
 	return 0;
+
+error:
+	e = diag_last_error(diag_get());
+	if (e->code == ER_SPLIT_BRAIN) {
+		say_warn("Disabling snapshots due to Split-Brain. "
+			 "Use box.cfg{checkpoint_enabled = true} "
+			 "to restore the default behavior.");
+		gc_set_checkpoint_enabled(false);
+	}
+	return -1;
 }
 
 void
