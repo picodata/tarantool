@@ -171,6 +171,7 @@ local default_cfg = {
     read_only           = false,
     hot_standby         = false,
     memtx_use_mvcc_engine = false,
+    checkpoint_enabled  = true,
     checkpoint_interval = 3600,
     checkpoint_wal_threshold = 1e18,
     checkpoint_count    = 2,
@@ -360,6 +361,7 @@ local template_cfg = {
     background          = 'boolean',
     username            = 'string',
     coredump            = 'boolean',
+    checkpoint_enabled  = 'boolean',
     checkpoint_interval = 'number',
     checkpoint_wal_threshold = 'number',
     wal_queue_max_size  = 'number',
@@ -472,6 +474,7 @@ local dynamic_cfg = {
     vinyl_timeout           = private.cfg_set_vinyl_timeout,
     vinyl_defer_deletes     = nop,
     checkpoint_count        = private.cfg_set_checkpoint_count,
+    checkpoint_enabled      = private.cfg_set_checkpoint_enabled,
     checkpoint_interval     = private.cfg_set_checkpoint_interval,
     checkpoint_wal_threshold = private.cfg_set_checkpoint_wal_threshold,
     wal_queue_max_size      = private.cfg_set_wal_queue_max_size,
@@ -700,6 +703,7 @@ end
 -- replace the new one.
 local translate_cfg = {
     snapshot_count = {'checkpoint_count'},
+    snapshot_enabled = {'checkpoint_enabled'},
     snapshot_period = {'checkpoint_interval'},
     slab_alloc_arena = {'memtx_memory', function(old)
         return nil, convert_gb(old)
