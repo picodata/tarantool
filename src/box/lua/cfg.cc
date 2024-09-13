@@ -148,6 +148,17 @@ lbox_cfg_set_checkpoint_count(struct lua_State *L)
 }
 
 static int
+lbox_cfg_set_checkpoint_enabled(struct lua_State *L)
+{
+	try {
+		box_set_checkpoint_enabled();
+	} catch (Exception *) {
+		luaT_error(L);
+	}
+	return 0;
+}
+
+static int
 lbox_cfg_set_checkpoint_interval(struct lua_State *L)
 {
 	try {
@@ -459,6 +470,7 @@ box_lua_cfg_init(struct lua_State *L)
 		{"cfg_set_too_long_threshold", lbox_cfg_set_too_long_threshold},
 		{"cfg_set_snap_io_rate_limit", lbox_cfg_set_snap_io_rate_limit},
 		{"cfg_set_checkpoint_count", lbox_cfg_set_checkpoint_count},
+		{"cfg_set_checkpoint_enabled", lbox_cfg_set_checkpoint_enabled},
 		{"cfg_set_checkpoint_interval", lbox_cfg_set_checkpoint_interval},
 		{"cfg_set_checkpoint_wal_threshold", lbox_cfg_set_checkpoint_wal_threshold},
 		{"cfg_set_wal_queue_max_size", lbox_cfg_set_wal_queue_max_size},
