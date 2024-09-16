@@ -562,7 +562,7 @@ test:do_catchsql_test(6.6, [[
     WITH x AS (SELECT * FROM t1) DELETE FROM t2 WHERE
 ]], {
     -- <6.6>
-    1, "Syntax error at line 2 near '\n'"
+    1, "Syntax error at line 2 near ''"
     -- </6.6>
 })
 

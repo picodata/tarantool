@@ -66,13 +66,13 @@ g.test_sql_func_expr_2 = function()
     g.server:exec(function()
         local def = {language = 'SQL_EXPR', is_deterministic = true, body = ''}
         t.assert_error_msg_content_equals(
-            "Syntax error at line 1 near ' '",
+            "Syntax error at line 1 near ''",
             function() box.schema.func.create('a1', def) end
         )
 
         def.body = ' '
         t.assert_error_msg_content_equals(
-            "Syntax error at line 1 near '  '",
+            "Syntax error at line 1 near ''",
             function() box.schema.func.create('a1', def) end
         )
 

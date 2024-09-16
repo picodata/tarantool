@@ -179,6 +179,7 @@ struct sql_context {
 	 */
 	bool is_aborted;
 	u8 skipFlag;		/* Skip accumulator loading if true */
+	uint32_t funcFlag;
 };
 
 /* A bitfield type for use inside of structures.  Always follow with :N where

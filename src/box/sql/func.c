@@ -58,19 +58,56 @@
 static struct mh_strnptr_t *built_in_functions = NULL;
 static struct func_sql_builtin **functions;
 
+/*
+ * Implementation of built-in window function row_number(). Assumes that the
+ * window frame has been coerced to:
+ *
+ *   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+ */
+static void
+step_row_number(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 0);
+	(void)argc;
+	(void)argv;
+	if (mem_is_null(ctx->pOut))
+		mem_set_int64(ctx->pOut, 0);
+	++ctx->pOut->u.u;
+}
+
 /** Implementation of the SUM() function. */
 static void
 step_sum(struct sql_context *ctx, int argc, const struct Mem *argv)
 {
 	assert(argc == 1);
 	(void)argc;
-	assert(mem_is_null(ctx->pOut) || mem_is_num(ctx->pOut));
+	struct Mem *mem = ctx->pOut;
+	assert(mem_is_null(mem) || mem_is_num(mem));
 	if (mem_is_null(&argv[0]))
 		return;
-	if (mem_is_null(ctx->pOut))
-		return mem_copy_as_ephemeral(ctx->pOut, &argv[0]);
-	if (mem_add(ctx->pOut, &argv[0], ctx->pOut) != 0)
+	uint64_t count = mem_is_null(mem) ? 0 : mem->n;
+	if (mem_is_null(mem))
+		mem_copy_as_ephemeral(mem, &argv[0]);
+	else if (mem_add(mem, &argv[0], mem) != 0)
 		ctx->is_aborted = true;
+	mem->n = count + 1;
+}
+
+static void
+inverse_sum(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 1);
+	(void)argc;
+	struct Mem *mem = ctx->pOut;
+	if (mem_is_null(&argv[0]) || mem_is_null(mem))
+		return;
+	uint64_t count = mem->n == 0 ? 0 : mem->n - 1;
+	if (count == 0)
+		mem_set_null(mem);
+	else if (mem_sub(mem, &argv[0], mem) != 0)
+		ctx->is_aborted = true;
+	mem->n = count;
+
 }
 
 /** Implementation of the TOTAL() function. */
@@ -231,6 +268,25 @@ step_group_concat(struct sql_context *ctx, int argc, const struct Mem *argv)
 	}
 	if (mem_append(ctx->pOut, argv[0].z, argv[0].n) != 0)
 		ctx->is_aborted = true;
+}
+
+static void
+inverse_group_concat(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 1 || argc == 2);
+	(void)argc;
+	if (mem_is_null(&argv[0]) || mem_is_null(ctx->pOut))
+		return;
+	assert(mem_is_str(&argv[0]) || mem_is_bin(&argv[0]));
+	size_t n = argv[0].n;
+	if (argc == 2 && !mem_is_null(&argv[1]))
+		n += argv[1].n;
+	if (n >= ctx->pOut->n) {
+		mem_set_null(ctx->pOut);
+	} else {
+		ctx->pOut->n -= n;
+		memmove(ctx->pOut->z, &ctx->pOut->z[n], ctx->pOut->n);
+	}
 }
 
 /** Implementations of the ABS() function. */
@@ -1820,10 +1876,10 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"LIKELY", 1, 1, SQL_FUNC_UNLIKELY, true, 0, NULL},
 	{"LOWER", 1, 1, SQL_FUNC_DERIVEDCOLL | SQL_FUNC_NEEDCOLL, true, 0,
 	 NULL},
-	{"MAX", 1, 1, SQL_FUNC_MAX | SQL_FUNC_AGG | SQL_FUNC_NEEDCOLL, false, 0,
-	 NULL},
-	{"MIN", 1, 1, SQL_FUNC_MIN | SQL_FUNC_AGG | SQL_FUNC_NEEDCOLL, false, 0,
-	 NULL},
+	{"MAX", 1, 1, SQL_FUNC_MAX | SQL_FUNC_AGG | SQL_FUNC_NEEDCOLL,
+	 false, 0, NULL},
+	{"MIN", 1, 1, SQL_FUNC_MIN | SQL_FUNC_AGG | SQL_FUNC_NEEDCOLL, false,
+	 0, NULL},
 	{"NOW", 0, 0, 0, true, 0, NULL},
 	{"NULLIF", 2, 2, SQL_FUNC_NEEDCOLL, true, 0, NULL},
 	{"POSITION", 2, 2, SQL_FUNC_NEEDCOLL, true, 0, NULL},
@@ -1834,6 +1890,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"REPLACE", 3, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"ROUND", 1, 2, 0, true, 0, NULL},
 	{"ROW_COUNT", 0, 0, 0, true, 0, NULL},
+	{"ROW_NUMBER", 0, 0, SQL_FUNC_WINDOW, true, 0, NULL},
 	{"SOUNDEX", 1, 1, 0, true, 0, NULL},
 	{"SUBSTR", 2, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"SUM", 1, 1, SQL_FUNC_AGG, false, 0, NULL},
@@ -1874,6 +1931,11 @@ struct sql_func_definition {
 	void (*call)(sql_context *ctx, int argc, const struct Mem *argv);
 	/** Call finalization function for this implementation. */
 	int (*finalize)(struct Mem *mem);
+	/** Current aggregated value. */
+	int (*value)(struct Mem *mem);
+	/** Inverse aggregation step. */
+	void (*inverse)(sql_context * ctx, int argc, const struct Mem *argv);
+
 };
 
 /**
@@ -1882,201 +1944,233 @@ struct sql_func_definition {
  */
 static struct sql_func_definition definitions[] = {
 	{"ABS", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, func_abs_dec,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"ABS", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, func_abs_int,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"ABS", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, func_abs_double,
-	 NULL},
-	{"AVG", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_avg, fin_avg},
-	{"AVG", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_avg, fin_avg},
-	{"AVG", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_avg, fin_avg},
-	{"CHAR", -1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_STRING, func_char, NULL},
+	 NULL, NULL, NULL},
+	{"AVG", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_avg, fin_avg,
+	 fin_avg, NULL},
+	{"AVG", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_avg, fin_avg,
+	 fin_avg, NULL},
+	{"AVG", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_avg, fin_avg,
+	 fin_avg, NULL},
+	{"CHAR", -1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_STRING, func_char, NULL,
+	 NULL, NULL},
 	{"CHAR_LENGTH", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_INTEGER,
-	 func_char_length, NULL},
+	 func_char_length, NULL, NULL, NULL},
 	{"COALESCE", -1, {field_type_MAX}, FIELD_TYPE_SCALAR, sql_builtin_stub,
-	 NULL},
-	{"COUNT", 0, {}, FIELD_TYPE_INTEGER, step_count, fin_count},
+	 NULL, NULL, NULL},
+	{"COUNT", 0, {}, FIELD_TYPE_INTEGER, step_count, fin_count,
+	 fin_count, NULL},
 	{"COUNT", 1, {field_type_MAX}, FIELD_TYPE_INTEGER, step_count,
-	 fin_count},
+	 fin_count, fin_count, NULL},
 	{"DATE_PART", 2, {FIELD_TYPE_STRING, FIELD_TYPE_DATETIME},
-	 FIELD_TYPE_INTEGER, func_date_part, NULL},
+	 FIELD_TYPE_INTEGER, func_date_part, NULL, NULL, NULL},
 
 	{"GREATEST", -1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_VARBINARY,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"GREATEST", -1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 
 	{"GROUP_CONCAT", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING,
-	 step_group_concat, NULL},
+	 step_group_concat, NULL, NULL, inverse_group_concat},
 	{"GROUP_CONCAT", 2, {FIELD_TYPE_STRING, FIELD_TYPE_STRING},
-	 FIELD_TYPE_STRING, step_group_concat, NULL},
+	 FIELD_TYPE_STRING, step_group_concat, NULL, NULL,
+	 inverse_group_concat},
 	{"GROUP_CONCAT", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_VARBINARY,
-	 step_group_concat, NULL},
+	 step_group_concat, NULL, NULL, inverse_group_concat},
 	{"GROUP_CONCAT", 2, {FIELD_TYPE_VARBINARY, FIELD_TYPE_VARBINARY},
-	 FIELD_TYPE_VARBINARY, step_group_concat, NULL},
+	 FIELD_TYPE_VARBINARY, step_group_concat, NULL, NULL,
+	 inverse_group_concat},
 
-	{"HEX", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_STRING, func_hex, NULL},
+	{"HEX", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_STRING, func_hex, NULL,
+	 NULL, NULL},
 	{"IFNULL", 2, {field_type_MAX, field_type_MAX}, FIELD_TYPE_SCALAR,
-	 sql_builtin_stub, NULL},
+	 sql_builtin_stub, NULL, NULL, NULL},
 
 	{"LEAST", -1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_VARBINARY,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 	{"LEAST", -1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR,
-	 func_greatest_least, NULL},
+	 func_greatest_least, NULL, NULL, NULL},
 
 	{"LENGTH", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_INTEGER, func_char_length,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"LENGTH", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_INTEGER,
-	 func_octet_length, NULL},
+	 func_octet_length, NULL, NULL, NULL},
 	{"LIKE", 2, {FIELD_TYPE_STRING, FIELD_TYPE_STRING},
-	 FIELD_TYPE_BOOLEAN, likeFunc, NULL},
+	 FIELD_TYPE_BOOLEAN, likeFunc, NULL, NULL, NULL},
 	{"LIKE", 3, {FIELD_TYPE_STRING, FIELD_TYPE_STRING, FIELD_TYPE_STRING},
-	 FIELD_TYPE_BOOLEAN, likeFunc, NULL},
+	 FIELD_TYPE_BOOLEAN, likeFunc, NULL, NULL, NULL},
 	{"LIKELIHOOD", 2, {field_type_MAX, FIELD_TYPE_DOUBLE},
-	 FIELD_TYPE_BOOLEAN, sql_builtin_stub, NULL},
+	 FIELD_TYPE_BOOLEAN, sql_builtin_stub, NULL, NULL, NULL},
 	{"LIKELY", 1, {field_type_MAX}, FIELD_TYPE_BOOLEAN, sql_builtin_stub,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"LOWER", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, func_lower_upper,
-	 NULL},
+	 NULL, NULL, NULL},
 
-	{"MAX", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_minmax, NULL},
-	{"MAX", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_minmax, NULL},
-	{"MAX", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_minmax, NULL},
-	{"MAX", 1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER, step_minmax, NULL},
+	{"MAX", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_minmax, NULL,
+	 NULL, NULL},
+	{"MAX", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_minmax, NULL,
+	 NULL, NULL},
+	{"MAX", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_minmax, NULL,
+	 NULL, NULL},
+	{"MAX", 1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER, step_minmax, NULL,
+	 NULL, NULL},
 	{"MAX", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_VARBINARY, step_minmax,
-	 NULL},
-	{"MAX", 1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID, step_minmax, NULL},
-	{"MAX", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, step_minmax, NULL},
-	{"MAX", 1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR, step_minmax, NULL},
+	 NULL, NULL, NULL},
+	{"MAX", 1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID, step_minmax, NULL,
+	 NULL, NULL},
+	{"MAX", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, step_minmax, NULL,
+	 NULL, NULL},
+	{"MAX", 1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR, step_minmax, NULL,
+	 NULL, NULL},
 
-	{"MIN", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_minmax, NULL},
-	{"MIN", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_minmax, NULL},
-	{"MIN", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_minmax, NULL},
-	{"MIN", 1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER, step_minmax, NULL},
+	{"MIN", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_minmax, NULL,
+	 NULL, NULL},
+	{"MIN", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_minmax, NULL,
+	 NULL, NULL},
+	{"MIN", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_minmax, NULL,
+	 NULL, NULL},
+	{"MIN", 1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER, step_minmax, NULL,
+	 NULL, NULL},
 	{"MIN", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_VARBINARY, step_minmax,
-	 NULL},
-	{"MIN", 1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID, step_minmax, NULL},
-	{"MIN", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, step_minmax, NULL},
-	{"MIN", 1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR, step_minmax, NULL},
-	{"NOW", 0, {}, FIELD_TYPE_DATETIME, func_now, NULL},
+	 NULL, NULL, NULL},
+	{"MIN", 1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID, step_minmax, NULL,
+	 NULL, NULL},
+	{"MIN", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, step_minmax, NULL,
+	 NULL, NULL},
+	{"MIN", 1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR, step_minmax, NULL,
+	 NULL, NULL},
+	{"NOW", 0, {}, FIELD_TYPE_DATETIME, func_now, NULL, NULL, NULL},
 
 	{"NULLIF", 2, {FIELD_TYPE_SCALAR, field_type_MAX}, FIELD_TYPE_SCALAR,
-	 func_nullif, NULL},
+	 func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_UNSIGNED, field_type_MAX},
-	 FIELD_TYPE_UNSIGNED, func_nullif, NULL},
+	 FIELD_TYPE_UNSIGNED, func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_STRING, field_type_MAX}, FIELD_TYPE_STRING,
-	 func_nullif, NULL},
+	 func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_DOUBLE, field_type_MAX}, FIELD_TYPE_DOUBLE,
-	 func_nullif, NULL},
+	 func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_INTEGER, field_type_MAX},
-	 FIELD_TYPE_INTEGER, func_nullif, NULL},
+	 FIELD_TYPE_INTEGER, func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_BOOLEAN, field_type_MAX},
-	 FIELD_TYPE_BOOLEAN, func_nullif, NULL},
+	 FIELD_TYPE_BOOLEAN, func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_VARBINARY, field_type_MAX},
-	 FIELD_TYPE_VARBINARY, func_nullif, NULL},
+	 FIELD_TYPE_VARBINARY, func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_DECIMAL, field_type_MAX},
-	 FIELD_TYPE_DECIMAL, func_nullif, NULL},
+	 FIELD_TYPE_DECIMAL, func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_UUID, field_type_MAX}, FIELD_TYPE_UUID,
-	 func_nullif, NULL},
+	 func_nullif, NULL, NULL, NULL},
 	{"NULLIF", 2, {FIELD_TYPE_DATETIME, field_type_MAX},
-	 FIELD_TYPE_DATETIME, func_nullif, NULL},
+	 FIELD_TYPE_DATETIME, func_nullif, NULL, NULL, NULL},
 
 	{"POSITION", 2, {FIELD_TYPE_STRING, FIELD_TYPE_STRING},
-	 FIELD_TYPE_INTEGER, func_position_characters, NULL},
+	 FIELD_TYPE_INTEGER, func_position_characters, NULL, NULL, NULL},
 	{"POSITION", 2, {FIELD_TYPE_VARBINARY, FIELD_TYPE_VARBINARY},
-	 FIELD_TYPE_INTEGER, func_position_octets, NULL},
-	{"PRINTF", -1, {field_type_MAX}, FIELD_TYPE_STRING, func_printf, NULL},
-	{"QUOTE", 1, {field_type_MAX}, FIELD_TYPE_STRING, quoteFunc, NULL},
-	{"RANDOM", 0, {}, FIELD_TYPE_INTEGER, func_random, NULL},
+	 FIELD_TYPE_INTEGER, func_position_octets, NULL, NULL, NULL},
+	{"PRINTF", -1, {field_type_MAX}, FIELD_TYPE_STRING, func_printf, NULL,
+	 NULL, NULL},
+	{"QUOTE", 1, {field_type_MAX}, FIELD_TYPE_STRING, quoteFunc, NULL,
+	 NULL, NULL},
+	{"RANDOM", 0, {}, FIELD_TYPE_INTEGER, func_random, NULL, NULL, NULL},
 	{"RANDOMBLOB", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_VARBINARY,
-	 func_randomblob, NULL},
+	 func_randomblob, NULL, NULL, NULL},
 	{"REPLACE", 3,
 	 {FIELD_TYPE_STRING, FIELD_TYPE_STRING, FIELD_TYPE_STRING},
-	 FIELD_TYPE_STRING, replaceFunc, NULL},
+	 FIELD_TYPE_STRING, replaceFunc, NULL, NULL, NULL},
 	{"REPLACE", 3,
 	 {FIELD_TYPE_VARBINARY, FIELD_TYPE_VARBINARY, FIELD_TYPE_VARBINARY},
-	 FIELD_TYPE_VARBINARY, replaceFunc, NULL},
+	 FIELD_TYPE_VARBINARY, replaceFunc, NULL, NULL, NULL},
 	{"ROUND", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, func_round_dec,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"ROUND", 2, {FIELD_TYPE_DECIMAL, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_DECIMAL, func_round_dec, NULL},
+	 FIELD_TYPE_DECIMAL, func_round_dec, NULL, NULL, NULL},
 	{"ROUND", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, func_round_double,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"ROUND", 2, {FIELD_TYPE_DOUBLE, FIELD_TYPE_INTEGER}, FIELD_TYPE_DOUBLE,
-	 func_round_double, NULL},
+	 func_round_double, NULL, NULL, NULL},
 	{"ROUND", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, func_round_int,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"ROUND", 2, {FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_INTEGER, func_round_int, NULL},
-	{"ROW_COUNT", 0, {}, FIELD_TYPE_INTEGER, func_row_count, NULL},
+	 FIELD_TYPE_INTEGER, func_round_int, NULL, NULL, NULL},
+	{"ROW_COUNT", 0, {}, FIELD_TYPE_INTEGER, func_row_count, NULL,
+	 NULL, NULL},
+	{"ROW_NUMBER", 0, {}, FIELD_TYPE_INTEGER, step_row_number, NULL,
+	 NULL, NULL},
 	{"SOUNDEX", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, soundexFunc,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"SUBSTR", 2, {FIELD_TYPE_STRING, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_STRING, func_substr_characters, NULL},
+	 FIELD_TYPE_STRING, func_substr_characters, NULL, NULL, NULL},
 	{"SUBSTR", 3,
 	 {FIELD_TYPE_STRING, FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_STRING, func_substr_characters, NULL},
+	 FIELD_TYPE_STRING, func_substr_characters, NULL, NULL, NULL},
 	{"SUBSTR", 2, {FIELD_TYPE_VARBINARY, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_VARBINARY, func_substr_octets, NULL},
+	 FIELD_TYPE_VARBINARY, func_substr_octets, NULL, NULL, NULL},
 	{"SUBSTR", 3,
 	 {FIELD_TYPE_VARBINARY, FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_VARBINARY, func_substr_octets, NULL},
-	{"SUM", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_sum, NULL},
-	{"SUM", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_sum, NULL},
-	{"SUM", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_sum, NULL},
+	 FIELD_TYPE_VARBINARY, func_substr_octets, NULL, NULL, NULL},
+	{"SUM", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_sum, NULL,
+	 NULL, inverse_sum},
+	{"SUM", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_sum, NULL,
+	 NULL, inverse_sum},
+	{"SUM", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_sum, NULL,
+	 NULL, inverse_sum},
 	{"TOTAL", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DOUBLE, step_total,
-	 fin_total},
+	 fin_total, fin_total, inverse_sum},
 	{"TOTAL", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_DOUBLE, step_total,
-	 fin_total},
+	 fin_total, fin_total, inverse_sum},
 	{"TOTAL", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_total,
-	 fin_total},
+	 fin_total, fin_total, inverse_sum},
 
 	{"TRIM", 2, {FIELD_TYPE_STRING, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_STRING, func_trim_str, NULL},
+	 FIELD_TYPE_STRING, func_trim_str, NULL, NULL, NULL},
 	{"TRIM", 3, {FIELD_TYPE_STRING, FIELD_TYPE_INTEGER, FIELD_TYPE_STRING},
-	 FIELD_TYPE_STRING, func_trim_str, NULL},
+	 FIELD_TYPE_STRING, func_trim_str, NULL, NULL, NULL},
 	{"TRIM", 2, {FIELD_TYPE_VARBINARY, FIELD_TYPE_INTEGER},
-	 FIELD_TYPE_VARBINARY, func_trim_bin, NULL},
+	 FIELD_TYPE_VARBINARY, func_trim_bin, NULL, NULL, NULL},
 	{"TRIM", 3,
 	 {FIELD_TYPE_VARBINARY, FIELD_TYPE_INTEGER, FIELD_TYPE_VARBINARY},
-	 FIELD_TYPE_VARBINARY, func_trim_bin, NULL},
+	 FIELD_TYPE_VARBINARY, func_trim_bin, NULL, NULL, NULL},
 
-	{"TYPEOF", 1, {field_type_MAX}, FIELD_TYPE_STRING, func_typeof, NULL},
+	{"TYPEOF", 1, {field_type_MAX}, FIELD_TYPE_STRING, func_typeof, NULL,
+	 NULL, NULL},
 	{"UNICODE", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_INTEGER, func_unicode,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"UNLIKELY", 1, {field_type_MAX}, FIELD_TYPE_BOOLEAN, sql_builtin_stub,
-	 NULL},
+	 NULL, NULL, NULL},
 	{"UPPER", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING, func_lower_upper,
-	 NULL},
-	{"UUID", 0, {}, FIELD_TYPE_UUID, func_uuid, NULL},
-	{"UUID", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_UUID, func_uuid, NULL},
-	{"VERSION", 0, {}, FIELD_TYPE_STRING, func_version, NULL},
+	 NULL, NULL, NULL},
+	{"UUID", 0, {}, FIELD_TYPE_UUID, func_uuid, NULL, NULL, NULL},
+	{"UUID", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_UUID, func_uuid, NULL,
+	 NULL, NULL},
+	{"VERSION", 0, {}, FIELD_TYPE_STRING, func_version, NULL, NULL, NULL},
 	{"ZEROBLOB", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_VARBINARY,
-	 func_zeroblob, NULL},
+	 func_zeroblob, NULL, NULL, NULL},
 };
 
 static struct sql_func_dictionary *
@@ -2330,6 +2424,8 @@ sql_built_in_functions_cache_init(void)
 		func->flags = dict->flags;
 		func->call = desc->call;
 		func->finalize = desc->finalize;
+		func->value = desc->value;
+		func->inverse = desc->inverse;
 		functions[i] = func;
 		assert(dict->count == 0 || dict->functions != NULL);
 		if (dict->functions == NULL)

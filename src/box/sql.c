@@ -207,6 +207,10 @@ int tarantoolsqlNext(BtCursor *pCur, int *pRes)
 	if (pCur->eState == CURSOR_INVALID) {
 		*pRes = 1;
 		return 0;
+	} else if (pCur->eState == CURSOR_SKIPNEXT) {
+		pCur->eState = CURSOR_VALID;
+		*pRes = 0;
+		return 0;
 	}
 	assert(iterator_direction(pCur->iter_type) > 0);
 	return cursor_advance(pCur, pRes);
@@ -221,6 +225,10 @@ int tarantoolsqlPrevious(BtCursor *pCur, int *pRes)
 {
 	if (pCur->eState == CURSOR_INVALID) {
 		*pRes = 1;
+		return 0;
+	} else if (pCur->eState == CURSOR_SKIPNEXT) {
+		pCur->eState = CURSOR_VALID;
+		*pRes = 0;
 		return 0;
 	}
 	assert(iterator_direction(pCur->iter_type) < 0);
@@ -390,7 +398,10 @@ sql_ephemeral_space_new(const struct sql_space_info *info)
 		parts[i].nullable_action = ON_CONFLICT_ACTION_NONE;
 		parts[i].is_nullable = true;
 		parts[i].exclude_null = false;
-		parts[i].sort_order = SORT_ORDER_ASC;
+		if (info->sort_orders)
+			parts[i].sort_order = info->sort_orders[i];
+		else
+			parts[i].sort_order = SORT_ORDER_ASC;
 		parts[i].path = NULL;
 		enum field_type type = info->types[j];
 		parts[i].type = type;

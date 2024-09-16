@@ -97,8 +97,13 @@ int sqlCursorIsValidNN(BtCursor *);
  * CURSOR_VALID:
  *   Cursor points to a valid entry. getPayload() etc. may be called.
  *
+ * CURSOR_SKIPNEXT:
+ *  Cursor is valid except that the next call to sqlCursorNext() or
+ *  sqlCursorPrevious() should be a no-op.
+ *
  */
 #define CURSOR_INVALID           0
 #define CURSOR_VALID             1
+#define CURSOR_SKIPNEXT          2
 
 #endif				/* SQL_CURSOR_H */

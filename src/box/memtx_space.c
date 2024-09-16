@@ -1510,7 +1510,7 @@ memtx_space_new(struct memtx_engine *memtx,
 	tuple_format_unref(format);
 
 	memtx_space->bsize = 0;
-	memtx_space->rowid = 0;
+	memtx_space->rowid = 1;
 	memtx_space->replace = memtx_space_replace_no_keys;
 	return (struct space *)memtx_space;
 }
