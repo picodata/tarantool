@@ -87,6 +87,7 @@
 /************* Begin control #defines *****************************************/
 %%
 /************* End control #defines *******************************************/
+#define YY_NLOOKAHEAD ((int)lengthof(yy_lookahead))
 
 /* Define the yytestcase() macro to be a no-op if is not already defined
 ** otherwise.
@@ -457,22 +458,25 @@ static unsigned int yy_find_shift_action(
     i = yy_shift_ofst[stateno];
     assert( iLookAhead!=YYNOCODE );
     i += iLookAhead;
-    if( i<0 || i>=YY_ACTTAB_COUNT || yy_lookahead[i]!=iLookAhead ){
+    if (i < 0 || i >= YY_ACTTAB_COUNT || i >= YY_NLOOKAHEAD ||
+	yy_lookahead[i] != iLookAhead) {
 #ifdef YYFALLBACK
-      YYCODETYPE iFallback = -1;            /* Fallback token */
-      if( iLookAhead<sizeof(yyFallback)/sizeof(yyFallback[0])
-             && (iFallback = yyFallback[iLookAhead])!=0 ){
+	YYCODETYPE iFallback = -1;            /* Fallback token */
+	if (iLookAhead < lengthof(yyFallback) &&
+	    (iFallback = yyFallback[iLookAhead]) != 0) {
 #ifndef NDEBUG
-        if( yyTraceFILE ){
-          fprintf(yyTraceFILE, "%sFALLBACK %s => %s\n",
-             yyTracePrompt, yyTokenName[iLookAhead], yyTokenName[iFallback]);
-        }
+		if (yyTraceFILE) {
+			fprintf(yyTraceFILE, "%sFALLBACK %s => %s\n",
+				yyTracePrompt, yyTokenName[iLookAhead],
+				yyTokenName[iFallback]);
+		}
 #endif
-        assert( yyFallback[iFallback]==0 ); /* Fallback loop must terminate */
-        iLookAhead = iFallback;
-        continue;
-      } else if ( iFallback==0 ) {
-        pParser->is_fallback_failed = true;
+	/* Fallback loop must terminate */
+	assert(yyFallback[iFallback] == 0);
+	iLookAhead = iFallback;
+	continue;
+      } else if (iFallback == 0) {
+	pParser->is_fallback_failed = true;
       }
 #endif
 #ifdef YYWILDCARD
@@ -948,4 +952,19 @@ void Parse(
   }
 #endif
   return;
+}
+
+/*
+ * Return the fallback token corresponding to canonical token iToken, or
+ * 0 if iToken has no fallback.
+ */
+int
+ParseFallback(int iToken)
+{
+#ifdef YYFALLBACK
+	if ((unsigned long)iToken < lengthof(yyFallback)) {
+		return yyFallback[iToken];
+	}
+#endif
+	return 0;
 }

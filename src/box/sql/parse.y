@@ -31,7 +31,6 @@
 //
 %syntax_error {
   UNUSED_PARAMETER(yymajor);  /* Silence some compiler warnings */
-  assert( TOKEN.z[0] );  /* The tokenizer always gives us a token */
   if (yypParser->is_fallback_failed && TOKEN.isReserved) {
     diag_set(ClientError, ER_SQL_KEYWORD_IS_RESERVED, pParse->line_count,
              pParse->line_pos, TOKEN.n, TOKEN.z, TOKEN.n, TOKEN.z);
@@ -94,6 +93,8 @@ struct LimitVal {
 ** Then the "b" IdList records the list "a,b,c".
 */
 struct TrigEvent { int a; IdList * b; };
+
+struct FrameBound { int eType; Expr *pExpr; };
 
 /*
 ** Disable lookaside memory allocation for objects that might be
@@ -254,7 +255,7 @@ columnlist ::= tcons.
   ABORT ACTION ADD AFTER AUTOINCREMENT BEFORE CASCADE
   CONFLICT DEFERRED END ENGINE FAIL
   IGNORE INITIALLY INSTEAD NO MATCH PLAN
-  QUERY KEY OFFSET RAISE RELEASE REPLACE RESTRICT
+  QUERY KEY OFFSET RAISE RELEASE REPLACE RESTRICT ROWS
   RENAME CTIME_KW IF ENABLE DISABLE UUID
   .
 %wildcard WILDCARD.
@@ -493,11 +494,18 @@ multiselect_op(A) ::= UNION ALL.             {A = TK_ALL;}
 multiselect_op(A) ::= EXCEPT|INTERSECT(OP).  {A = @OP; /*A-overwrites-OP*/}
 
 oneselect(A) ::= SELECT(S) distinct(D) selcollist(W) from(X) where_opt(Y)
-                 groupby_opt(P) having_opt(Q) orderby_opt(Z) limit_opt(L). {
+                 groupby_opt(P) having_opt(Q)
+                 windowdefn_opt(R)
+                 orderby_opt(Z) limit_opt(L). {
 #ifdef SQL_DEBUG
   Token s = S; /*A-overwrites-S*/
 #endif
   A = sqlSelectNew(pParse,W,X,Y,P,Q,Z,D,L.pLimit,L.pOffset);
+  if( A ){
+    A->pWinDefn = R;
+  }else{
+    sqlWindowListDelete(R);
+  }
 #ifdef SQL_DEBUG
   /* Populate the Select.zSelName[] string that is used to help with
   ** query planner debugging, to differentiate between multiple Select
@@ -1104,7 +1112,7 @@ trim_specification(A) ::= LEADING.  { A = TRIM_LEADING; }
 trim_specification(A) ::= TRAILING. { A = TRIM_TRAILING; }
 trim_specification(A) ::= BOTH.     { A = TRIM_BOTH; }
 
-expr(A) ::= id(X) LP distinct(D) exprlist(Y) RP(E). {
+expr(A) ::= id(X) LP distinct(D) exprlist(Y) RP(E) over_opt(Z). {
   if (Y != NULL && Y->nExpr > SQL_MAX_FUNCTION_ARG){
     const char *err =
       tt_sprintf("Number of arguments to function %.*s", X.n, X.z);
@@ -1114,6 +1122,7 @@ expr(A) ::= id(X) LP distinct(D) exprlist(Y) RP(E). {
   }
   A.pExpr = sqlExprFunction(pParse, Y, &X);
   spanSet(&A,&X,&E);
+  sqlWindowAttach(A.pExpr, Z);
   if( D==SF_Distinct && A.pExpr ){
     A.pExpr->flags |= EP_Distinct;
   }
@@ -1124,7 +1133,7 @@ expr(A) ::= id(X) LP distinct(D) exprlist(Y) RP(E). {
  * type_func(A) ::= DATETIME(A) .
  */
 type_func(A) ::= CHAR(A) .
-expr(A) ::= type_func(X) LP distinct(D) exprlist(Y) RP(E). {
+expr(A) ::= type_func(X) LP distinct(D) exprlist(Y) RP(E) over_opt(Z). {
   if (Y != NULL && Y->nExpr > SQL_MAX_FUNCTION_ARG){
     const char *err =
       tt_sprintf("Number of arguments to function %.*s", X.n, X.z);
@@ -1134,14 +1143,16 @@ expr(A) ::= type_func(X) LP distinct(D) exprlist(Y) RP(E). {
   }
   A.pExpr = sqlExprFunction(pParse, Y, &X);
   spanSet(&A,&X,&E);
+  sqlWindowAttach(A.pExpr, Z);
   if( D==SF_Distinct && A.pExpr ){
     A.pExpr->flags |= EP_Distinct;
   }
 }
 
-expr(A) ::= id(X) LP STAR RP(E). {
+expr(A) ::= id(X) LP STAR RP(E) over_opt(Z). {
   A.pExpr = sqlExprFunction(pParse, 0, &X);
   spanSet(&A,&X,&E);
+  sqlWindowAttach(A.pExpr, Z);
 }
 /*
  * term(A) ::= CTIME_KW(OP). {
@@ -1801,3 +1812,84 @@ number_typedef(A) ::= DECIMAL . { A.type = FIELD_TYPE_DECIMAL; }
  *   (void) C;
  *}
  */
+
+//////////////////////// WINDOW FUNCTION EXPRESSIONS /////////////////////////
+// These must be at the end of this file. Specifically, the rules that
+// introduce tokens WINDOW, OVER and FILTER must appear last. This causes
+// the integer values assigned to these tokens to be larger than all other
+// tokens that may be output by the tokenizer except TK_SPACE and TK_ILLEGAL.
+//
+%type windowdefn_list {Window*}
+%destructor windowdefn_list {sqlWindowDelete($$);}
+windowdefn_list(A) ::= windowdefn(Z). { A = Z; }
+windowdefn_list(A) ::= windowdefn_list(Y) COMMA windowdefn(Z). {
+  if( Z ) Z->pNextWin = Y;
+  A = Z;
+}
+%type windowdefn {Window*}
+%destructor windowdefn {sqlWindowDelete($$);}
+windowdefn(A) ::= nm(X) AS window(Y). {
+  if( Y ){
+    Y->zName = sql_xstrndup(X.z, X.n);
+  }
+  A = Y;
+}
+%type window {Window*}
+%destructor window {sqlWindowDelete($$);}
+%type frame_opt {Window*}
+%destructor frame_opt {sqlWindowDelete($$);}
+%type window_or_nm {Window*}
+%destructor window_or_nm {
+sqlWindowDelete($$);}
+%type part_opt {ExprList*}
+%destructor part_opt {sql_expr_list_delete($$);}
+%type filter_opt {Expr*}
+%destructor filter_opt {sql_expr_delete($$);}
+%type range_or_rows {int}
+%type frame_bound {struct FrameBound}
+%destructor frame_bound {sql_expr_delete($$.pExpr);}
+window_or_nm(A) ::= window(Z). {A = Z;}
+window_or_nm(A) ::= nm(Z). {
+  A = (Window*)sql_xmalloc0(sizeof(Window));
+  if( A ){
+    A->zName = sql_xstrndup(Z.z, Z.n);
+  }
+}
+window(A) ::= LP part_opt(X) orderby_opt(Y) frame_opt(Z) RP. {
+  A = Z;
+  if( A ){
+    A->pPartition = X;
+    A->pOrderBy = Y;
+  }
+}
+part_opt(A) ::= PARTITION BY exprlist(X). { A = X; }
+part_opt(A) ::= .                         { A = 0; }
+frame_opt(A) ::= .                             {
+  A = sqlWindowAlloc(TK_RANGE, TK_UNBOUNDED, 0, TK_CURRENT, 0);
+}
+frame_opt(A) ::= range_or_rows(X) frame_bound(Y). {
+  A = sqlWindowAlloc(X, Y.eType, Y.pExpr, TK_CURRENT, 0);
+}
+frame_opt(A) ::= range_or_rows(X) BETWEEN frame_bound(Y) AND frame_bound(Z). {
+  A = sqlWindowAlloc(X, Y.eType, Y.pExpr, Z.eType, Z.pExpr);
+}
+range_or_rows(A) ::= RANGE.   { A = TK_RANGE; }
+range_or_rows(A) ::= ROWS.    { A = TK_ROWS;  }
+frame_bound(A) ::= UNBOUNDED PRECEDING. { A.eType = TK_UNBOUNDED; A.pExpr = 0; }
+frame_bound(A) ::= expr(X) PRECEDING.   { A.eType = TK_PRECEDING; A.pExpr = X.pExpr; }
+frame_bound(A) ::= CURRENT ROW.         { A.eType = TK_CURRENT  ; A.pExpr = 0; }
+frame_bound(A) ::= expr(X) FOLLOWING.   { A.eType = TK_FOLLOWING; A.pExpr = X.pExpr; }
+frame_bound(A) ::= UNBOUNDED FOLLOWING. { A.eType = TK_UNBOUNDED; A.pExpr = 0; }
+%type windowdefn_opt {Window*}
+%destructor windowdefn_opt {sqlWindowDelete($$);}
+windowdefn_opt(A) ::= . { A = 0; }
+windowdefn_opt(A) ::= WINDOW windowdefn_list(B). { A = B; }
+%type over_opt {Window*}
+%destructor over_opt {sqlWindowDelete($$);}
+over_opt(A) ::= . { A = 0; }
+over_opt(A) ::= filter_opt(W) OVER window_or_nm(Z). {
+  A = Z;
+  if( A ) A->pFilter = W;
+}
+filter_opt(A) ::= .                            { A = 0; }
+filter_opt(A) ::= FILTER LP WHERE expr(X) RP.  { A = X.pExpr; }
