@@ -92,6 +92,9 @@ sql_expr_type(struct Expr *pExpr)
 	case TK_CAST:
 		assert(!ExprHasProperty(pExpr, EP_IntValue));
 		return pExpr->type;
+	case TK_WIN_COLUMN:
+		assert(pExpr->pLeft != NULL);
+		return sql_expr_type(pExpr->pLeft);
 	case TK_AGG_COLUMN:
 	case TK_COLUMN_REF:
 	case TK_TRIGGER:
@@ -296,6 +299,11 @@ sql_expr_coll(Parse *parse, Expr *p, bool *is_explicit_coll, uint32_t *coll_id,
 				return -1;
 			*is_explicit_coll = true;
 			break;
+		}
+		if (op == TK_WIN_COLUMN) {
+			assert(p->pLeft != NULL);
+			p = p->pLeft;
+			continue;
 		}
 		if ((op == TK_AGG_COLUMN || op == TK_COLUMN_REF ||
 		     op == TK_REGISTER || op == TK_TRIGGER) &&
@@ -1329,7 +1337,6 @@ sqlExprDeleteNN(struct Expr *p)
 	assert(!ExprHasProperty(p, EP_IntValue) || p->u.iValue >= 0);
 #ifdef SQL_DEBUG
 	if (ExprHasProperty(p, EP_Leaf) && !ExprHasProperty(p, EP_TokenOnly)) {
-		assert(p->pLeft == 0);
 		assert(p->pRight == 0);
 		assert(p->x.pSelect == 0);
 	}
@@ -1344,6 +1351,9 @@ sqlExprDeleteNN(struct Expr *p)
 			sql_select_delete(p->x.pSelect);
 		} else {
 			sql_expr_list_delete(p->x.pList);
+		}
+		if (!ExprHasProperty(p, EP_Reduced)) {
+			sqlWindowDelete(p->pWin);
 		}
 	}
 	if (ExprHasProperty(p, EP_MemToken))
@@ -1416,7 +1426,7 @@ dupedExprStructSize(Expr * p, int flags)
 	assert(flags == EXPRDUP_REDUCE || flags == 0);	/* Only one flag value allowed */
 	assert(EXPR_FULLSIZE <= 0xfff);
 	assert((0xfff & (EP_Reduced | EP_TokenOnly)) == 0);
-	if (0 == flags || p->op == TK_SELECT_COLUMN) {
+	if (flags == 0 || p->op == TK_SELECT_COLUMN || p->pWin) {
 		nSize = EXPR_FULLSIZE;
 	} else {
 		assert(!ExprHasProperty(p, EP_TokenOnly | EP_Reduced));
@@ -1554,6 +1564,11 @@ sql_expr_dup(struct Expr *p, int flags, char **buffer)
 		if (buffer != NULL)
 			*buffer = zAlloc;
 	} else {
+		if (ExprHasProperty(p, EP_Reduced | EP_TokenOnly)) {
+			pNew->pWin = 0;
+		} else {
+			pNew->pWin = sqlWindowDup(pNew, p->pWin);
+		}
 		if (!ExprHasProperty(p, EP_TokenOnly | EP_Leaf)) {
 			if (pNew->op == TK_SELECT_COLUMN) {
 				pNew->pLeft = p->pLeft;
@@ -1741,6 +1756,8 @@ sqlSelectDup(struct Select *p, int flags)
 	pNew->addrOpenEphm[1] = -1;
 	pNew->nSelectRow = p->nSelectRow;
 	pNew->pWith = withDup(p->pWith);
+	pNew->pWin = 0;
+	pNew->pWinDefn = sqlWindowListDup(p->pWinDefn);
 	sqlSelectSetName(pNew, p->zSelName);
 	return pNew;
 }
@@ -1987,6 +2004,7 @@ exprNodeIsConstant(Walker * pWalker, Expr * pExpr)
 	case TK_COLUMN_REF:
 	case TK_AGG_FUNCTION:
 	case TK_AGG_COLUMN:
+	case TK_WIN_COLUMN:
 		if (pWalker->eCode == 3 && pExpr->iTable == pWalker->u.iCur) {
 			return WRC_Continue;
 		} else {
@@ -2154,6 +2172,9 @@ sqlExprCanBeNull(const Expr * p)
 	case TK_FLOAT:
 	case TK_BLOB:
 		return 0;
+	case TK_WIN_COLUMN:
+		assert(p->pLeft);
+		return sqlExprCanBeNull(p->pLeft);
 	case TK_COLUMN_REF:
 		assert(p->space_def != 0);
 		return ExprHasProperty(p, EP_CanBeNull) ||
@@ -3662,6 +3683,7 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 			 */
 			FALLTHROUGH;
 		}
+	case TK_WIN_COLUMN:
 	case TK_COLUMN_REF:{
 			int iTab = pExpr->iTable;
 			int col = pExpr->iColumn;
@@ -3910,6 +3932,12 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 			u32 constMask = 0;	/* Mask of function arguments that are constant */
 			int i;	/* Loop counter */
 			struct coll *coll = NULL;
+
+			if (!ExprHasProperty(pExpr,
+					     EP_TokenOnly | EP_Reduced) &&
+			    pExpr->pWin) {
+				return pExpr->pWin->regResult;
+			}
 
 			assert(!ExprHasProperty(pExpr, EP_xIsSelect));
 			if (ExprHasProperty(pExpr, EP_TokenOnly)) {

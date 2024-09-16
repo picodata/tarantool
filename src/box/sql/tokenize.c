@@ -94,7 +94,7 @@
 
 static const char sql_ascii_class[] = {
 /*       x0  x1  x2  x3  x4  x5  x6  x7  x8 x9  xa xb  xc xd xe  xf */
-/* 0x */ 27, 27, 27, 27, 27, 27, 27, 27, 27, 7, 28, 7, 7, 7, 27, 27,
+/* 0x */ 28, 27, 27, 27, 27, 27, 27, 27, 27, 7, 28, 7, 7, 7, 27, 27,
 /* 1x */ 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27,
 /* 2x */ 7, 15, 9, 5, 5, 22, 24, 8, 17, 18, 21, 20, 23, 11, 26, 16,
 /* 3x */ 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 19, 12, 14, 13, 6,
@@ -135,6 +135,94 @@ static const char sql_ascii_class[] = {
 #include "keywordhash.h"
 
 #define maybe_utf8(c) ((sqlCtypeMap[c] & 0x40) != 0)
+
+/*
+ * Return the id of the next token in string (*pz). Before returning, set
+ * (*pz) to point to the byte following the parsed token.
+ */
+static int
+getToken(const char **pz)
+{
+	const char *z = *pz;
+	int t;	/* Token type to return */
+	bool is_reserved;
+	do {
+		z += sql_token(z, &t, &is_reserved);
+	} while (t == TK_SPACE);
+	if (t == TK_ID ||
+	    t == TK_STRING ||
+	    t == TK_JOIN_KW ||
+	    t == TK_WINDOW ||
+	    t == TK_OVER ||
+	    sqlParserFallback(t) == TK_ID) {
+		t = TK_ID;
+	}
+	*pz = z;
+	return t;
+}
+
+/*
+ * The following three functions are called immediately after the tokenizer
+ * reads the keywords WINDOW, OVER and FILTER, respectively, to determine
+ * whether the token should be treated as a keyword or an SQL identifier.
+ * This cannot be handled by the usual lemon %fallback method, due to
+ * the ambiguity in some constructions. e.g.
+ *
+ *   SELECT sum(x) OVER ...
+ *
+ * In the above, "OVER" might be a keyword, or it might be an alias for the
+ * sum(x) expression. If a "%fallback ID OVER" directive were added to
+ * grammar, then SQLite would always treat "OVER" as an alias, making it
+ * impossible to call a window-function without a FILTER clause.
+ *
+ * WINDOW is treated as a keyword if:
+ *
+ *   * the following token is an identifier, or a keyword that can fallback
+ *     to being an identifier, and
+ *   * the token after than one is TK_AS.
+ *
+ * OVER is a keyword if:
+ *
+ *   * the previous token was TK_RP, and
+ *   * the next token is either TK_LP or an identifier.
+ *
+ * FILTER is a keyword if:
+ *
+ *   * the previous token was TK_RP, and
+ *   * the next token is TK_LP.
+ */
+static int
+analyzeWindowKeyword(const char *z)
+{
+	int t;
+	t = getToken(&z);
+	if (t != TK_ID)
+		return TK_ID;
+	t = getToken(&z);
+	if (t != TK_AS)
+		return TK_ID;
+	return TK_WINDOW;
+}
+
+static int
+analyzeOverKeyword(const char *z, int lastToken)
+{
+	if (lastToken == TK_RP) {
+		int t = getToken(&z);
+	if (t == TK_LP || t == TK_ID)
+		return TK_OVER;
+	}
+	return TK_ID;
+}
+
+static int
+analyzeFilterKeyword(const char *z, int lastToken)
+{
+	if (lastToken == TK_RP && getToken(&z) == TK_LP) {
+		return TK_FILTER;
+	}
+	return TK_ID;
+}
 
 /**
  * Return true if current symbol is space.
@@ -485,14 +573,15 @@ new_xmalloc(size_t n)
 int
 sqlRunParser(Parse * pParse, const char *zSql)
 {
-	int i;			/* Loop counter */
+	int n = 0;		/* Length of the next token */
 	void *pEngine;		/* The LEMON-generated LALR(1) parser */
 	int tokenType;		/* type of the next token */
 	int lastTokenParsed = -1;	/* type of the previous token */
+	int mxSqlLen;			/* Max length of an SQL string */
 
 	assert(zSql != 0);
+	mxSqlLen = SQL_MAX_SQL_LENGTH;
 	pParse->zTail = zSql;
-	i = 0;
 	/* sqlParserTrace(stdout, "parser: "); */
 	pEngine = sqlParserAlloc(new_xmalloc);
 	assert(pParse->create_table_def.new_space == NULL);
@@ -500,57 +589,70 @@ sqlRunParser(Parse * pParse, const char *zSql)
 	assert(pParse->nVar == 0);
 	assert(pParse->pVList == 0);
 	while (1) {
-		assert(i >= 0);
-		if (zSql[i] != 0) {
-			pParse->sLastToken.z = &zSql[i];
-			pParse->sLastToken.n =
-			    sql_token(&zSql[i], &tokenType,
-				      &pParse->sLastToken.isReserved);
-			i += pParse->sLastToken.n;
-			if (i > SQL_MAX_SQL_LENGTH) {
-				diag_set(ClientError, ER_SQL_PARSER_LIMIT,
-					 "SQL command length", i,
-					 SQL_MAX_SQL_LENGTH);
-				pParse->is_aborted = true;
-				break;
-			}
-		} else {
-			/* Upon reaching the end of input, call the parser two more times
-			 * with tokens TK_SEMI and 0, in that order.
-			 */
-			if (lastTokenParsed == TK_SEMI) {
-				tokenType = 0;
-			} else if (lastTokenParsed == 0) {
-				break;
-			} else {
-				tokenType = TK_SEMI;
-			}
+		n = sql_token(zSql, &tokenType,
+			      &pParse->sLastToken.isReserved);
+		mxSqlLen -= n;
+		if (mxSqlLen < 0) {
+			diag_set(ClientError, ER_SQL_PARSER_LIMIT,
+				 "SQL command length", mxSqlLen,
+				 SQL_MAX_SQL_LENGTH);
+			pParse->is_aborted = true;
+			break;
 		}
-		if (tokenType >= TK_SPACE) {
-			assert(tokenType == TK_SPACE
-			       || tokenType == TK_ILLEGAL);
-			if (tokenType == TK_ILLEGAL) {
+		if (tokenType >= TK_WINDOW) {
+			if (tokenType == TK_SPACE) {
+				zSql += n;
+				pParse->line_pos += n;
+				continue;
+			}
+			if (zSql[0] == 0) {
+				/* Upon reaching the end of input, call
+				 * the parser two more times
+				 * with tokens TK_SEMI and 0, in that order.
+				 */
+				if (lastTokenParsed == TK_SEMI) {
+					tokenType = 0;
+				} else if (lastTokenParsed == 0) {
+					break;
+				} else {
+					tokenType = TK_SEMI;
+				}
+				n = 0;
+			} else if (tokenType == TK_WINDOW) {
+				assert(n == 6);
+				tokenType = analyzeWindowKeyword(&zSql[6]);
+			} else if (tokenType == TK_OVER) {
+				assert(n == 4);
+				tokenType = analyzeOverKeyword(
+						&zSql[4], lastTokenParsed);
+			} else if (tokenType == TK_FILTER) {
+				assert(n == 6);
+				tokenType = analyzeFilterKeyword(
+						&zSql[6], lastTokenParsed);
+			} else if (tokenType == TK_LINEFEED) {
+				pParse->line_count++;
+				pParse->line_pos = 1;
+				zSql += n;
+				continue;
+			} else if (tokenType == TK_ILLEGAL) {
 				diag_set(ClientError, ER_SQL_UNKNOWN_TOKEN,
 					 pParse->line_count, pParse->line_pos,
-					 pParse->sLastToken.n,
-					 pParse->sLastToken.z);
+					 n, zSql);
 				pParse->is_aborted = true;
 				break;
 			}
-		} else if (tokenType == TK_LINEFEED) {
-			pParse->line_count++;
-			pParse->line_pos = 1;
-			continue;
-		} else {
-			sqlParser(pEngine, tokenType, pParse->sLastToken,
-				      pParse);
-			lastTokenParsed = tokenType;
-			if (pParse->is_aborted)
-				break;
 		}
+		pParse->sLastToken.z = zSql;
+		pParse->sLastToken.n = n;
+		zSql += n;
+		sqlParser(pEngine, tokenType, pParse->sLastToken,
+			  pParse);
 		pParse->line_pos += pParse->sLastToken.n;
+		lastTokenParsed = tokenType;
+		if (pParse->is_aborted)
+			break;
 	}
-	pParse->zTail = &zSql[i];
+	pParse->zTail = zSql;
 	sqlParserFree(pEngine, free);
 	if (pParse->pVdbe != NULL && pParse->is_aborted) {
 		sqlVdbeDelete(pParse->pVdbe);

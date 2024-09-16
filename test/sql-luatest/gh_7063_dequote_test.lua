@@ -18,7 +18,7 @@ g.test_dequote = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE "t"("a" INT PRIMARY KEY);]])
         local sql = [[SELECT "t1"."a" FROM (SELECT "a" FROM "t") AS "t1";]]
-        t.assert_equals(box.execute(sql).metadata[1].name, 't1.a')
+        t.assert_equals(box.execute(sql).metadata[1].name, 'a')
         box.execute([[DROP TABLE "t";]])
     end)
 end

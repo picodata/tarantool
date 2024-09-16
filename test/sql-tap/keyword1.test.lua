@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(184)
+test:plan(181)
 
 --!./tcltestrunner.lua
 -- 2009 January 29
@@ -168,7 +168,6 @@ local bannedkws = {
 	"loop",
 	"number",
 	"out",
-	"over",
 	"partition",
 	"precision",
 	"procedure",
@@ -179,8 +178,6 @@ local bannedkws = {
 	"resignal",
 	"return",
 	"revoke",
-	"rows",
-	"row_number",
 	"sensitive",
 	"signal",
 	"smallint",
