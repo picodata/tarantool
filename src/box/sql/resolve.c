@@ -590,8 +590,10 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 			assert(!ExprHasProperty(pExpr, EP_xIsSelect));
 			zId = pExpr->u.zToken;
 			nId = sqlStrlen30(zId);
+
 			uint32_t flags = sql_func_flags(zId);
 			bool is_agg = (flags & SQL_FUNC_AGG) != 0;
+			bool is_window = (flags & SQL_FUNC_WINDOW) != 0;
 			if ((flags & SQL_FUNC_UNLIKELY) != 0 && n == 2) {
 				ExprSetProperty(pExpr, EP_Unlikely | EP_Skip);
 				pExpr->iTable =
@@ -614,40 +616,38 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 				pExpr->iTable = zId[0] == 'u' ?
 						8388608 : 125829120;
 			}
-			if (is_agg && (pNC->ncFlags & NC_AllowAgg) == 0) {
+			if (!is_agg && !is_window && pExpr->pWin) {
+				const char *err = tt_sprintf(
+					"%.*s() may not be used as a window function",
+					nId, zId);
+				diag_set(ClientError,
+					 ER_SQL_PARSER_GENERIC, err);
+				pParse->is_aborted = true;
+				pNC->nErr++;
+			} else if (((is_agg || is_window) &&
+				    (pNC->ncFlags & NC_AllowAgg) == 0) ||
+				    ((is_agg || is_window) &&
+				     pExpr->pWin &&
+				     (pNC->ncFlags & NC_AllowWin) == 0)) {
+				const char *zType = pExpr->pWin ? "window"
+						    : "aggregate";
 				const char *err =
-					tt_sprintf("misuse of aggregate "\
-						   "function %.*s()", nId, zId);
+				tt_sprintf("misuse of %s function %.*s()",
+					   zType, nId, zId);
 				diag_set(ClientError, ER_SQL_PARSER_GENERIC, err);
 				pParse->is_aborted = true;
 				pNC->nErr++;
 				is_agg = 0;
+				is_window = 0;
 			}
-			if (is_agg)
-				pNC->ncFlags &= ~NC_AllowAgg;
+			if (is_agg || is_window) {
+				pNC->ncFlags &= ~(pExpr->pWin ?
+						  NC_AllowWin : NC_AllowAgg);
+			}
 			sqlWalkExprList(pWalker, pList);
 			if (pParse->is_aborted)
 				break;
-			if (is_agg) {
-				NameContext *pNC2 = pNC;
-				pExpr->op = TK_AGG_FUNCTION;
-				pExpr->op2 = 0;
-				while (pNC2
-				       && !sqlFunctionUsesThisSrc(pExpr,
-								      pNC2->
-								      pSrcList))
-				{
-					pExpr->op2++;
-					pNC2 = pNC2->pNext;
-				}
-				if (pNC2) {
-					pNC2->ncFlags |= NC_HasAgg;
-					if ((flags & (SQL_FUNC_MIN |
-						      SQL_FUNC_MAX)) != 0)
-						pNC2->ncFlags |= NC_MinMaxAgg;
-				}
-				pNC->ncFlags |= NC_AllowAgg;
-			}
+
 			struct func *func = sql_func_find(pExpr);
 			if (func == NULL) {
 				pParse->is_aborted = true;
@@ -671,6 +671,49 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 			       (pNC->ncFlags & NC_IdxExpr) == 0);
 			if (func->def->is_deterministic)
 				ExprSetProperty(pExpr, EP_ConstFunc);
+
+			if (is_agg || is_window) {
+				if (pExpr->pWin) {
+					Select *pSel = pNC->pWinSelect;
+					sqlWalkExprList(
+						pWalker,
+						pExpr->pWin->pPartition);
+					sqlWalkExprList(pWalker,
+							pExpr->pWin->pOrderBy);
+					sqlWalkExpr(pWalker,
+						    pExpr->pWin->pFilter);
+					sqlWindowUpdate(pParse, pSel->pWinDefn,
+							pExpr->pWin, func);
+					if (pSel->pWin == 0 ||
+					    sqlWindowCompare(pSel->pWin,
+							     pExpr->pWin) ==
+					    0) {
+						pExpr->pWin->pNextWin =
+						pSel->pWin;
+						pSel->pWin = pExpr->pWin;
+					}
+					pNC->ncFlags |= NC_AllowWin;
+				} else {
+					NameContext *pNC2 = pNC;
+					pExpr->op = TK_AGG_FUNCTION;
+					pExpr->op2 = 0;
+					while (pNC2 &&
+					       !sqlFunctionUsesThisSrc(
+						pExpr, pNC2->pSrcList)) {
+						pExpr->op2++;
+						pNC2 = pNC2->pNext;
+					}
+					if (pNC2) {
+						pNC2->ncFlags |= NC_HasAgg;
+						bool is_minmax = (flags &
+							(SQL_FUNC_MIN |
+							 SQL_FUNC_MAX)) != 0;
+						pNC2->ncFlags |= is_minmax ?
+							NC_MinMaxAgg : 0;
+					}
+					pNC->ncFlags |= NC_AllowAgg;
+				}
+			}
 			return WRC_Prune;
 		}
 	case TK_SELECT:
@@ -1132,6 +1175,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 	nCompound = 0;
 	pLeftmost = p;
 	while (p) {
+		assert(p->pWin == 0);
 		assert((p->selFlags & SF_Expanded) != 0);
 		assert((p->selFlags & SF_Resolved) == 0);
 		p->selFlags |= SF_Resolved;
@@ -1141,6 +1185,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 */
 		memset(&sNC, 0, sizeof(sNC));
 		sNC.pParse = pParse;
+		sNC.pWinSelect = p;
 		if (sqlResolveExprNames(&sNC, p->pLimit) ||
 		    sqlResolveExprNames(&sNC, p->pOffset)) {
 			return WRC_Abort;
@@ -1196,7 +1241,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 * resolve the result-set expression list.
 		 */
 		bool is_all_select_agg = true;
-		sNC.ncFlags = NC_AllowAgg;
+		sNC.ncFlags = NC_AllowAgg | NC_AllowWin;
 		sNC.pSrcList = p->pSrc;
 		sNC.pNext = pOuterNC;
 		struct ExprList_item *item = p->pEList->a;
@@ -1223,6 +1268,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			if (sqlResolveExprNames(&sNC, item->pExpr) != 0)
 				return WRC_Abort;
 		}
+		sNC.ncFlags &= ~NC_AllowWin;
 
 		/*
 		 * If there are no aggregate functions in the
@@ -1303,7 +1349,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 * outer queries
 		 */
 		sNC.pNext = 0;
-		sNC.ncFlags |= NC_AllowAgg;
+		sNC.ncFlags |= NC_AllowAgg | NC_AllowWin;
 
 		/* If this is a converted compound query, move the ORDER BY clause from
 		 * the sub-query back to the parent query. At this point each term
@@ -1332,6 +1378,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		    ) {
 			return WRC_Abort;
 		}
+		sNC.ncFlags &= ~NC_AllowWin;
 
 		/* Resolve the GROUP BY clause.  At the same time, make sure
 		 * the GROUP BY clause does not contain aggregate functions.
@@ -1377,6 +1424,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			pParse->is_aborted = true;
 			return WRC_Abort;
 		}
+
 		/* Advance to the next term of the compound
 		 */
 		p = p->pPrior;

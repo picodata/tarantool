@@ -42,6 +42,7 @@ extras="            \
     COLUMN_REF      \
     AGG_FUNCTION    \
     AGG_COLUMN      \
+    WIN_COLUMN      \
     UMINUS          \
     UPLUS           \
     REGISTER        \

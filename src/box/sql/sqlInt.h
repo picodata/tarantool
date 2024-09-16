@@ -887,6 +887,7 @@ typedef struct TriggerStep TriggerStep;
 typedef struct UnpackedRecord UnpackedRecord;
 typedef struct Walker Walker;
 typedef struct WhereInfo WhereInfo;
+typedef struct Window Window;
 typedef struct With With;
 
 /* A VList object records a mapping between parameters/variables/wildcards
@@ -1089,6 +1090,12 @@ struct type_def {
  * argument.
  */
 #define SQL_FUNC_DERIVEDCOLL 0x4000
+
+/** Built-in window-only function **/
+#define SQL_FUNC_WINDOW  0x8000
+
+/** Use inverse function in sql_context **/
+#define SQL_CTX_INVERSE  0x0001
 
 /*
  * Trim side mask components. TRIM_LEADING means to trim left side
@@ -1405,6 +1412,7 @@ struct Expr {
 	AggInfo *pAggInfo;	/* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
 	/** Pointer for table relative definition. */
 	struct space_def *space_def;
+	Window *pWin;		/* Window definition for window functions */
 };
 
 /*
@@ -1705,6 +1713,7 @@ struct NameContext {
 	int nRef;		/* Number of names resolved by this context */
 	int nErr;		/* Number of errors encountered while resolving names */
 	u16 ncFlags;		/* Zero or more NC_* flags defined below */
+	Select *pWinSelect;	/* SELECT statement for any window functions */
 };
 
 /*
@@ -1723,6 +1732,7 @@ struct NameContext {
 #define NC_MinMaxAgg 0x1000	/* min/max aggregates seen.  See note above */
 /** One or more identifiers are out of aggregate function. */
 #define NC_HasUnaggregatedId     0x2000
+#define NC_AllowWin  0x4000	/* Window functions are allowed here */
 /*
  * An instance of the following structure contains all information
  * needed to generate code for a single SELECT statement.
@@ -1761,6 +1771,8 @@ struct Select {
 	Expr *pLimit;		/* LIMIT expression. NULL means not used. */
 	Expr *pOffset;		/* OFFSET expression. NULL means not used. */
 	With *pWith;		/* WITH clause attached to this select. Or NULL. */
+	Window *pWin;		/* List of window functions */
+	Window *pWinDefn;	/* List of named window definitions */
 };
 
 /*
@@ -2107,30 +2119,59 @@ struct Parse {
  *    OPFLAG_SAVEPOSITION == BTREE_SAVEPOSITION
  *    OPFLAG_AUXDELETE    == BTREE_AUXDELETE
  */
-#define OPFLAG_NCHANGE       0x01	/* OP_Insert: Set to update db->nChange */
-				     /* Also used in P2 (not P5) of OP_Delete */
-#define OPFLAG_EPHEM         0x01	/* OP_Column: Ephemeral output is ok */
-#define OPFLAG_OE_IGNORE    0x200	/* OP_IdxInsert: Ignore flag */
-#define OPFLAG_OE_FAIL      0x400	/* OP_IdxInsert: Fail flag */
-#define OPFLAG_OE_ROLLBACK  0x800	/* OP_IdxInsert: Rollback flag. */
-#define OPFLAG_LENGTHARG     0x40	/* OP_Column only used for length() */
-#define OPFLAG_TYPEOFARG     0x80	/* OP_Column only used for typeof() */
-#define OPFLAG_SEEKEQ        0x02	/* OP_Open** cursor uses EQ seek only */
-#define OPFLAG_FORDELETE     0x08	/* OP_Open should use BTREE_FORDELETE */
-#define OPFLAG_P2ISREG       0x10	/* P2 to OP_Open** is a register number */
-#define OPFLAG_PERMUTE       0x01	/* OP_Compare: use the permutation */
-#define OPFLAG_SAVEPOSITION  0x02	/* OP_Delete: keep cursor position */
-#define OPFLAG_AUXDELETE     0x04	/* OP_Delete: index in a DELETE op */
 
-#define OPFLAG_SAME_FRAME    0x01	/* OP_FCopy: use same frame for source
-					 * register
-					 */
-#define OPFLAG_NOOP_IF_NULL  0x02	/* OP_FCopy: if source register is NULL
-					 * then do nothing
-					 */
-#define OPFLAG_SYSTEMSP      0x20	/* OP_Open**: set if space pointer
-					 * points to system space.
-					 */
+/* OP_Insert: Set to update db->nChange
+ * Also used in P2 (not P5) of OP_Delete
+ */
+#define OPFLAG_NCHANGE       0x01
+
+/* OP_Column: Ephemeral output is ok */
+#define OPFLAG_EPHEM         0x01
+
+/* OP_IdxInsert: Ignore flag */
+#define OPFLAG_OE_IGNORE    0x200
+
+/* OP_IdxInsert: Fail flag */
+#define OPFLAG_OE_FAIL      0x400
+
+/* OP_IdxInsert: Rollback flag */
+#define OPFLAG_OE_ROLLBACK  0x800
+
+/* OP_Column only used for length() */
+#define OPFLAG_LENGTHARG     0x40
+
+/* OP_Column only used for typeof() */
+#define OPFLAG_TYPEOFARG     0x80
+
+/* OP_Open** cursor uses EQ seek only */
+#define OPFLAG_SEEKEQ        0x02
+
+/* OP_Open should use BTREE_FORDELETE */
+#define OPFLAG_FORDELETE     0x08
+
+/* P2 to OP_Open** is a register number */
+#define OPFLAG_P2ISREG       0x10
+
+/* OP_Compare: use the permutation */
+#define OPFLAG_PERMUTE       0x01
+
+/* OP_Delete: keep cursor position */
+#define OPFLAG_SAVEPOSITION  0x02
+
+/* OP_Delete: index in a DELETE op */
+#define OPFLAG_AUXDELETE     0x04
+
+/* OP_FCopy: use same frame for source register */
+#define OPFLAG_SAME_FRAME    0x01
+
+/* OP_FCopy: if source register is NULL then do nothing */
+#define OPFLAG_NOOP_IF_NULL  0x02
+
+/* OP_Open**: set if space pointer points to system space */
+#define OPFLAG_SYSTEMSP      0x20
+
+/* OP_IteratorOpen: duplicate ephemeral cursor */
+#define OPFLAG_EPH_DUP       0x40
 
 /**
  * Prepare vdbe P5 flags for OP_{IdxInsert, IdxReplace, Update}
@@ -2300,6 +2341,7 @@ struct Walker {
 		int *aiCol;	/* array of column indexes */
 		/** Space definition. */
 		struct space_def *space_def;
+		struct WindowRewrite *pRewrite;	/* Window rewrite context */
 	} u;
 };
 
@@ -2344,6 +2386,84 @@ struct TreeView {
 	u8 bLine[100];		/* Draw vertical in column i if bLine[i] is true */
 };
 #endif				/* SQL_DEBUG */
+
+/*
+ * Object used to encode the OVER() clause attached to a window-function
+ * invocation. And some fields used while generating VM code for the same.
+ */
+struct Window {
+	char *zName;		/* Name of window (may be NULL) */
+	ExprList *pPartition;	/* PARTITION BY clause */
+	ExprList *pOrderBy;	/* ORDER BY clause */
+	u8 eType;		/* TK_RANGE or TK_ROWS */
+	u8 eStart;		/* UNBOUNDED, CURRENT, PRECEDING or FOLLOWING */
+	u8 eEnd;		/* UNBOUNDED, CURRENT, PRECEDING or FOLLOWING */
+	Expr *pStart;		/* Expression for "<expr> PRECEDING" */
+	Expr *pEnd;		/* Expression for "<expr> FOLLOWING" */
+
+	Window *pNextWin;	/* Next window function of this SELECT */
+
+	Expr *pFilter;		/* Filter expression */
+	struct func *pFunc;	/* Function object */
+
+	int iEphCsr;		/* Temp table cursor used by this window */
+	int regEph;		/* Register holding the window temp table */
+	int regAccum;		/* Register holding accumulator */
+	int regResult;		/* Register holding result of current row */
+
+	int csrApp;		/* Function cursor (used by min/max) */
+	int regAppCsr;		/* Register holding the function cursor */
+	int regApp;		/* Function value register (+used by min/max) */
+
+	int regPart;		/* Register holding partition */
+	Expr *pOwner;		/* Expr object this window is attached to */
+	int nBufferCol;		/* Number of columns in buffer table */
+	int iArgCol;		/* Offset of first argument for this function */
+};
+
+void
+sqlWindowDelete(Window *p);
+
+void
+sqlWindowAttach(Expr *p, Window *pWin);
+
+void
+sqlWindowListDelete(Window *p);
+
+Window *
+sqlWindowAlloc(int eType, int eStart, Expr *pStart, int eEnd, Expr *pEnd);
+
+void
+sqlWindowAttach(Expr *p, Window *pWin);
+
+int
+sqlWindowCompare(Window *p1, Window *p2);
+
+void
+sqlWindowCodeInit(Parse *pParse, Window *pMWin);
+
+void
+sqlWindowCodeStep(Parse *pParse, Select *p, WhereInfo *pWInfo,
+		  int regGosub, int addrGosub);
+
+int
+sqlWindowRewrite(Parse *pParse, Select *p);
+
+void
+sqlExpandSubquery(Parse *pParse, struct SrcList_item *pFrom);
+
+void
+sqlWindowUpdate(Parse *pParse, Window *pList, Window *pWin,
+		struct func *pFunc);
+
+Window *
+sqlWindowDup(Expr *pOwner, Window *p);
+
+Window *
+sqlWindowListDup(Window *p);
+
+void
+sqlWindowFunctions(void);
 
 /*
  * The following macros mimic the standard library functions toupper(),
@@ -3977,6 +4097,36 @@ struct key_def *
 sql_key_info_to_key_def(struct sql_key_info *key_info);
 
 /**
+ * Given an expression list, generate a key_info structure that
+ * records the collating sequence for each expression in that
+ * expression list.
+ *
+ * If the ExprList is an ORDER BY or GROUP BY clause then the
+ * resulting key_info structure is appropriate for initializing
+ * a virtual index to implement that clause.  If the ExprList is
+ * the result set of a SELECT then the key_info structure is
+ * appropriate for initializing a virtual index to implement a
+ * DISTINCT test.
+ *
+ * Space to hold the key_info structure is obtained from malloc.
+ * The calling function is responsible for seeing that this
+ * structure is eventually freed.
+ *
+ * @param parse Parsing context.
+ * @param list Expression list.
+ * @param start No of leading parts to skip.
+ *
+ * @retval Allocated key_info, NULL in case of OOM.
+ */
+struct sql_key_info *
+sql_expr_list_to_key_info(struct Parse *parse, struct ExprList *list,
+			  int start);
+
+struct sql_space_info *
+sql_space_info_new_from_expr_list(struct Parse *parser, struct ExprList *list,
+				  bool has_rowid);
+
+/**
  * Structure that is used to store information about ephemeral space field types
  * and fieldno of key parts.
  */
@@ -4118,8 +4268,12 @@ sqlStat4ProbeFree(struct UnpackedRecord *rec)
 void *
 sqlParserAlloc(void *(*)(size_t));
 
-void sqlParserFree(void *, void (*)(void *));
-void sqlParser(void *, int, Token, Parse *);
+void
+sqlParserFree(void *, void (*)(void *));
+void
+sqlParser(void *, int, Token, Parse *);
+int
+sqlParserFallback(int);
 #ifdef YYTRACKMAXSTACKDEPTH
 int sqlParserStackPeak(void *);
 #endif
@@ -4246,6 +4400,10 @@ struct func_sql_builtin {
 	 * (is valid only for aggregate function).
 	 */
 	int (*finalize)(struct Mem *mem);
+	int (*value)(struct Mem *mem);
+	void (*inverse)(struct sql_context *ctx, int argc,
+			const struct Mem *argv);
+
 };
 
 /**

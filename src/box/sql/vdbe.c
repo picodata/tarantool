@@ -2373,11 +2373,12 @@ case OP_TTransaction: {
 
 /* Opcode: IteratorOpen P1 P2 P3 * P5
  * Synopsis: index id = P2, space ptr = reg[P3]
+ *          P5 = cursor hints (OPFLAG_SEEKEQ, OPFLAG_EPH_DUP)
  *
  * Open a cursor for a space specified by pointer in  the register P3 and index
  * id in P2. Give the new cursor an identifier of P1. The P1 values need not be
  * contiguous but all P1 values should be small integers. It is an error for P1
- * to be negative.
+ * to be negative. P5 is a bitmask of cursor hints.
  */
 case OP_IteratorOpen: {
 	struct VdbeCursor *cur = p->apCsr[pOp->p1];
@@ -2409,10 +2410,10 @@ case OP_IteratorOpen: {
 	bt_cur->space = space;
 	bt_cur->index = index;
 	bt_cur->eState = CURSOR_INVALID;
+	bt_cur->hints = pOp->p5;
 	/* Key info still contains sorter order and collation. */
 	cur->key_def = index->def->key_def;
 	cur->nullRow = 1;
-	cur->uc.pCursor->hints = pOp->p5 & OPFLAG_SEEKEQ;
 	break;
 }
 
@@ -3286,13 +3287,17 @@ case OP_Sort: {        /* jump */
 			/* Fall through into OP_Rewind */
 			FALLTHROUGH;
 		}
-/* Opcode: Rewind P1 P2 * * *
+/* Opcode: Rewind P1 P2 * * P5
  *
  * The next use of the Column or Next instruction for P1
  * will refer to the first entry in the database table or index.
  * If the table or index is empty, jump immediately to P2.
- * If the table or index is not empty, fall through to the following
- * instruction.
+ * If P2 is 0 or the table or index is not empty, pass through
+ * to the following instruction.
+ *
+ * If P5 is non-zero and the table is not empty, then the "skip-next"
+ * flag is set on the cursor so that the next OP_Next instruction
+ * executed on it is a no-op.
  *
  * This opcode leaves the cursor configured to move in forward order,
  * from the beginning toward the end.  In other words, the cursor is
@@ -3320,11 +3325,15 @@ case OP_Rewind: {        /* jump */
 		assert(pCrsr);
 		if (tarantoolsqlFirst(pCrsr, &res) != 0)
 			goto abort_due_to_error;
+		if (pOp->p5)
+			pCrsr->eState = CURSOR_SKIPNEXT;
 		pC->cacheStatus = CACHE_STALE;
 	}
 	pC->nullRow = (u8)res;
-	assert(pOp->p2>0 && pOp->p2<p->nOp);
-	if (res) goto jump_to_p2;
+	if (pOp->p2 > 0 && res) {
+		assert(pOp->p2 < p->nOp);
+		goto jump_to_p2;
+	}
 	break;
 }
 
@@ -4180,11 +4189,12 @@ case OP_DecrJumpZero: {      /* jump, in1 */
 
 /* Opcode: AggStep P1 P2 P3 P4 *
  * Synopsis: accum=r[P3] step(r[P2@P1])
+ *          pCtx & SQL_CTX_INVERSE: inverse() else: step()
  *
- * Execute the step function for an aggregate.  The
- * function has P1 arguments.   P4 is a pointer to an sql_context
- * object that is used to run the function.  Register P3 is
- * as the accumulator.
+ * Execute the step or inverse (if SQL_CTX_INVERSE flag is set) function
+ * for an aggregate. The function has P1 arguments. P4 is a pointer to
+ * an sql_context object that is used to run the function. Register
+ * P3 is as the accumulator.
  *
  * The P1 arguments are taken from register P2 and its
  * successors.
@@ -4211,7 +4221,13 @@ case OP_AggStep: {
 	pCtx->skipFlag = 0;
 	assert(pCtx->func->def->language == FUNC_LANGUAGE_SQL_BUILTIN);
 	struct func_sql_builtin *func = (struct func_sql_builtin *)pCtx->func;
-	func->call(pCtx, argc, &aMem[pOp->p2]);
+	if (pCtx->funcFlag & SQL_CTX_INVERSE) {
+		/* Inverse function is called. */
+		func->inverse(pCtx, argc, &aMem[pOp->p2]);
+	} else {
+		/* Step function is called. */
+		func->call(pCtx, argc, &aMem[pOp->p2]);
+	}
 	if (pCtx->is_aborted)
 		goto abort_due_to_error;
 	if (pCtx->skipFlag) {
@@ -4222,22 +4238,39 @@ case OP_AggStep: {
 	break;
 }
 
-/* Opcode: AggFinal P1 * * P4 *
+/* Opcode: AggFinal P1 * P3 P4 *
  * Synopsis: accum=r[P1]
+ *          P3 == 0: finalize(), else: value()
  *
  * Execute the finalizer function for an aggregate. P1 is the memory location
- * that is the accumulator for the aggregate. P4 is a pointer to the function.
+ * that is the accumulator for the aggregate or window function. If P3 is zero,
+ * then execute the finalizer function for an aggregate and store the result
+ * in P1. Or, if P3 is non-zero, invoke the value function and store the
+ * result in register P3. P4 is a pointer to the function.
  */
 case OP_AggFinal: {
 	assert(pOp->p1>0 && pOp->p1<=(p->nMem+1 - p->nCursor));
 	struct func_sql_builtin *func = (struct func_sql_builtin *)pOp->p4.func;
 	struct Mem *pIn1 = &aMem[pOp->p1];
 
-	if (func->finalize != NULL && func->finalize(pIn1) != 0)
+	if (pOp->p3) {
+		struct Mem *pOut = &aMem[pOp->p3];
+
+		if (mem_copy(pOut, pIn1) != 0)
+			goto abort_due_to_error;
+		if (func->value != NULL &&
+		    func->value(pOut) != 0)
+			goto abort_due_to_error;
+		UPDATE_MAX_BLOBSIZE(pOut);
+		if (sqlVdbeMemTooBig(pOut) != 0)
+			goto too_big;
+	} else if (func->finalize != NULL &&
+		   func->finalize(pIn1) != 0) {
 		goto abort_due_to_error;
-	UPDATE_MAX_BLOBSIZE(pIn1);
-	if (sqlVdbeMemTooBig(pIn1) != 0)
-		goto too_big;
+		UPDATE_MAX_BLOBSIZE(pIn1);
+		if (sqlVdbeMemTooBig(pIn1) != 0)
+			goto too_big;
+	}
 	break;
 }
 
