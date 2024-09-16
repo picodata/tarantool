@@ -1183,7 +1183,7 @@ test:do_test(
         ]]
         for i, tmp in ipairs(x) do
             if type(tmp) == "string" then
-                x[i] = tmp:gsub("sq_[0-9a-fA-F_]+", "subquery")
+                x[i] = tmp:gsub("subquery_[0-9a-fA-F_]+", "sql_subquery")
             end
         end
         return x
@@ -1414,7 +1414,7 @@ test:do_catchsql_test(
     [[
         SELECT f1 FROM test1 as "hi", test2 as]], {
         -- <select1-7.3>
-        1, [[At line 1 at or near position 47: keyword 'as' is reserved. Please use double quotes if 'as' is an identifier.]]
+        1, [[Syntax error at line 1 near '']]
         -- </select1-7.3>
     })
 

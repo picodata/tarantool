@@ -78,6 +78,7 @@ set(sql_sources
     sql/where.c
     sql/wherecode.c
     sql/whereexpr.c
+    sql/window.c
 )
 
 add_custom_target(box_generate_lua_sources

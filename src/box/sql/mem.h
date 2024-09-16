@@ -87,7 +87,11 @@ struct Mem {
 	/** Type of the value this MEM contains. */
 	enum mem_type type;
 	u32 flags;		/* Some combination of MEM_Null, MEM_Str, MEM_Dyn, etc. */
-	/* Size of variable length value. */
+	/*
+	 * Size of variable length value. Also used as an inverse counter for
+	 * aggregates with non-allocated accumulators to distinguish between
+	 * zero and NULL.
+	 */
 	size_t n;
 	char *z;		/* String or BLOB value */
 	/* ShallowCopy only needs to copy the information above */

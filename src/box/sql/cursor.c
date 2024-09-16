@@ -62,7 +62,8 @@ sql_cursor_close(struct BtCursor *cursor)
 	assert(cursor->space != NULL);
 	assert((cursor->curFlags & BTCF_TaCursor) ||
 	       (cursor->curFlags & BTCF_TEphemCursor));
-	if (cursor->curFlags & BTCF_TEphemCursor)
+	bool is_dup = cursor->hints & OPFLAG_EPH_DUP;
+	if (cursor->curFlags & BTCF_TEphemCursor && !is_dup)
 		tarantoolsqlEphemeralDrop(cursor);
 	sql_cursor_cleanup(cursor);
 }

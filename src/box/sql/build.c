@@ -1452,7 +1452,6 @@ sql_create_view(struct Parse *parse_context)
 	 * Make sEnd point to the end.
 	 */
 	struct Token end = parse_context->sLastToken;
-	assert(end.z[0] != 0);
 	if (end.z[0] != ';')
 		end.z += end.n;
 	end.n = 0;

@@ -120,14 +120,14 @@ struct SortCtx {
 static inline uint32_t
 multi_select_coll_seq(struct Parse *parser, struct Select *p, int n);
 
-static struct sql_space_info *
+struct sql_space_info *
 sql_space_info_new_from_expr_list(struct Parse *parser, struct ExprList *list,
 				  bool has_rowid)
 {
 	int n = list->nExpr;
 	if (has_rowid)
 		++n;
-	struct sql_space_info *info = sql_space_info_new(n, 0);
+	struct sql_space_info *info = sql_space_info_new(n, n);
 	if (info == NULL)
 		return NULL;
 	for (int i = 0; i < list->nExpr; ++i) {
@@ -135,6 +135,7 @@ sql_space_info_new_from_expr_list(struct Parse *parser, struct ExprList *list,
 		struct coll *coll;
 		struct Expr *expr = list->a[i].pExpr;
 		enum field_type type = sql_expr_type(expr);
+		enum sort_order sort = list->a[i].sort_order;
 		/*
 		 * Type ANY could mean that field was unresolved. We have no way
 		 * but to set it as SCALAR, however this could lead to
@@ -149,9 +150,15 @@ sql_space_info_new_from_expr_list(struct Parse *parser, struct ExprList *list,
 		}
 		info->types[i] = type;
 		info->coll_ids[i] = coll_id;
+		info->parts[i] = (uint32_t)i;
+		info->sort_orders[i] = sort;
 	}
-	if (has_rowid)
+	if (has_rowid) {
 		info->types[list->nExpr] = FIELD_TYPE_INTEGER;
+		info->sort_orders[list->nExpr] = SORT_ORDER_ASC;
+		info->parts[list->nExpr] = (uint32_t)list->nExpr;
+	}
+	info->part_count = n;
 	return info;
 }
 
@@ -328,6 +335,8 @@ clearSelect(struct Select *p, int bFree)
 		sql_expr_delete(p->pOffset);
 		if (p->pWith)
 			sqlWithDelete(p->pWith);
+		if (p->pWinDefn)
+			sqlWindowListDelete(p->pWinDefn);
 		if (bFree)
 			sql_xfree(p);
 		p = pPrior;
@@ -413,6 +422,8 @@ sqlSelectNew(Parse * pParse,	/* Parsing context */
 	standin.pLimit = pLimit;
 	standin.pOffset = pOffset;
 	standin.pWith = 0;
+	standin.pWin = 0;
+	standin.pWinDefn = 0;
 	assert(pOffset == NULL || pLimit != NULL || pParse->is_aborted);
 	Select *pNew = sql_xmalloc(sizeof(*pNew));
 	assert(standin.pSrc != 0 || pParse->is_aborted);
@@ -906,32 +917,6 @@ sqlProcessJoin(Parse * pParse, Select * p)
 	}
 	return 0;
 }
-
-/**
- * Given an expression list, generate a key_info structure that
- * records the collating sequence for each expression in that
- * expression list.
- *
- * If the ExprList is an ORDER BY or GROUP BY clause then the
- * resulting key_info structure is appropriate for initializing
- * a virtual index to implement that clause.  If the ExprList is
- * the result set of a SELECT then the key_info structure is
- * appropriate for initializing a virtual index to implement a
- * DISTINCT test.
- *
- * Space to hold the key_info structure is obtained from malloc.
- * The calling function is responsible for seeing that this
- * structure is eventually freed.
- *
- * @param parse Parsing context.
- * @param list Expression list.
- * @param start No of leading parts to skip.
- *
- * @retval Allocated key_info, NULL in case of OOM.
- */
-static struct sql_key_info *
-sql_expr_list_to_key_info(struct Parse *parse, struct ExprList *list, int start);
-
 
 /*
  * Generate code that will push the record in registers regData
@@ -1660,7 +1645,7 @@ sql_key_info_to_key_def(struct sql_key_info *key_info)
 	return key_info->key_def;
 }
 
-static struct sql_key_info *
+struct sql_key_info *
 sql_expr_list_to_key_info(struct Parse *parse, struct ExprList *list, int start)
 {
 	int expr_count = list->nExpr;
@@ -1913,6 +1898,66 @@ generateSortTail(Parse * pParse,	/* Parsing context */
 	sqlVdbeResolveLabel(v, addrBreak);
 }
 
+static void
+generate_full_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
+			      struct ExprList *pEList)
+{
+	int i, j;
+	bool is_full_meta = (pParse->sql_flags & SQL_FullMetadata) != 0;
+	if (!is_full_meta)
+		return;
+	Vdbe *v = pParse->pVdbe;
+	for (i = 0; i < pEList->nExpr; i++) {
+		Expr *p;
+		p = pEList->a[i].pExpr;
+		if (NEVER(p == 0))
+			continue;
+		enum field_type type = sql_expr_type(p);
+		if (type == FIELD_TYPE_STRING || type == FIELD_TYPE_SCALAR) {
+			bool unused;
+			uint32_t id = 0;
+			struct coll *coll = NULL;
+			/*
+			 * If sql_expr_coll fails then it fails somewhere
+			 * above the call stack.
+			 */
+			int rc = sql_expr_coll(pParse, p, &unused, &id, &coll);
+			assert(rc == 0);
+			(void)rc;
+			if (id != COLL_NONE) {
+				struct coll_id *coll_id = coll_by_id(id);
+				vdbe_metadata_set_col_collation(
+					v, i, coll_id->name, coll_id->name_len);
+			}
+		}
+		const char *span = pEList->a[i].zSpan;
+		if (p->op == TK_COLUMN_REF || p->op == TK_AGG_COLUMN) {
+			int iCol = p->iColumn;
+			for (j = 0; j < pTabList->nSrc; j++) {
+				if (pTabList->a[j].iCursor == p->iTable)
+					break;
+			}
+			/* Fast exit for rewritten windows. */
+			if (j == pTabList->nSrc)
+				continue;
+			assert(j < pTabList->nSrc);
+			struct space *space = pTabList->a[j].space;
+			struct space_def *space_def = space->def;
+			bool is_nullable =
+				space_def->fields[iCol].is_nullable;
+			vdbe_metadata_set_col_nullability(v, i,
+							  is_nullable);
+			if (space->sequence != NULL &&
+			    space->sequence_fieldno == (uint32_t)iCol)
+				vdbe_metadata_set_col_autoincrement(v, i);
+			if (span != NULL)
+				vdbe_metadata_set_col_span(v, i, span);
+		} else {
+			vdbe_metadata_set_col_span(v, i, span);
+		}
+	}
+}
+
 /**
  * Generate code that will tell the VDBE the names of columns
  * in the result set. This information is used to provide the
@@ -1938,7 +1983,6 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 	assert(v != 0);
 	assert(pTabList != 0);
 	pParse->colNamesSet = 1;
-	bool is_full_meta = (pParse->sql_flags & SQL_FullMetadata) != 0;
 	sqlVdbeSetNumCols(v, pEList->nExpr);
 	uint32_t var_count = 0;
 	for (i = 0; i < pEList->nExpr; i++) {
@@ -1950,28 +1994,8 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 			var_count++;
 		enum field_type type = sql_expr_type(p);
 		vdbe_metadata_set_col_type(v, i, field_type_strs[type]);
-		if (is_full_meta && (type == FIELD_TYPE_STRING ||
-		    type == FIELD_TYPE_SCALAR)) {
-			bool unused;
-			uint32_t id = 0;
-			struct coll *coll = NULL;
-			/*
-			 * If sql_expr_coll fails then it fails somewhere
-			 * above the call stack.
-			 */
-			int rc =  sql_expr_coll(pParse, p, &unused, &id, &coll);
-			assert(rc == 0);
-			(void) rc;
-			if (id != COLL_NONE) {
-				struct coll_id *coll_id = coll_by_id(id);
-				vdbe_metadata_set_col_collation(v, i,
-								coll_id->name,
-								coll_id->name_len);
-			}
-		}
 		vdbe_metadata_set_col_nullability(v, i, -1);
 		const char *colname = pEList->a[i].zName;
-		const char *span = pEList->a[i].zSpan;
 		if (p->op == TK_COLUMN_REF || p->op == TK_AGG_COLUMN) {
 			char *zCol;
 			int iCol = p->iColumn;
@@ -1996,17 +2020,6 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 				}
 			}
 			vdbe_metadata_set_col_name(v, i, name);
-			if (is_full_meta) {
-				bool is_nullable =
-					space_def->fields[iCol].is_nullable;
-				vdbe_metadata_set_col_nullability(v, i,
-								  is_nullable);
-				if (space->sequence != NULL &&
-				    space->sequence_fieldno == (uint32_t) iCol)
-					vdbe_metadata_set_col_autoincrement(v, i);
-				if (span != NULL)
-					vdbe_metadata_set_col_span(v, i, span);
-			}
 		} else {
 			const char *z = NULL;
 			if (colname != NULL) {
@@ -2016,8 +2029,6 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 				z = sql_generate_column_name(idx);
 			}
 			vdbe_metadata_set_col_name(v, i, z);
-			if (is_full_meta)
-				vdbe_metadata_set_col_span(v, i, span);
 		}
 	}
 	if (var_count == 0)
@@ -2976,6 +2987,10 @@ multiSelect(Parse * pParse,	/* Parsing context */
 						generate_column_metadata(pParse,
 									 pFirst->pSrc,
 									 pFirst->pEList);
+						generate_full_column_metadata(
+							pParse,
+							pFirst->pSrc,
+							pFirst->pEList);
 					}
 					iBreak = sqlVdbeMakeLabel(v);
 					iCont = sqlVdbeMakeLabel(v);
@@ -3070,6 +3085,9 @@ multiSelect(Parse * pParse,	/* Parsing context */
 					generate_column_metadata(pParse,
 								 pFirst->pSrc,
 								 pFirst->pEList);
+					generate_full_column_metadata(
+						pParse, pFirst->pSrc,
+						pFirst->pEList);
 				}
 				iBreak = sqlVdbeMakeLabel(v);
 				iCont = sqlVdbeMakeLabel(v);
@@ -3684,6 +3702,8 @@ multiSelectOrderBy(Parse * pParse,	/* Parsing context */
 		while (pFirst->pPrior)
 			pFirst = pFirst->pPrior;
 		generate_column_metadata(pParse, pFirst->pSrc, pFirst->pEList);
+		generate_full_column_metadata(pParse, pFirst->pSrc,
+					      pFirst->pEList);
 	}
 
 	/* Reassembly the compound query so that it will be freed correctly
@@ -3938,6 +3958,12 @@ substSelect(Parse * pParse,	/* Report errors here */
  *        or max() functions.  (Without this restriction, a query like:
  *        "SELECT x FROM (SELECT max(y), x FROM t1)" would not necessarily
  *        return the value X for which Y was maximal.)
+ */
+/*
+ *  (25)  If either the subquery or the parent query contains a window
+ *        function in the select list or ORDER BY clause, flattening
+ *        is not attempted.
+ *
  *
  *
  * In this routine, the "p" parameter is a pointer to the outer query.
@@ -3980,6 +4006,8 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	iParent = pSubitem->iCursor;
 	pSub = pSubitem->pSelect;
 	assert(pSub != 0);
+	if (p->pWin || pSub->pWin)
+		return 0;	/* Restrictions (25) */
 	if (subqueryIsAgg) {
 		if (isAgg)
 			return 0;	/* Restriction (1)   */
@@ -4369,9 +4397,10 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
  *       inner query.  But they probably won't help there so do not bother.)
  *
  *   (2) The inner query is the recursive part of a common table expression.
- *
+ */
+/*
  *   (3) The inner query has a LIMIT clause (since the changes to the WHERE
- *       close would change the meaning of the LIMIT).
+ *       clause would change the meaning of the LIMIT).
  *
  *   (4) The inner query is the right operand of a LEFT JOIN.  (The caller
  *       enforces this restriction since this routine does not have enough
@@ -4379,6 +4408,10 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
  *
  *   (5) The WHERE clause expression originates in the ON or USING clause
  *       of a LEFT JOIN.
+ *
+ *   (6) The inner query features one or more window-functions (since
+ *       changes to the WHERE clause of the inner query could change the
+ *       window over which window functions are calculated).
  *
  * Return 0 if no changes are made and non-zero if one or more WHERE clause
  * terms are duplicated into the subquery.
@@ -4398,6 +4431,9 @@ pushDownWhereTerms(Parse * pParse,	/* Parse context (for malloc() and error repo
 		if ((pX->selFlags & (SF_Aggregate | SF_Recursive)) != 0) {
 			return 0;	/* restrictions (1) and (2) */
 		}
+	}
+	if (pSubq->pWin) {
+		return 0;	/* restriction (6) */
 	}
 	if (pSubq->pLimit != 0) {
 		return 0;	/* restriction (3) */
@@ -4815,6 +4851,31 @@ selectPopWith(Walker * pWalker, Select * p)
 	}
 }
 
+/*
+ * The SrcList_item structure passed as the second argument represents a
+ * sub-query in the FROM clause of a SELECT statement. This function
+ * allocates and populates the SrcList_item.space object.
+ */
+void
+sqlExpandSubquery(Parse *pParse, struct SrcList_item *pFrom)
+{
+	Select *pSelect = pFrom->pSelect;
+
+	const char *name = "subquery_DEADBEAFDEADBEAF";
+	struct space *space =
+		sql_template_space_new(sqlParseToplevel(pParse), name);
+	/*
+	 * Rewrite old name with correct pointer.
+	 */
+	name = tt_sprintf("subquery_%llX", (long long)space);
+	snprintf(space->def->name, strlen(space->def->name) + 1, "%s", name);
+	while (pSelect->pPrior) {
+		pSelect = pSelect->pPrior;
+	}
+	sqlColumnsFromExprList(pParse, pSelect->pEList, space->def);
+	pFrom->space = space;
+}
+
 /**
  * Determine whether to generate a name for @a expr or not.
  *
@@ -4905,26 +4966,7 @@ selectExpander(Walker * pWalker, Select * p)
 			assert(pFrom->space == NULL);
 			if (sqlWalkSelect(pWalker, pSel))
 				return WRC_Abort;
-			/*
-			 * Will be overwritten with pointer as
-			 * unique identifier.
-			 */
-			const char *name = "sql_sq_DEADBEAFDEADBEAF";
-			struct space *space =
-				sql_template_space_new(sqlParseToplevel(pParse),
-						       name);
-			pFrom->space = space;
-			/*
-			 * Rewrite old name with correct pointer.
-			 */
-			name = tt_sprintf("sql_sq_%llX", (long long)space);
-			snprintf(space->def->name, strlen(space->def->name) + 1,
-				 "%s", name);
-			while (pSel->pPrior) {
-				pSel = pSel->pPrior;
-			}
-			sqlColumnsFromExprList(pParse, pSel->pEList,
-					       space->def);
+			sqlExpandSubquery(pParse, pFrom);
 		} else {
 			/*
 			 * An ordinary table or view name in the
@@ -5216,7 +5258,8 @@ selectAddSubqueryTypeInfo(Walker * pWalker, Select * p)
 	struct SrcList_item *pFrom;
 
 	assert(p->selFlags & SF_Resolved);
-	assert((p->selFlags & SF_HasTypeInfo) == 0);
+	if (p->selFlags & SF_HasTypeInfo)
+		return;
 	p->selFlags |= SF_HasTypeInfo;
 	pParse = pWalker->pParse;
 	pTabList = p->pSrc;
@@ -5554,7 +5597,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	Expr *pWhere;		/* The WHERE clause.  May be NULL */
 	ExprList *pGroupBy;	/* The GROUP BY clause.  May be NULL */
 	Expr *pHaving;		/* The HAVING clause.  May be NULL */
-	int rc = 1;		/* Value to return from this function */
+	int rc = 0;		/* Value to return from this function */
 	DistinctCtx sDistinct;	/* Info on how to code the DISTINCT keyword */
 	SortCtx sSort;		/* Info on how to code the ORDER BY clause */
 	AggInfo sAggInfo;	/* Information used by aggregate queries */
@@ -5593,22 +5636,46 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		p->selFlags &= ~SF_Distinct;
 	}
 	sqlSelectPrep(pParse, p, 0);
-	memset(&sSort, 0, sizeof(sSort));
-	sSort.pOrderBy = p->pOrderBy;
-	pTabList = p->pSrc;
 	if (pParse->is_aborted)
 		goto select_end;
 	assert(p->pEList != 0);
-	isAgg = (p->selFlags & SF_Aggregate) != 0;
 #ifdef SQL_DEBUG
 	if (sqlSelectTrace & 0x100) {
 		SELECTTRACE(0x100, pParse, p, ("after name resolution:\n"));
 		sqlTreeViewSelect(0, p, 0);
 	}
 #endif
+	/* Get a pointer the VDBE under construction, allocating a new VDBE
+	 * if one does not already exist
+	 */
+	v = sqlGetVdbe(pParse);
+#if SQL_DEBUG
+	if (sqlSelectTrace & 0x108) {
+		SELECTTRACE(0x100, pParse, p, ("after window rewrite:\n"));
+		sqlTreeViewSelect(0, p, 0);
+	}
+#endif
+
+	/* Identify column names if results of the SELECT are to be output.
+	 */
+	Select *pFirst = p;
+	while (pFirst->pPrior)
+		pFirst = pFirst->pPrior;
+	if (rc == 0 && pDest->eDest == SRT_Output) {
+		generate_column_metadata(pParse, pFirst->pSrc, pFirst->pEList);
+	}
+
+	if (sqlWindowRewrite(pParse, p)) {
+		goto select_end;
+	}
+
+	isAgg = (p->selFlags & SF_Aggregate) != 0;
+	memset(&sSort, 0, sizeof(sSort));
+	sSort.pOrderBy = p->pOrderBy;
 
 	/* Try to flatten subqueries in the FROM clause up into the main query
 	 */
+	pTabList = p->pSrc;
 	for (i = 0; !p->pPrior && i < pTabList->nSrc; i++) {
 		struct SrcList_item *pItem = &pTabList->a[i];
 		Select *pSub = pItem->pSelect;
@@ -5643,11 +5710,6 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		}
 	}
 
-	/* Get a pointer the VDBE under construction, allocating a new VDBE if one
-	 * does not already exist
-	 */
-	v = sqlGetVdbe(pParse);
-
 	/* Handle compound SELECT statements using the separate multiSelect()
 	 * procedure.
 	 */
@@ -5667,6 +5729,15 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		pParse->nSelectIndent--;
 #endif
 		return rc;
+	}
+
+	/*
+	 * We need first to flatten the sub-queries in views
+	 * to get full metadata
+	 */
+	if (rc == 0 && pDest->eDest == SRT_Output) {
+		generate_full_column_metadata(pParse, pFirst->pSrc,
+					      pFirst->pEList);
 	}
 
 	/* Generate code for all sub-queries in the FROM clause
@@ -5952,9 +6023,13 @@ sqlSelect(Parse * pParse,		/* The parser context */
 
 	if (!isAgg && pGroupBy == 0) {
 		/* No aggregate functions and no GROUP BY clause */
-		u16 wctrlFlags = (sDistinct.isTnct ? WHERE_WANT_DISTINCT : 0);
+		u16 wctrlFlags = (sDistinct.isTnct ? WHERE_WANT_DISTINCT : 0)
+				 | (p->selFlags & SF_FixedLimit);
+		Window *pWin = p->pWin;	/* Master window object (or NULL) */
+		if (pWin) {
+			sqlWindowCodeInit(pParse, pWin);
+		}
 		assert(WHERE_USE_LIMIT == SF_FixedLimit);
-		wctrlFlags |= p->selFlags & SF_FixedLimit;
 
 		/* Begin the database scan. */
 		pWInfo =
@@ -5994,14 +6069,30 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			sqlVdbeChangeToNoop(v, sSort.addrSortIndex + 1);
 		}
 
-		/* Use the standard inner loop. */
-		selectInnerLoop(pParse, p, pEList, -1, &sSort, &sDistinct,
-				pDest, sqlWhereContinueLabel(pWInfo),
-				sqlWhereBreakLabel(pWInfo));
+		if (pWin) {
+			int addrGosub = sqlVdbeMakeLabel(v);
+			int iCont = sqlVdbeMakeLabel(v);
+			int iBreak = sqlVdbeMakeLabel(v);
+			int regGosub = ++pParse->nMem;
+			sqlWindowCodeStep(pParse, p, pWInfo, regGosub,
+					  addrGosub);
+			sqlVdbeAddOp2(v, OP_Goto, 0, iBreak);
+			sqlVdbeResolveLabel(v, addrGosub);
+			selectInnerLoop(pParse, p, p->pEList, -1, &sSort,
+					&sDistinct, pDest, iCont, iBreak);
+			sqlVdbeResolveLabel(v, iCont);
+			sqlVdbeAddOp1(v, OP_Return, regGosub);
+			sqlVdbeResolveLabel(v, iBreak);
+		} else {
+			/* Use the standard inner loop. */
+			selectInnerLoop(pParse, p, p->pEList, -1, &sSort,
+					&sDistinct, pDest,
+					sqlWhereContinueLabel(pWInfo),
+					sqlWhereBreakLabel(pWInfo));
 
-		/* End the database scan loop.
-		 */
-		sqlWhereEnd(pWInfo);
+			/* End the database scan loop. */
+			sqlWhereEnd(pWInfo);
+		}
 	} else {
 		/* This case when there exist aggregate functions or a GROUP BY clause
 		 * or both
@@ -6508,12 +6599,6 @@ sqlSelect(Parse * pParse,		/* The parser context */
  select_end:
 	pParse->iSelectId = iRestoreSelectId;
 
-	/* Identify column names if results of the SELECT are to be output.
-	 */
-	if (rc == 0 && pDest->eDest == SRT_Output) {
-		generate_column_metadata(pParse, pTabList, pEList);
-	}
-
 	sql_xfree(sAggInfo.aCol);
 	sql_xfree(sAggInfo.aFunc);
 #ifdef SQL_DEBUG
@@ -6531,6 +6616,7 @@ sql_context_new(struct func *func, struct coll *coll)
 	ctx->func = func;
 	ctx->is_aborted = false;
 	ctx->skipFlag = 0;
+	ctx->funcFlag = 0;
 	ctx->coll = coll;
 	return ctx;
 }
