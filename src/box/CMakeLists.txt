@@ -335,3 +335,10 @@ target_link_libraries(box box_error tuple stat xrow xlog vclock crc32 raft
                       ${common_libraries})
 
 add_dependencies(box build_bundled_libs generate_sql_files)
+
+# Dump all include directories of libbox for bindgen.
+get_target_property(box_include_dirs box INCLUDE_DIRECTORIES)
+list(APPEND box_include_dirs ${PROJECT_SOURCE_DIR}/src/box)
+list(TRANSFORM box_include_dirs PREPEND "-I ")
+list(JOIN box_include_dirs " " box_include_args)
+file(WRITE ${PROJECT_BINARY_DIR}/box-include-args ${box_include_args})
