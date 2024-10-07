@@ -142,3 +142,5 @@ HEALTHCHECK CMD tarantool_is_up
 
 EXPOSE 3301
 CMD [ "tarantool" ]
+
+# vi: ft=dockerfile
