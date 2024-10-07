@@ -16,6 +16,9 @@ variables:
     DOCKER_REGISTRY_PUB: docker-public.binary.picodata.io
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
     KANIKO_REGISTRY_MIRROR: docker-proxy.binary.picodata.io
+    BASE_IMAGE_LATEST: latest
+    BASE_IMAGE_TAG: ${BASE_IMAGE_LATEST}
+    MAIN_BRANCH: &main-branch 2.11.6-picodata
     # k8s runner config
     KUBERNETES_CPU_REQUEST: 6
     KUBERNETES_CPU_LIMIT: 6
@@ -23,7 +26,40 @@ variables:
     # Helps to tolerate spurious network failures
     GET_SOURCES_ATTEMPTS: 3
 
+# job:rules explained:
+#
+# - if build-base changes on master branch (compared to HEAD~1)
+#     * build-base-image (with tag latest) and push
+#     * test (on base-image:latest)
+# - if build-base changes on development branch (compared to master)
+#     * build-base-image (with tag sha)
+#     * test (on base-image:sha)
+# - else (if build-base doesn't change)
+#     * skip build-base-image
+#     * just test (on base-image:latest)
+#
+# Anchor syntax explained here:
+# https://docs.gitlab.com/ee/ci/yaml/yaml_optimization.html
+#
+.rules:
+  - &if-build-base-changes-on-master-branch
+    if: $CI_COMMIT_BRANCH == $MAIN_BRANCH
+    changes:
+      # implies compare_to HEAD~1
+      paths: &build-base-changes-paths
+        - docker/**
+        - .gitlab-ci.yml
+
+  - &if-build-base-changes-on-dev-branch
+    if: $CI_COMMIT_BRANCH != $MAIN_BRANCH
+    changes:
+      compare_to: *main-branch
+      paths: *build-base-changes-paths
+
+  - &else {}
+
 stages:
+  - build-base-image
   - test
   - build
   - pack
@@ -37,6 +73,16 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 .test:
+  rules:
+    - <<: *if-build-base-changes-on-master-branch
+      variables:
+        BASE_IMAGE_TAG: ${BASE_IMAGE_LATEST}
+    - <<: *if-build-base-changes-on-dev-branch
+      variables:
+        BASE_IMAGE_TAG: ${CI_COMMIT_SHA}
+    - <<: *else
+      variables:
+        BASE_IMAGE_TAG: ${BASE_IMAGE_LATEST}
   stage: test
   interruptible: true
   variables:
@@ -52,7 +98,7 @@ workflow:
 
 luacheck:
     extends: .test
-    image: docker-public.binary.picodata.io/tarantool-testing:latest
+    image: docker-public.binary.picodata.io/tarantool-testing:${BASE_IMAGE_TAG}
     script:
       - make -f .test.mk luacheck
 
@@ -60,7 +106,7 @@ test-ubuntu:
   extends:
     - .test
     - .parallel
-  image: docker-public.binary.picodata.io/tarantool-testing:latest
+  image: docker-public.binary.picodata.io/tarantool-testing:${BASE_IMAGE_TAG}
   variables:
     TEST_RUN_RETRIES: 3
     SERVER_START_TIMEOUT: 400
@@ -96,7 +142,7 @@ coverage:
     - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "web"
   retry: 2
-  image: docker-public.binary.picodata.io/tarantool-testing:latest
+  image: docker-public.binary.picodata.io/tarantool-testing:${BASE_IMAGE_TAG}
   variables:
     TEST_RUN_RETRIES: 3
     SERVER_START_TIMEOUT: 400
@@ -178,7 +224,28 @@ pack-on-tag:
       /kaniko/executor --context $CI_PROJECT_DIR --dockerfile ${DOCKERFILE}
       --build-arg TARANTOOL_VERSION=$CI_COMMIT_TAG ${PUSH_DOCKER}
       --cache=false --cache-run-layers=true --single-snapshot --compressed-caching=false --use-new-run --snapshot-mode=redo --cleanup
-      --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG --destination $DOCKER_REGISTRY_PUB/tarantool:latest
+      --destination $DESTINATION
+
+build-base-image:
+  extends: .kaniko-image
+  interruptible: true
+  stage: build-base-image
+  rules:
+    - <<: *if-build-base-changes-on-master-branch
+      variables:
+        BASE_IMAGE_TAG: ${BASE_IMAGE_LATEST}
+    - <<: *if-build-base-changes-on-dev-branch
+      variables:
+        BASE_IMAGE_TAG: ${CI_COMMIT_SHA}
+    - if: $CI_COMMIT_TAG
+      variables:
+        BASE_IMAGE_TAG: ${BASE_IMAGE_LATEST}
+    - <<: *else
+      when: never
+  variables:
+    DOCKERFILE: docker/Dockerfile.ci
+    DESTINATION: $DOCKER_REGISTRY_PUB/tarantool-testing:${BASE_IMAGE_TAG}
+    PUSH_DOCKER: ""
 
 build-docker-on-tag:
   stage: docker
@@ -189,7 +256,8 @@ build-docker-on-tag:
     - pack-on-tag
   variables:
     PUSH_DOCKER: ""
-    DOCKERFILE: docker/Dockerfile
+    DOCKERFILE: docker/Dockerfile.release
+    DESTINATION: $DOCKER_REGISTRY_PUB/tarantool:latest --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG
 
 run-tntmodule-tests-on-tag:
   stage: docker
