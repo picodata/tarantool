@@ -101,22 +101,35 @@ luacheck:
     script:
       - make -f .test.mk luacheck
 
-test-ubuntu:
+.test-ubuntu:
   extends:
     - .test
-    - .parallel
   image: docker-public.binary.picodata.io/tarantool-testing:${BASE_IMAGE_TAG}
   variables:
     TEST_RUN_RETRIES: 3
     SERVER_START_TIMEOUT: 400
     REPLICATION_SYNC_TIMEOUT: 400
-    TEST_TIMEOUT: 420
     NO_OUTPUT_TIMEOUT: 440
+    TEST_TIMEOUT: 420
   script:
     - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
     - make -f .test.mk test-$BUILD_PROFILE
 
-test_mac-m1:
+test-ubuntu:
+  extends:
+    - .test-ubuntu
+    - .parallel
+
+test-ubuntu-asan:
+  extends:
+    - .test-ubuntu
+  variables:
+    BUILD_PROFILE: debug-asan
+    CXX: clang++-18
+    CC: clang-18
+  when: manual
+
+test-mac-m1:
     extends: .test
     tags: [mac-dev-m1]
     script:
