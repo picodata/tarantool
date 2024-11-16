@@ -1409,11 +1409,17 @@ log_destroy(struct log *log)
 	while(log->rotating_threads > 0)
 		tt_pthread_cond_wait(&log->rotate_cond, &log->rotate_mutex);
 	tt_pthread_mutex_unlock(&log->rotate_mutex);
+	pm_atomic_store(&log->type, SAY_LOGGER_BOOT);
+
 	/*
-	 * Do not close stderr because it's used for reporting crashes
-	 * and memory leaks.
+	 * We shouldn't close standard IO streams.
+	 * Doing so will:
+	 * - break a reinit of the default logger
+	 * - inhibit ASan's final leak report
+	 * - cause a EPOLLHUP during a restart via `--entrypoint-fd`.
 	 */
-	if (log->type != SAY_LOGGER_STDERR)
+	bool is_std = log->fd == STDOUT_FILENO || log->fd == STDERR_FILENO;
+	if (log->fd != -1 && !is_std)
 		close(log->fd);
 	free(log->syslog_ident);
 	free(log->path);
