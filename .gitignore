@@ -31,6 +31,7 @@ Testing/
 ./build
 /build
 .idea/
+.vscode/
 # Ignore Makefile in the stupid way for `tar --exclude-vcs-ignores`
 /Makefile
 ./Makefile
