@@ -92,6 +92,11 @@ workflow:
     GIT_STRATEGY: clone
     GIT_DEPTH: 0
     GIT_SUBMODULE_STRATEGY: recursive
+    VARDIR: tmp/t
+  artifacts:
+    when: always
+    paths:
+      - test/${VARDIR}/artifacts/
 
 .parallel:
   parallel:
@@ -115,7 +120,7 @@ luacheck:
     TEST_TIMEOUT: 420
   script:
     - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
-    - make -f .test.mk test-$BUILD_PROFILE
+    - make -f .test.mk VARDIR=${VARDIR} test-$BUILD_PROFILE
 
 test-ubuntu:
   extends:
