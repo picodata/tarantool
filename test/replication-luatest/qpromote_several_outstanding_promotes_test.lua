@@ -32,7 +32,9 @@ g.test_two_stuck_outstanding_promotes = function(g)
         end), { 1 })
     end
 
-    common.ensure_healthy(g.cluster.servers)
+    t.helpers.retrying({}, function()
+        common.ensure_healthy(g.cluster.servers)
+    end)
 
     common.promote(n1)
     n1:exec(function()
@@ -75,7 +77,9 @@ g.test_two_stuck_outstanding_confirms = function(g)
         end), { 1 })
     end
 
-    common.ensure_healthy(g.cluster.servers)
+    t.helpers.retrying({}, function()
+        common.ensure_healthy(g.cluster.servers)
+    end)
 
     common.promote(n1)
     n1:exec(function()
