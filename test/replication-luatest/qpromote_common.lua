@@ -1,6 +1,7 @@
 local checks = require('checks')
 local t = require('luatest')
 local log = require('log')
+local json = require('json')
 local cluster = require('luatest.replica_set')
 local server = require('luatest.server')
 
@@ -151,13 +152,16 @@ end
 -- use our own wrapper instead of Server:assert_follows_upstream
 -- for better error message
 local function assert_follows_upstream(source, dest)
-    local status = source:exec(function(upstream_server_id)
-        return box.info.replication[upstream_server_id].upstream.status
+    local upstream = source:exec(function(upstream_server_id)
+        return box.info.replication[upstream_server_id].upstream
     end, {dest:get_instance_id()})
-    local msg = ('%s: server does not follow upstream: %s'):format(
+    local msg = (
+        '%s: server does not follow upstream: %s, upstream: %s'
+    ):format(
         source.alias,
-        dest.alias)
-    t.assert_equals(status, 'follow', msg)
+        dest.alias,
+        json.encode(upstream))
+    t.assert_equals(upstream.status, 'follow', msg)
 end
 
 local function ensure_mesh_replication_healthy(servers)
