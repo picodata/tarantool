@@ -31,7 +31,7 @@ local function errinj_arm(server, name)
 end
 
 local function errinj_wait(server, name, extra)
-    t.helpers.retrying({}, function(name, server_alias, extra)
+    t.helpers.retrying({timeout = 8}, function(name, server_alias, extra)
         server:exec(function(name, server_alias, extra)
             if not box.error.injection.get(name) then
                 error('errinj ' .. name .. ' is not hit yet: ' ..
