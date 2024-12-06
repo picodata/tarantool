@@ -76,9 +76,18 @@ enum iostream_flag {
 	 */
 	SSL_IOSTREAM_SESSION_READY = 1 << 1,
 	/**
-	 * Set if last read/write call on encrypted iostream return an error.
+	 * Set if a fatal error (SSL_ERROR_SYSCALL or SSL_ERROR_SSL) occurred.
+	 * According to the openssl documentation [1], after encountering such
+	 * errors, SSL_shutdown must not be called.
+	 *
+	 * The documentation also states that no further I/O operations
+	 * should be performed on the connection, but it seems like we can
+	 * ignore this restriction, like rust-openssl does [2].
+	 *
+	 * [1] https://docs.openssl.org/master/man3/SSL_get_error/#return-values
+	 * [2] https://github.com/sfackler/rust-openssl/issues/2334
 	 */
-	SSL_IOSTREAM_POISON = 1 << 2,
+	SSL_SHUTDOWN_MUST_NOT_BE_CALLED = 1 << 2,
 };
 
 /**

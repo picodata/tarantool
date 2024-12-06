@@ -401,7 +401,7 @@ ssl_iostream_destroy(struct iostream *io)
 	 * if a previous fatal error has occurred on a connection
 	 */
 	bool do_shutdown = (io->flags & SSL_IOSTREAM_SESSION_READY) &&
-			   !(io->flags & SSL_IOSTREAM_POISON);
+			   !(io->flags & SSL_SHUTDOWN_MUST_NOT_BE_CALLED);
 	if (do_shutdown) {
 		while (true) {
 			int ret = SSL_shutdown(ssl);
@@ -480,8 +480,6 @@ static inline ssize_t
 ssl_iostream_io_prolog(struct iostream *io)
 {
 	assert(io->fd >= 0);
-	if (io->flags & SSL_IOSTREAM_POISON)
-		return IOSTREAM_ERROR;
 	return ssl_iostream_init_session(io);
 }
 
@@ -515,7 +513,7 @@ ssl_iostream_read(struct iostream *io, void *buf, size_t count)
 
 	int ssl_error = SSL_get_error(ssl, ret);
 	if (ssl_is_fatal_error(ssl_error)) {
-		io->flags |= SSL_IOSTREAM_POISON;
+		io->flags |= SSL_SHUTDOWN_MUST_NOT_BE_CALLED;
 	}
 	return ssl_err_to_iostream_err(ssl_error);
 }
@@ -535,7 +533,7 @@ ssl_iostream_write(struct iostream *io, const void *buf, size_t count)
 
 	int ssl_error = SSL_get_error(ssl, ret);
 	if (ssl_is_fatal_error(ssl_error)) {
-		io->flags |= SSL_IOSTREAM_POISON;
+		io->flags |= SSL_SHUTDOWN_MUST_NOT_BE_CALLED;
 	}
 	return ssl_err_to_iostream_err(ssl_error);
 }
@@ -555,7 +553,7 @@ ssl_iostream_writev(struct iostream *io, const struct iovec *iov, int iovcnt)
 
 	int ssl_error = SSL_get_error(ssl, ret);
 	if (ssl_is_fatal_error(ssl_error)) {
-		io->flags |= SSL_IOSTREAM_POISON;
+		io->flags |= SSL_SHUTDOWN_MUST_NOT_BE_CALLED;
 	}
 	return ssl_err_to_iostream_err(ssl_error);
 }
