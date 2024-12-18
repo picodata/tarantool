@@ -50,7 +50,7 @@ variables:
       # implies compare_to HEAD~1
       paths: &build-base-changes-paths
         - docker/**
-        - .gitlab-ci.yml
+#        - .gitlab-ci.yml
 
   - &if-build-base-changes-on-dev-branch
     if: $CI_COMMIT_BRANCH != $MAIN_BRANCH
@@ -92,6 +92,7 @@ workflow:
     GIT_DEPTH: 0
     GIT_SUBMODULE_STRATEGY: recursive
     VARDIR: tmp/t
+    TARANTOOL_WORKDIR: tw
   artifacts:
     when: always
     paths:
@@ -119,7 +120,7 @@ luacheck:
     TEST_TIMEOUT: 420
   script:
     - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
-    - make -f .test.mk VARDIR=${VARDIR} test-$BUILD_PROFILE
+    - make -f .test.mk VARDIR=${VARDIR} TARANTOOL_WORKDIR=${TARANTOOL_WORKDIR} test-$BUILD_PROFILE
 
 test-ubuntu:
   extends:
