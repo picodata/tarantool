@@ -149,8 +149,10 @@ checkpatch:
     extends: .test
     tags: [shell_p_t]
     script:
-      - git clone git@github.com:tarantool/checkpatch.git
-      - checkpatch/checkpatch.pl --color=always --git HEAD~1..HEAD
+      - git clone --depth 1 git@github.com:tarantool/checkpatch.git
+      - git fetch origin $CI_DEFAULT_BRANCH
+      - COUNT_COMMIT=$(git log --pretty=oneline HEAD...origin/$CI_DEFAULT_BRANCH | wc -l)
+      - checkpatch/checkpatch.pl --color=always --git HEAD~${COUNT_COMMIT}..HEAD
 
 # run long tests and coverage on release build
 coverage:
