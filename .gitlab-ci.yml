@@ -150,6 +150,7 @@ checkpatch:
     tags: [shell_p_t]
     script:
       - git clone --depth 1 git@github.com:tarantool/checkpatch.git
+      - git branch
       - COUNT_COMMIT=$(git log --pretty=oneline HEAD...$CI_DEFAULT_BRANCH | wc -l)
       - checkpatch/checkpatch.pl --color=always --git HEAD~${COUNT_COMMIT}..HEAD
 
