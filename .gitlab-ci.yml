@@ -91,11 +91,11 @@ workflow:
     GIT_STRATEGY: clone
     GIT_DEPTH: 0
     GIT_SUBMODULE_STRATEGY: recursive
-    VARDIR: tmp/t
+    VARDIR: /tmp/t
   artifacts:
     when: always
     paths:
-      - test/${VARDIR}/artifacts/
+      - ${VARDIR}/artifacts/
 
 .parallel:
   parallel:
