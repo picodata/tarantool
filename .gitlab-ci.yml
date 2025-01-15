@@ -120,7 +120,8 @@ luacheck:
     - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
     - make -f .test.mk test-$BUILD_PROFILE
   after_script:
-    - mv /tmp/t/log test/artifacts
+    - find /tmp/t/ -type s -delete
+    - mv /tmp/t test/artifacts
 
 test-ubuntu:
   extends:
