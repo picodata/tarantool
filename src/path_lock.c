@@ -43,7 +43,7 @@
 int
 path_lock(const char *path, int *lock)
 {
-        int fd = open(path, O_RDONLY);
+	int fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		diag_set(SystemError, "Can't open path: %s", path);
 		return -1;
