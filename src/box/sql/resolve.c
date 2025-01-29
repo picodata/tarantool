@@ -1292,7 +1292,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			if (sqlResolveExprNames(&sNC, item->pExpr) != 0)
 				return WRC_Abort;
 			if ((sNC.ncFlags & NC_HasAgg) == 0 &&
-			    !sqlExprIsConstantOrFunction(item->pExpr, 0)) {
+			    !sqlExprIsConstantOrFunction(item->pExpr, 1)) {
 				is_all_select_agg = false;
 				sNC.ncFlags |= has_agg_flag;
 				break;
