@@ -2026,9 +2026,8 @@ sqlExprListFlags(const ExprList * pList)
  * In all cases, the callbacks set Walker.eCode=0 and abort if the expression
  * is found to not be a constant.
  *
- * The sqlExprIsConstantOrFunction() is used for evaluating expressions
- * in a CREATE TABLE statement.  The Walker.eCode value is 4 when processing
- * a new statement.  A bound parameter raises an error for new statements,
+ * The Walker.eCode value is 4 when processing a new statement.
+ * A bound parameter raises an error for new statements,
  * but is silently converted to NULL for existing schemas.
  */
 static int
