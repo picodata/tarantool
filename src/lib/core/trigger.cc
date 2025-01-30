@@ -211,6 +211,9 @@ trigger_fiber_run(struct rlist *list, void *event, double timeout)
 	struct ev_timer timer;
 	ev_timer_init(&timer, trigger_fiber_run_timeout, timeout, 0);
 	timer.data = &expired;
+
+	double deadline = fiber_clock() + timeout;
+
 	/*
 	 * We don't check if triggers are timed out during they launch
 	 * since we want to give them all a chance to run. So in
@@ -241,6 +244,10 @@ trigger_fiber_run(struct rlist *list, void *event, double timeout)
 	 * Waiting for all triggers completion.
 	 */
 	for (unsigned int i = 0; i < current_fiber && ! expired; i++) {
+		timeout = deadline - fiber_clock();
+		if (timeout < 0)
+			timeout = 0;
+
 		if (fiber_join_timeout(fibers[i], timeout) != 0) {
 			assert(! diag_is_empty(diag_get()));
 			diag_log();
