@@ -1848,6 +1848,10 @@ sqlWindowDelete($$);}
 %type range_or_rows {int}
 %type frame_bound {struct FrameBound}
 %destructor frame_bound {sql_expr_delete($$.pExpr);}
+%type frame_bound_s {struct FrameBound}
+%destructor frame_bound_s {sql_expr_delete($$.pExpr);}
+%type frame_bound_e {struct FrameBound}
+%destructor frame_bound_e {sql_expr_delete($$.pExpr);}
 window_or_nm(A) ::= window(Z). {A = Z;}
 window_or_nm(A) ::= nm(Z). {
   A = (Window*)sql_xmalloc0(sizeof(Window));
@@ -1867,19 +1871,24 @@ part_opt(A) ::= .                         { A = 0; }
 frame_opt(A) ::= .                             {
   A = sqlWindowAlloc(TK_RANGE, TK_UNBOUNDED, 0, TK_CURRENT, 0);
 }
-frame_opt(A) ::= range_or_rows(X) frame_bound(Y). {
+frame_opt(A) ::= range_or_rows(X) frame_bound_s(Y). {
   A = sqlWindowAlloc(X, Y.eType, Y.pExpr, TK_CURRENT, 0);
 }
-frame_opt(A) ::= range_or_rows(X) BETWEEN frame_bound(Y) AND frame_bound(Z). {
+frame_opt(A) ::= range_or_rows(X) BETWEEN frame_bound_e(Y) AND frame_bound(Z). {
   A = sqlWindowAlloc(X, Y.eType, Y.pExpr, Z.eType, Z.pExpr);
 }
 range_or_rows(A) ::= RANGE.   { A = TK_RANGE; }
 range_or_rows(A) ::= ROWS.    { A = TK_ROWS;  }
-frame_bound(A) ::= UNBOUNDED PRECEDING. { A.eType = TK_UNBOUNDED; A.pExpr = 0; }
+
+frame_bound_s(A) ::= frame_bound(X). { A = X; }
+frame_bound_s(A) ::= UNBOUNDED PRECEDING. {A.eType = TK_UNBOUNDED; A.pExpr = 0;}
+frame_bound_e(A) ::= frame_bound(X). { A = X; }
+frame_bound_e(A) ::= UNBOUNDED FOLLOWING. {A.eType = TK_UNBOUNDED; A.pExpr = 0;}
+
 frame_bound(A) ::= expr(X) PRECEDING.   { A.eType = TK_PRECEDING; A.pExpr = X.pExpr; }
 frame_bound(A) ::= CURRENT ROW.         { A.eType = TK_CURRENT  ; A.pExpr = 0; }
 frame_bound(A) ::= expr(X) FOLLOWING.   { A.eType = TK_FOLLOWING; A.pExpr = X.pExpr; }
-frame_bound(A) ::= UNBOUNDED FOLLOWING. { A.eType = TK_UNBOUNDED; A.pExpr = 0; }
+
 %type windowdefn_opt {Window*}
 %destructor windowdefn_opt {sqlWindowDelete($$);}
 windowdefn_opt(A) ::= . { A = 0; }
