@@ -2425,16 +2425,15 @@ void
 sqlWindowDelete(Window *p);
 
 void
-sqlWindowAttach(Expr *p, Window *pWin);
-
-void
 sqlWindowListDelete(Window *p);
 
 Window *
-sqlWindowAlloc(int eType, int eStart, Expr *pStart, int eEnd, Expr *pEnd);
+sqlWindowAlloc(Parse *pParse, int eType,
+	       int eStart, Expr *pStart,
+	       int eEnd, Expr *pEnd);
 
 void
-sqlWindowAttach(Expr *p, Window *pWin);
+sqlWindowAttach(Parse *pParse, Expr *p, Window *pWin);
 
 int
 sqlWindowCompare(Window *p1, Window *p2);

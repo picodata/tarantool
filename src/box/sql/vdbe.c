@@ -666,7 +666,6 @@ case OP_Yield: {            /* in1, jump */
 case OP_Halt: {
 	VdbeFrame *pFrame;
 	int pcx;
-	assert(pOp->p1 == 0 || ! diag_is_empty(diag_get()));
 
 	pcx = (int)(pOp - aOp);
 	if (pOp->p1 == 0 && p->pFrame != NULL) {
@@ -691,8 +690,12 @@ case OP_Halt: {
 		pOp = &aOp[pcx];
 		break;
 	}
-	if (pOp->p1 != 0)
+	if (pOp->p1 != 0) {
+		assert(pOp->p4type == P4_STATIC || !diag_is_empty(diag_get()));
+		if (pOp->p4type == P4_STATIC)
+			diag_set(ClientError, ER_SQL_PARSER_GENERIC, pOp->p4.z);
 		p->is_aborted = true;
+	}
 	p->errorAction = (u8)pOp->p2;
 	p->pc = pcx;
 	sqlVdbeHalt(p);
