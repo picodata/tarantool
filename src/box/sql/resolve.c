@@ -1129,6 +1129,17 @@ resolveOrderGroupBy(NameContext * pNC,	/* The name context of the SELECT stateme
 		for (j = 0; j < pSelect->pEList->nExpr; j++) {
 			if (sqlExprCompare
 			    (pE, pSelect->pEList->a[j].pExpr, -1) == 0) {
+				if (pE->pWin != NULL) {
+					Window **pp;
+					for (pp = &pSelect->pWin;
+					    *pp != NULL;
+					     pp = &(*pp)->pNextWin) {
+						if (*pp == pE->pWin) {
+							*pp = (*pp)->pNextWin;
+							break;
+						}
+					}
+				}
 				pItem->u.x.iOrderByCol = j + 1;
 			}
 		}
