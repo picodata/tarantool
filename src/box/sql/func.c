@@ -202,6 +202,18 @@ fin_count(struct Mem *mem)
 	return 0;
 }
 
+static void
+inverse_count(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 0 || argc == 1);
+	if (mem_is_null(ctx->pOut))
+		mem_set_uint(ctx->pOut, 0);
+	if (argc == 1 && mem_is_null(&argv[0]))
+		return;
+	assert(mem_is_uint(ctx->pOut));
+	--ctx->pOut->u.u;
+}
+
 /** Implementation of the MIN() and MAX() functions. */
 static void
 step_minmax(struct sql_context *ctx, int argc, const struct Mem *argv)
@@ -279,8 +291,10 @@ inverse_group_concat(struct sql_context *ctx, int argc, const struct Mem *argv)
 		return;
 	assert(mem_is_str(&argv[0]) || mem_is_bin(&argv[0]));
 	size_t n = argv[0].n;
-	if (argc == 2 && !mem_is_null(&argv[1]))
+	if (argc == 2)
 		n += argv[1].n;
+	else
+		n++;
 	if (n >= ctx->pOut->n) {
 		mem_set_null(ctx->pOut);
 	} else {
@@ -1962,9 +1976,9 @@ static struct sql_func_definition definitions[] = {
 	{"COALESCE", -1, {field_type_MAX}, FIELD_TYPE_SCALAR, sql_builtin_stub,
 	 NULL, NULL, NULL},
 	{"COUNT", 0, {}, FIELD_TYPE_INTEGER, step_count, fin_count,
-	 fin_count, NULL},
+	 fin_count, inverse_count},
 	{"COUNT", 1, {field_type_MAX}, FIELD_TYPE_INTEGER, step_count,
-	 fin_count, fin_count, NULL},
+	 fin_count, fin_count, inverse_count},
 	{"DATE_PART", 2, {FIELD_TYPE_STRING, FIELD_TYPE_DATETIME},
 	 FIELD_TYPE_INTEGER, func_date_part, NULL, NULL, NULL},
 
