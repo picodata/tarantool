@@ -513,20 +513,78 @@ sqlWindowListDelete(Window *p)
 }
 
 /*
+ * The argument expression is an PRECEDING or FOLLOWING offset.  The
+ * value should be a non-negative integer.  If the value is not a
+ * constant, change it to NULL.  The fact that it is then a non-negative
+ * integer will be caught later.  But it is important not to leave
+ * variable values in the expression tree.
+ */
+static Expr *
+sqlWindowOffsetExpr(Expr *pExpr)
+{
+	if (sqlExprIsConstant(pExpr) == 0) {
+		sql_expr_delete(pExpr);
+		pExpr = sql_expr_new(TK_NULL, NULL);
+	}
+	return pExpr;
+}
+
+/*
  * Allocate and return a new Window object.
  */
 Window *
 sqlWindowAlloc(
-	int eType,
+	Parse *pParse, int eType,
 	int eStart, Expr *pStart,
 	int eEnd, Expr *pEnd)
 {
+	/* Parser assures the following: */
+	assert(eType == 0 || eType == TK_RANGE || eType == TK_ROWS);
+	assert(eStart == TK_CURRENT || eStart == TK_PRECEDING ||
+	       eStart == TK_UNBOUNDED || eStart == TK_FOLLOWING);
+	assert(eEnd == TK_CURRENT || eEnd == TK_FOLLOWING ||
+	       eEnd == TK_UNBOUNDED || eEnd == TK_PRECEDING);
+	assert((eStart == TK_PRECEDING || eStart == TK_FOLLOWING)
+	       == (pStart != 0));
+	assert((eEnd == TK_FOLLOWING || eEnd == TK_PRECEDING)
+	       == (pEnd != 0));
+
+	if (eType == TK_RANGE && (pStart != 0 || pEnd != 0)) {
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC,
+			 "RANGE must use only UNBOUNDED or CURRENT ROW");
+		pParse->is_aborted = true;
+		return NULL;
+	}
+
+	/* Additionally, the starting boundary type may not occur earlier
+	 * in the following list than the ending boundary type:
+	 *
+	 *   UNBOUNDED PRECEDING
+	 *   <expr> PRECEDING
+	 *   CURRENT ROW
+	 *   <expr> FOLLOWING
+	 *   UNBOUNDED FOLLOWING
+	 *
+	 * The parser ensures that "UNBOUNDED PRECEDING" cannot be used as an
+	 * ending boundary, and than "UNBOUNDED FOLLOWING" cannot be used as
+	 * a starting frame boundary.
+	 */
+	if ((eType == TK_RANGE && (pStart || pEnd)) ||
+	    (eStart == TK_CURRENT && eEnd == TK_PRECEDING) ||
+	    (eStart == TK_FOLLOWING && (eEnd == TK_PRECEDING ||
+					eEnd == TK_CURRENT))) {
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC,
+			 "unsupported window-frame type");
+		pParse->is_aborted = true;
+		return NULL;
+	}
+
 	Window *pWin = (Window *)sql_xmalloc0(sizeof(Window));
 	pWin->eType = eType;
 	pWin->eStart = eStart;
 	pWin->eEnd = eEnd;
-	pWin->pEnd = pEnd;
-	pWin->pStart = pStart;
+	pWin->pEnd = sqlWindowOffsetExpr(pEnd);
+	pWin->pStart = sqlWindowOffsetExpr(pStart);
 	return pWin;
 }
 
@@ -534,12 +592,19 @@ sqlWindowAlloc(
  * Attach window object pWin to expression p.
  */
 void
-sqlWindowAttach(Expr *p, Window *pWin)
+sqlWindowAttach(Parse *pParse, Expr *p, Window *pWin)
 {
 	if (p) {
-		p->pWin = pWin;
-		if (pWin)
+		if (pWin != NULL) {
+			p->pWin = pWin;
 			pWin->pOwner = p;
+			if (p->flags & EP_Distinct) {
+				diag_set(ClientError, ER_SQL_PARSER_GENERIC,
+					 "DISTINCT is not supported "
+					 "for window functions");
+				pParse->is_aborted = true;
+			}
+		}
 	} else {
 		sqlWindowDelete(pWin);
 	}
@@ -637,7 +702,7 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
  * an exception if it is not.
  */
 static void
-windowCheckFrameValue(Parse *pParse, int reg, int bEnd)
+windowCheckFrameOffset(Parse *pParse, int reg, int bEnd)
 {
 	static const char *const azErr[] = {
 		"frame starting offset must be a non-negative integer",
@@ -1160,11 +1225,11 @@ windowCodeRowExprStep(
 	 */
 	if (pMWin->pStart) {
 		sqlExprCode(pParse, pMWin->pStart, regStart);
-		windowCheckFrameValue(pParse, regStart, 0);
+		windowCheckFrameOffset(pParse, regStart, 0);
 	}
 	if (pMWin->pEnd) {
 		sqlExprCode(pParse, pMWin->pEnd, regEnd);
-		windowCheckFrameValue(pParse, regEnd, 1);
+		windowCheckFrameOffset(pParse, regEnd, 1);
 	}
 
 	/* If this is "ROWS <expr1> FOLLOWING AND ROWS <expr2> FOLLOWING", do:
@@ -1238,17 +1303,21 @@ windowCodeRowExprStep(
 
 	if (pMWin->eStart == TK_CURRENT ||
 	    pMWin->eStart == TK_PRECEDING ||
-	    pMWin->eStart == TK_FOLLOWING){
-		int addrJumpHere = 0;
+	    pMWin->eStart == TK_FOLLOWING) {
+		int lblSkipInverse = sqlVdbeMakeLabel(v);
 		if (pMWin->eStart == TK_PRECEDING) {
-			addrJumpHere = sqlVdbeAddOp3(v, OP_IfPos,
-						     regStart, 0, 1);
+			sqlVdbeAddOp3(v, OP_IfPos, regStart, lblSkipInverse, 1);
 		}
-		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 1);
+		if (pMWin->eStart == TK_FOLLOWING) {
+			sqlVdbeAddOp2(v, OP_Next, csrStart,
+				      sqlVdbeCurrentAddr(v) + 2);
+			sqlVdbeAddOp2(v, OP_Goto, 0, lblSkipInverse);
+		} else {
+			sqlVdbeAddOp2(v, OP_Next, csrStart,
+				      sqlVdbeCurrentAddr(v) + 1);
+		}
 		windowAggStep(pParse, pMWin, csrStart, 1, regArg, regSize);
-		if (addrJumpHere) {
-			sqlVdbeJumpHere(v, addrJumpHere);
-		}
+		sqlVdbeResolveLabel(v, lblSkipInverse);
 	}
 	if (pMWin->eEnd == TK_FOLLOWING) {
 		sqlVdbeJumpHere(v, addrIfPos1);
