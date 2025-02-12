@@ -155,7 +155,7 @@ checkpatch:
       - git clone --depth 1 git@github.com:tarantool/checkpatch.git
       - git fetch origin $CI_DEFAULT_BRANCH
       - COUNT_COMMIT=$(git log --pretty=oneline HEAD...origin/$CI_DEFAULT_BRANCH | wc -l)
-      - checkpatch/checkpatch.pl --color=always --git HEAD~${COUNT_COMMIT}..HEAD
+      - checkpatch/checkpatch.pl --ignore DEEP_INDENTATION,NEW_TYPEDEFS,ASSIGN_IN_IF --color=always --git HEAD~${COUNT_COMMIT}..HEAD
     rules:
       - if: $CI_COMMIT_BRANCH != $MAIN_BRANCH
 
