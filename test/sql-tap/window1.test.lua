@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(56)
+test:plan(57)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -44,6 +44,13 @@ test:do_execsql_test(
         SELECT a, sum(b) OVER (PARTITION BY c) FROM t1
     ]],
     { 1, 2, 5, 6, 9, 10 })
+
+test:do_execsql_test(
+    "window1-1.6",
+    [[
+        SELECT sum(b) OVER () FROM (SELECT * FROM t1);
+    ]],
+    { 18, 18, 18 })
 
 test:do_execsql_test(
     "window1-2.1",
