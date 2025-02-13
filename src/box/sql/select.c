@@ -3988,7 +3988,6 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	Select *pSub1;		/* Pointer to the rightmost select in sub-query */
 	SrcList *pSrc;		/* The FROM clause of the outer query */
 	SrcList *pSubSrc;	/* The FROM clause of the subquery */
-	ExprList *pList;	/* The result set of the outer query */
 	int iParent;		/* VDBE cursor number of the pSub result set temp table */
 	int i;			/* Loop counter */
 	Expr *pWhere;		/* The WHERE clause */
@@ -4294,15 +4293,6 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 		 * We look at every expression in the outer query and every place we see
 		 * "a" we substitute "x*3" and every place we see "b" we substitute "y+10".
 		 */
-		pList = pParent->pEList;
-		for (i = 0; i < pList->nExpr; i++) {
-			if (pList->a[i].zName == 0) {
-				char *str = pList->a[i].zSpan;
-				int len = strlen(str);
-				char *name = sql_normalized_name_new(str, len);
-				pList->a[i].zName = name;
-			}
-		}
 		if (pSub->pOrderBy) {
 			/* At this point, any non-zero iOrderByCol values indicate that the
 			 * ORDER BY column expression is identical to the iOrderByCol'th
