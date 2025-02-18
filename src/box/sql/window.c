@@ -13,6 +13,7 @@
 #include "vdbe.h"
 #include "vdbeInt.h"
 #include "box/sql.h"
+#include "box/field_def.h"
 
 /*
  * SELECT REWRITING
@@ -226,6 +227,8 @@ static int
 selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr)
 {
 	struct WindowRewrite *p = pWalker->u.pRewrite;
+
+	enum field_type eType = sql_expr_type(pExpr);
 	ExprClearProperty(pExpr, EP_Resolved);
 
 	switch (pExpr->op) {
@@ -254,6 +257,7 @@ selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr)
 
 			pExpr->op = TK_WIN_COLUMN;
 			pExpr->pLeft = pDup;
+			pExpr->type = eType;
 			/*
 			 * We mark the window column EP_Leaf to be sure,
 			 * that its left child is removed exactly once,
