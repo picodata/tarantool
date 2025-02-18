@@ -4103,6 +4103,9 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	 * queries.
 	 */
 	if (pSub->pPrior) {
+		if (pSub->pOrderBy) {
+			return 0;  /* Restriction (20) */
+		}
 		if (isAgg || (p->selFlags & SF_Distinct) != 0
 		    || pSrc->nSrc != 1) {
 			return 0;
@@ -4918,6 +4921,7 @@ selectExpander(Walker * pWalker, Select * p)
 	struct SrcList_item *pFrom;
 	Expr *pE, *pRight, *pExpr;
 	u32 selFlags = p->selFlags;
+	u32 elistFlags = 0;
 
 	p->selFlags |= SF_Expanded;
 	if (NEVER(p->pSrc == 0) || (selFlags & SF_Expanded) != 0) {
@@ -5021,6 +5025,7 @@ selectExpander(Walker * pWalker, Select * p)
 		       || (pE->pLeft != 0 && pE->pLeft->op == TK_ID));
 		if (pE->op == TK_DOT && pE->pRight->op == TK_ASTERISK)
 			has_asterisk = true;
+		elistFlags |= pE->flags;
 		if (pEList->a[k].zName == NULL &&
 		    expr_autoname_is_required(pE)) {
 			uint32_t idx = ++pParse->autoname_i;
@@ -5042,6 +5047,7 @@ selectExpander(Walker * pWalker, Select * p)
 
 	for (k = 0; k < pEList->nExpr; k++) {
 		pE = a[k].pExpr;
+		elistFlags |= pE->flags;
 		pRight = pE->pRight;
 		assert(pE->op != TK_DOT || pRight != 0);
 		if (pE->op != TK_ASTERISK &&
@@ -5168,15 +5174,20 @@ selectExpander(Walker * pWalker, Select * p)
 	sql_expr_list_delete(pEList);
 	p->pEList = pNew;
 end:
+	if (p->pEList) {
 #if SQL_MAX_COLUMN
-	if (p->pEList && p->pEList->nExpr > SQL_MAX_COLUMN) {
-		diag_set(ClientError, ER_SQL_PARSER_LIMIT, "The number of "\
-			 "columns in result set", p->pEList->nExpr,
-			 SQL_MAX_COLUMN);
-		pParse->is_aborted = true;
-		return WRC_Abort;
-	}
+		if (p->pEList->nExpr > SQL_MAX_COLUMN) {
+			diag_set(ClientError, ER_SQL_PARSER_LIMIT,
+				 "The number of columns in result set",
+				 p->pEList->nExpr, SQL_MAX_COLUMN);
+			pParse->is_aborted = true;
+			return WRC_Abort;
+		}
 #endif
+		if ((elistFlags & (EP_HasFunc | EP_Subquery)) != 0) {
+			p->selFlags |= SF_ComplexResult;
+		}
+	}
 	return WRC_Continue;
 }
 
@@ -5683,6 +5694,31 @@ sqlSelect(Parse * pParse,		/* The parser context */
 				 "columns");
 			pParse->is_aborted = true;
 			goto select_end;
+		}
+
+		/* If the outer query contains a "complex" result set (that is,
+		 * if the result set of the outer query uses functions or
+		 * subqueries) and if the subquery contains an ORDER BY clause
+		 * and if it will be implemented as a co-routine, then do not
+		 * flatten. This restriction allows SQL constructs like this:
+		 *
+		 *  SELECT expensive_function(x)
+		 *    FROM (SELECT x FROM tab ORDER BY y LIMIT 10);
+		 *
+		 * The expensive_function() is only computed on the 10 rows that
+		 * are output, rather than every row of the table.
+		 *
+		 * The requirement that the outer query have a complex result
+		 * set means that flattening does occur on simpler SQL
+		 * constraints without the expensive_function() like:
+		 *
+		 *  SELECT x FROM (SELECT x FROM tab ORDER BY y LIMIT 10);
+		 */
+		if (pSub->pOrderBy != 0 &&
+		    i == 0 && (p->selFlags & SF_ComplexResult) != 0 &&
+		    (pTabList->nSrc == 1 ||
+		    (pTabList->a[1].fg.jointype & (JT_LEFT | JT_CROSS)) != 0)) {
+			continue;
 		}
 
 		isAggSub = (pSub->selFlags & SF_Aggregate) != 0;
