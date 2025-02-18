@@ -148,7 +148,7 @@ getToken(const char **pz)
 	bool is_reserved;
 	do {
 		z += sql_token(z, &t, &is_reserved);
-	} while (t == TK_SPACE);
+	} while (t == TK_SPACE || t == TK_LINEFEED);
 	if (t == TK_ID ||
 	    t == TK_STRING ||
 	    t == TK_JOIN_KW ||
@@ -618,6 +618,18 @@ sqlRunParser(Parse * pParse, const char *zSql)
 					tokenType = TK_SEMI;
 				}
 				n = 0;
+			} else if (tokenType == TK_LINEFEED) {
+				/* '\0' for some reason generates a TK_LINEFEED
+				 * token with a length of 1 (even though the
+				 * tail of the input string is empty at that
+				 * point), so we must make sure to check for
+				 * TK_LINEFEED only after that check for
+				 * (zSql[0] == 0) above
+				 */
+				pParse->line_count++;
+				pParse->line_pos = 1;
+				zSql += n;
+				continue;
 			} else if (tokenType == TK_WINDOW) {
 				assert(n == 6);
 				tokenType = analyzeWindowKeyword(&zSql[6]);
@@ -629,11 +641,6 @@ sqlRunParser(Parse * pParse, const char *zSql)
 				assert(n == 6);
 				tokenType = analyzeFilterKeyword(
 						&zSql[6], lastTokenParsed);
-			} else if (tokenType == TK_LINEFEED) {
-				pParse->line_count++;
-				pParse->line_pos = 1;
-				zSql += n;
-				continue;
 			} else if (tokenType == TK_ILLEGAL) {
 				diag_set(ClientError, ER_SQL_UNKNOWN_TOKEN,
 					 pParse->line_count, pParse->line_pos,
