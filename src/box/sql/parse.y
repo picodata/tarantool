@@ -1817,7 +1817,8 @@ number_typedef(A) ::= DECIMAL . { A.type = FIELD_TYPE_DECIMAL; }
 // These must be at the end of this file. Specifically, the rules that
 // introduce tokens WINDOW, OVER and FILTER must appear last. This causes
 // the integer values assigned to these tokens to be larger than all other
-// tokens that may be output by the tokenizer except TK_SPACE and TK_ILLEGAL.
+// tokens that may be output by the tokenizer except TK_SPACE, TK_LINEFEED and
+// TK_ILLEGAL.
 //
 %type windowdefn_list {Window*}
 %destructor windowdefn_list {sqlWindowDelete($$);}
