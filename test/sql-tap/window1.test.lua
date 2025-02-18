@@ -53,7 +53,7 @@ test:do_execsql_test(
     { 18, 18, 18 })
 
 test:do_execsql_test(
-    "window1-1.7",
+    "window1-TK_LINEFEED-compatibility",
     [[
         SELECT
         sum
