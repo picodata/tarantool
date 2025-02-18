@@ -94,6 +94,8 @@ sql_expr_type(struct Expr *pExpr)
 		return pExpr->type;
 	case TK_WIN_COLUMN:
 		assert(pExpr->pLeft != NULL);
+		if (pExpr->pLeft->flags & EP_Skip)
+			return FIELD_TYPE_ANY;
 		return sql_expr_type(pExpr->pLeft);
 	case TK_AGG_COLUMN:
 	case TK_COLUMN_REF:
