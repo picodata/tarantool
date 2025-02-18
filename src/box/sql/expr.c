@@ -1182,6 +1182,7 @@ sqlExprFunction(Parse * pParse, ExprList * pList, Token * pToken)
 	assert(pToken != NULL);
 	struct Expr *new_expr = sql_expr_new_dequoted(TK_FUNCTION, pToken);
 	new_expr->x.pList = pList;
+	ExprSetProperty(new_expr, EP_HasFunc);
 	assert(!ExprHasProperty(new_expr, EP_xIsSelect));
 	sqlExprSetHeightAndFlags(pParse, new_expr);
 	return new_expr;
