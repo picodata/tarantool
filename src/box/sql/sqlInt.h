@@ -1443,11 +1443,14 @@ struct Expr {
 #define EP_Leaf      0x800000	/* Expr.pLeft, .pRight, .u.pSelect all NULL */
 /** Expression is system-defined. */
 #define EP_System    0x1000000
+#define EP_HasFunc   0x2000000	/* Contains one or more functions of any kind */
+
 
 /*
- * Combinations of two or more EP_* flags
+ * The EP_Propagate mask is a set of properties that automatically propagate
+ * upwards into parent nodes.
  */
-#define EP_Propagate (EP_Collate|EP_Subquery)	/* Propagate these bits up tree */
+#define EP_Propagate (EP_Collate | EP_Subquery | EP_HasFunc)
 
 /*
  * These macros can be used to test, set, or clear bits in the
@@ -1803,6 +1806,8 @@ struct Select {
 #define SF_Converted      0x10000	/* By convertCompoundSelectToSubquery() */
 /** Abort subquery if its output contains more than one row. */
 #define SF_SingleRow      0x20000
+/* Result set contains subquery or function */
+#define SF_ComplexResult  0x40000
 
 /*
  * The results of a SELECT can be distributed in several ways, as defined
