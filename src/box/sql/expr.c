@@ -92,9 +92,6 @@ sql_expr_type(struct Expr *pExpr)
 	case TK_CAST:
 		assert(!ExprHasProperty(pExpr, EP_IntValue));
 		return pExpr->type;
-	case TK_WIN_COLUMN:
-		assert(pExpr->pLeft != NULL);
-		return sql_expr_type(pExpr->pLeft);
 	case TK_AGG_COLUMN:
 	case TK_COLUMN_REF:
 	case TK_TRIGGER:
