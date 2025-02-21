@@ -358,7 +358,7 @@ int
 sqlWindowRewrite(Parse *pParse, Select *p)
 {
 	int rc = 0;
-	if (p->pWin) {
+	if (p->pWin && p->pPrior == 0) {
 		Vdbe *v = sqlGetVdbe(pParse);
 		/* The subquery */
 		Select *pSub = 0;
