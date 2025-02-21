@@ -55,6 +55,9 @@ test_run:switch('replica')
  | ---
  | - true
  | ...
+old_timeout = box.cfg.replication_timeout
+ | ---
+ | ...
 box.cfg{replication_timeout = 1000}
  | ---
  | ...
@@ -74,6 +77,9 @@ box.space.sync:count()
  | ---
  | - 10
  | ...
+box.cfg{replication_timeout = old_timeout}
+ | ---
+ | ...
 
 test_run:switch('replica')
  | ---
@@ -86,6 +92,9 @@ box.space.sync:count()
 box.error.injection.set('ERRINJ_APPLIER_SLOW_ACK', false)
  | ---
  | - ok
+ | ...
+box.cfg{replication_timeout = old_timeout}
+ | ---
  | ...
 
 --
