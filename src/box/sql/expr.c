@@ -298,9 +298,7 @@ sql_expr_coll(Parse *parse, Expr *p, bool *is_explicit_coll, uint32_t *coll_id,
 			break;
 		}
 		if (op == TK_WIN_COLUMN) {
-			assert(p->pLeft != NULL);
-			p = p->pLeft;
-			continue;
+			break;
 		}
 		if ((op == TK_AGG_COLUMN || op == TK_COLUMN_REF ||
 		     op == TK_REGISTER || op == TK_TRIGGER) &&
