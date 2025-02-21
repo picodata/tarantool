@@ -22,16 +22,19 @@ test_run:cmd('switch default')
 box.cfg{replication_timeout = 1000, replication_synchro_quorum = 2, replication_synchro_timeout = 1000}
 
 test_run:switch('replica')
+old_timeout = box.cfg.replication_timeout
 box.cfg{replication_timeout = 1000}
 box.error.injection.set('ERRINJ_APPLIER_SLOW_ACK', true)
 
 test_run:cmd('switch default')
 for i = 1, 10 do box.space.sync:replace{i} end
 box.space.sync:count()
+box.cfg{replication_timeout = old_timeout}
 
 test_run:switch('replica')
 box.space.sync:count()
 box.error.injection.set('ERRINJ_APPLIER_SLOW_ACK', false)
+box.cfg{replication_timeout = old_timeout}
 
 --
 -- gh-5123: replica WAL fail shouldn't crash with quorum 1.
