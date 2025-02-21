@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(59)
+test:plan(66)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -749,5 +749,73 @@ test:do_execsql_test(
     ]], {
         '1', '1.5', '2.5', '3.5'
     })
+
+-- NOTE(gmoshkin): had to change query in test, because tarantool requires a
+-- primary key to be specified for all tables
+test:do_execsql_test(
+    "window1-13.1",
+    [[
+  DROP TABLE IF EXISTS t1;
+  CREATE TABLE t1(a int primary key, b int);
+  INSERT INTO t1 VALUES(1,11);
+  INSERT INTO t1 VALUES(2,12);
+    ]]
+)
+
+-- NOTE(gmoshkin): had to split this test into 2, because tarantool doesn't
+-- support multiple queries in one call to box.execute
+test:do_execsql_test(
+    "window1-13.2.1.1",
+    [[
+  SELECT a, row_number() OVER(ORDER BY b) FROM t1;
+    ]],
+    { 1, 1,   2, 2, }
+)
+test:do_execsql_test(
+    "window1-13.2.1.2",
+    [[
+  SELECT a, row_number() OVER(ORDER BY b DESC) FROM t1;
+    ]],
+    { 2, 1,   1, 2, }
+)
+
+test:do_execsql_test(
+    "window1-13.2.2",
+    [[
+  SELECT a, row_number() OVER(ORDER BY b) FROM t1
+    UNION ALL
+  SELECT a, row_number() OVER(ORDER BY b DESC) FROM t1;
+    ]],
+    { 1, 1,   2, 2,   2, 1,   1, 2, }
+)
+test:do_execsql_test(
+    "window1-13.3",
+    [[
+  SELECT a, row_number() OVER(ORDER BY b) FROM t1
+    UNION
+  SELECT a, row_number() OVER(ORDER BY b DESC) FROM t1;
+    ]],
+    { 1, 1,   1, 2,   2, 1,   2, 2, }
+)
+
+test:do_execsql_test(
+    "window1-13.4",
+    [[
+  SELECT a, row_number() OVER(ORDER BY b) FROM t1
+    EXCEPT
+  SELECT a, row_number() OVER(ORDER BY b DESC) FROM t1;
+    ]],
+    { 1, 1,   2, 2, }
+)
+
+test:do_execsql_test(
+    "window1-13.5",
+    [[
+  SELECT a, row_number() OVER(ORDER BY b) FROM t1
+    INTERSECT
+  SELECT a, row_number() OVER(ORDER BY b DESC) FROM t1;
+    ]],
+    {}
+)
 
 test:finish_test()
