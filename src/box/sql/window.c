@@ -256,15 +256,7 @@ selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr)
 			memset(pExpr, 0, sizeof(Expr));
 
 			pExpr->op = TK_WIN_COLUMN;
-			pExpr->pLeft = pDup;
 			pExpr->type = eType;
-			/*
-			 * We mark the window column EP_Leaf to be sure,
-			 * that its left child is removed exactly once,
-			 * when the p->pSub is freed. It also prevents
-			 * us from recursion in the walker.
-			 */
-			ExprSetProperty(pExpr, EP_Leaf);
 			pExpr->iColumn = p->pSub->nExpr - 1;
 			pExpr->iTable = p->pWin->iEphCsr;
 		}
