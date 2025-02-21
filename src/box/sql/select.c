@@ -3831,134 +3831,137 @@ substSelect(Parse * pParse,	/* Report errors here */
 	} while (doPrior && (p = p->pPrior) != 0);
 }
 
-/*
- * This routine attempts to flatten subqueries as a performance optimization.
- * This routine returns 1 if it makes changes and 0 if no flattening occurs.
- *
- * To understand the concept of flattening, consider the following
- * query:
- *
- *     SELECT a FROM (SELECT x+y AS a FROM t1 WHERE z<100) WHERE a>5
- *
- * The default way of implementing this query is to execute the
- * subquery first and store the results in a temporary table, then
- * run the outer query on that temporary table.  This requires two
- * passes over the data.  Furthermore, because the temporary table
- * has no indices, the WHERE clause on the outer query cannot be
- * optimized.
- *
- * This routine attempts to rewrite queries such as the above into
- * a single flat select, like this:
- *
- *     SELECT x+y AS a FROM t1 WHERE z<100 AND a>5
- *
- * The code generated for this simplification gives the same result
- * but only has to scan the data once.  And because indices might
- * exist on the table t1, a complete scan of the data might be
- * avoided.
- *
- * Flattening is only attempted if all of the following are true:
- *
- *   (1)  The subquery and the outer query do not both use aggregates.
- *
- *   (2)  The subquery is not an aggregate or (2a) the outer query is not a join
- *        and (2b) the outer query does not use subqueries other than the one
- *        FROM-clause subquery that is a candidate for flattening.  (2b is
- *        due to ticket [2f7170d73bf9abf80] from 2015-02-09.)
- *
- *   (3)  The subquery is not the right operand of a left outer join
- *        (Originally ticket #306.  Strengthened by ticket #3300)
- *
- *   (4)  The subquery is not DISTINCT.
- *
- *  (**)  At one point restrictions (4) and (5) defined a subset of DISTINCT
- *        sub-queries that were excluded from this optimization. Restriction
- *        (4) has since been expanded to exclude all DISTINCT subqueries.
- *
- *   (6)  The subquery does not use aggregates or the outer query is not
- *        DISTINCT.
- *
- *   (7)  The subquery has a FROM clause.  TODO:  For subqueries without
- *        A FROM clause, consider adding a FROM close with the special
- *        table sql_once that consists of a single row containing a
- *        single NULL.
- *
- *   (8)  The subquery does not use LIMIT or the outer query is not a join.
- *
- *   (9)  The subquery does not use LIMIT or the outer query does not use
- *        aggregates.
- *
- *  (**)  Restriction (10) was removed from the code on 2005-02-05 but we
- *        accidently carried the comment forward until 2014-09-15.  Original
- *        text: "The subquery does not use aggregates or the outer query
- *        does not use LIMIT."
- *
- *  (11)  The subquery and the outer query do not both have ORDER BY clauses.
- *
- *  (**)  Not implemented.  Subsumed into restriction (3).  Was previously
- *        a separate restriction deriving from ticket #350.
- *
- *  (13)  The subquery and outer query do not both use LIMIT.
- *
- *  (14)  The subquery does not use OFFSET.
- *
- *  (15)  The outer query is not part of a compound select or the
- *        subquery does not have a LIMIT clause.
- *        (See ticket #2339 and ticket [02a8e81d44]).
- *
- *  (16)  The outer query is not an aggregate or the subquery does
- *        not contain ORDER BY.  (Ticket #2942)  This used to not matter
- *        until we introduced the group_concat() function.
- *
- *  (17)  The sub-query is not a compound select, or it is a UNION ALL
- *        compound clause made up entirely of non-aggregate queries, and
- *        the parent query:
- *
- *          * is not itself part of a compound select,
- *          * is not an aggregate or DISTINCT query, and
- *          * is not a join
- *
- *        The parent and sub-query may contain WHERE clauses. Subject to
- *        rules (11), (13) and (14), they may also contain ORDER BY,
- *        LIMIT and OFFSET clauses.  The subquery cannot use any compound
- *        operator other than UNION ALL because all the other compound
- *        operators have an implied DISTINCT which is disallowed by
- *        restriction (4).
- *
- *        Also, each component of the sub-query must return the same number
- *        of result columns. This is actually a requirement for any compound
- *        SELECT statement, but all the code here does is make sure that no
- *        such (illegal) sub-query is flattened. The caller will detect the
- *        syntax error and return a detailed message.
- *
- *  (18)  If the sub-query is a compound select, then all terms of the
- *        ORDER by clause of the parent must be simple references to
- *        columns of the sub-query.
- *
- *  (19)  The subquery does not use LIMIT or the outer query does not
- *        have a WHERE clause.
- *
- *  (20)  If the sub-query is a compound select, then it must not use
- *        an ORDER BY clause.  Ticket #3773.  We could relax this constraint
- *        somewhat by saying that the terms of the ORDER BY clause must
- *        appear as unmodified result columns in the outer query.  But we
- *        have other optimizations in mind to deal with that case.
- *
- *  (21)  The subquery does not use LIMIT or the outer query is not
- *        DISTINCT.  (See ticket [752e1646fc]).
- *
- *  (22)  The subquery is not a recursive CTE.
- *
- *  (23)  The parent is not a recursive CTE, or the sub-query is not a
- *        compound query. This restriction is because transforming the
- *        parent to a compound query confuses the code that handles
- *        recursive queries in multiSelect().
- *
- *  (24)  The subquery is not an aggregate that uses the built-in min() or
- *        or max() functions.  (Without this restriction, a query like:
- *        "SELECT x FROM (SELECT max(y), x FROM t1)" would not necessarily
- *        return the value X for which Y was maximal.)
- */
+/**
+ ** This routine attempts to flatten subqueries as a performance optimization.
+ ** This routine returns 1 if it makes changes and 0 if no flattening occurs.
+ **
+ ** To understand the concept of flattening, consider the following
+ ** query:
+ **
+ **     SELECT a FROM (SELECT x+y AS a FROM t1 WHERE z<100) WHERE a>5
+ **
+ ** The default way of implementing this query is to execute the
+ ** subquery first and store the results in a temporary table, then
+ ** run the outer query on that temporary table.  This requires two
+ ** passes over the data.  Furthermore, because the temporary table
+ ** has no indices, the WHERE clause on the outer query cannot be
+ ** optimized.
+ **
+ ** This routine attempts to rewrite queries such as the above into
+ ** a single flat select, like this:
+ **
+ **     SELECT x+y AS a FROM t1 WHERE z<100 AND a>5
+ **
+ ** The code generated for this simplification gives the same result
+ ** but only has to scan the data once.  And because indices might
+ ** exist on the table t1, a complete scan of the data might be
+ ** avoided.
+ **
+ ** Flattening is only attempted if all of the following are true:
+ **
+ **  (**)  We no longer attempt to flatten aggregate subqueries. Was:
+ **        The subquery and the outer query do not both use aggregates.
+ **
+ **  (**)  We no longer attempt to flatten aggregate subqueries. Was:
+ **   (2)  The subquery is not an aggregate or (2a) the outer query is not a
+ **        join and (2b) the outer query does not use subqueries other than
+ **        the one FROM-clause subquery that is a candidate for flattening.
+ **        (2b is due to ticket [2f7170d73bf9abf80] from 2015-02-09.)
+ **
+ **   (3)  The subquery is not the right operand of a left outer join
+ **        (Originally ticket #306.  Strengthened by ticket #3300)
+ **
+ **   (4)  The subquery is not DISTINCT.
+ **
+ **  (**)  At one point restrictions (4) and (5) defined a subset of DISTINCT
+ **        sub-queries that were excluded from this optimization. Restriction
+ **        (4) has since been expanded to exclude all DISTINCT subqueries.
+ **
+ **  (**)  We no longer attempt to flatten aggregate subqueries.  Was:
+ **        The subquery does not use aggregates or the outer query is not
+ **        DISTINCT.
+ **
+ **   (7)  The subquery has a FROM clause.  TODO:  For subqueries without
+ **        A FROM clause, consider adding a FROM close with the special
+ **        table sql_once that consists of a single row containing a
+ **        single NULL.
+ **
+ **   (8)  The subquery does not use LIMIT or the outer query is not a join.
+ **
+ **   (9)  The subquery does not use LIMIT or the outer query does not use
+ **        aggregates.
+ **
+ **  (**)  Restriction (10) was removed from the code on 2005-02-05 but we
+ **        accidently carried the comment forward until 2014-09-15.  Original
+ **        text: "The subquery does not use aggregates or the outer query
+ **        does not use LIMIT."
+ **
+ **  (11)  The subquery and the outer query do not both have ORDER BY clauses.
+ **
+ **  (**)  Not implemented.  Subsumed into restriction (3).  Was previously
+ **        a separate restriction deriving from ticket #350.
+ **
+ **  (13)  The subquery and outer query do not both use LIMIT.
+ **
+ **  (14)  The subquery does not use OFFSET.
+ **
+ **  (15)  The outer query is not part of a compound select or the
+ **        subquery does not have a LIMIT clause.
+ **        (See ticket #2339 and ticket [02a8e81d44]).
+ **
+ **  (16)  The outer query is not an aggregate or the subquery does
+ **        not contain ORDER BY.  (Ticket #2942)  This used to not matter
+ **        until we introduced the group_concat() function.
+ **
+ **  (17)  The sub-query is not a compound select, or it is a UNION ALL
+ **        compound clause made up entirely of non-aggregate queries, and
+ **        the parent query:
+ **
+ **          * is not itself part of a compound select,
+ **          * is not an aggregate or DISTINCT query, and
+ **          * is not a join
+ **
+ **        The parent and sub-query may contain WHERE clauses. Subject to
+ **        rules (11), (13) and (14), they may also contain ORDER BY,
+ **        LIMIT and OFFSET clauses.  The subquery cannot use any compound
+ **        operator other than UNION ALL because all the other compound
+ **        operators have an implied DISTINCT which is disallowed by
+ **        restriction (4).
+ **
+ **        Also, each component of the sub-query must return the same number
+ **        of result columns. This is actually a requirement for any compound
+ **        SELECT statement, but all the code here does is make sure that no
+ **        such (illegal) sub-query is flattened. The caller will detect the
+ **        syntax error and return a detailed message.
+ **
+ **  (18)  If the sub-query is a compound select, then all terms of the
+ **        ORDER by clause of the parent must be simple references to
+ **        columns of the sub-query.
+ **
+ **  (19)  The subquery does not use LIMIT or the outer query does not
+ **        have a WHERE clause.
+ **
+ **  (20)  If the sub-query is a compound select, then it must not use
+ **        an ORDER BY clause.  Ticket #3773.  We could relax this constraint
+ **        somewhat by saying that the terms of the ORDER BY clause must
+ **        appear as unmodified result columns in the outer query.  But we
+ **        have other optimizations in mind to deal with that case.
+ **
+ **  (21)  The subquery does not use LIMIT or the outer query is not
+ **        DISTINCT.  (See ticket [752e1646fc]).
+ **
+ **  (22)  The subquery is not a recursive CTE.
+ **
+ **  (23)  The parent is not a recursive CTE, or the sub-query is not a
+ **        compound query. This restriction is because transforming the
+ **        parent to a compound query confuses the code that handles
+ **        recursive queries in multiSelect().
+ **
+ **  (24)  The subquery is not an aggregate that uses the built-in min() or
+ **        or max() functions.  (Without this restriction, a query like:
+ **        "SELECT x FROM (SELECT max(y), x FROM t1)" would not necessarily
+ **        return the value X for which Y was maximal.)
+ **/
 /*
  *  (25)  If either the subquery or the parent query contains a window
  *        function in the select list or ORDER BY clause, flattening
@@ -3968,7 +3971,7 @@ substSelect(Parse * pParse,	/* Report errors here */
  *
  * In this routine, the "p" parameter is a pointer to the outer query.
  * The subquery is p->pSrc->a[iFrom].  isAgg is true if the outer query
- * uses aggregates and subqueryIsAgg is true if the subquery uses aggregates.
+ * uses aggregates.
  *
  * If flattening is not attempted, this routine is a no-op and returns 0.
  * If flattening is attempted this routine returns 1.
@@ -3977,11 +3980,11 @@ substSelect(Parse * pParse,	/* Report errors here */
  * the subquery before this routine runs.
  */
 static int
-flattenSubquery(Parse * pParse,		/* Parsing context */
-		Select * p,		/* The parent or outer SELECT statement */
-		int iFrom,		/* Index in p->pSrc->a[] of the inner subquery */
-		int isAgg,		/* True if outer SELECT uses aggregate functions */
-		int subqueryIsAgg)	/* True if the subquery uses aggregate functions */
+flattenSubquery(
+	Parse *pParse,	/* Parsing context */
+	Select *p,	/* The parent or outer SELECT statement */
+	int iFrom,	/* Index in p->pSrc->a[] of the inner subquery */
+	int isAgg)	/* True if outer SELECT uses aggregate functions */
 {
 	Select *pParent;	/* Current UNION ALL term of the other query */
 	Select *pSub;		/* The inner query or "subquery" */
@@ -4007,17 +4010,6 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	assert(pSub != 0);
 	if (p->pWin || pSub->pWin)
 		return 0;	/* Restrictions (25) */
-	if (subqueryIsAgg) {
-		if (isAgg)
-			return 0;	/* Restriction (1)   */
-		if (pSrc->nSrc > 1)
-			return 0;	/* Restriction (2a)  */
-		if ((p->pWhere && ExprHasProperty(p->pWhere, EP_Subquery))
-		    || (sqlExprListFlags(p->pEList) & EP_Subquery) != 0
-		    || (sqlExprListFlags(p->pOrderBy) & EP_Subquery) != 0) {
-			return 0;	/* Restriction (2b)  */
-		}
-	}
 
 	pSubSrc = pSub->pSrc;
 	assert(pSubSrc);
@@ -4040,9 +4032,6 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 		return 0;	/* Restriction (5)  */
 	if (pSub->pLimit && (pSrc->nSrc > 1 || isAgg)) {
 		return 0;	/* Restrictions (8)(9) */
-	}
-	if ((p->selFlags & SF_Distinct) != 0 && subqueryIsAgg) {
-		return 0;	/* Restriction (6)  */
 	}
 	if (p->pOrderBy && pSub->pOrderBy) {
 		return 0;	/* Restriction (11) */
@@ -4318,22 +4307,9 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 			pSub->pOrderBy = 0;
 		}
 		pWhere = sqlExprDup(pSub->pWhere, 0);
-		if (subqueryIsAgg) {
-			assert(pParent->pHaving == 0);
-			pParent->pHaving = pParent->pWhere;
-			pParent->pWhere = pWhere;
-			struct Expr *sub_having = sqlExprDup(pSub->pHaving, 0);
-			if (sub_having != NULL || pParent->pHaving != NULL) {
-				pParent->pHaving =
-					sql_and_expr_new(sub_having,
-							 pParent->pHaving);
-			}
-			assert(pParent->pGroupBy == 0);
-			pParent->pGroupBy =
-				sql_expr_list_dup(pSub->pGroupBy, 0);
-		} else if (pWhere != NULL || pParent->pWhere != NULL) {
+		if (pWhere != NULL || pParent->pWhere != NULL) {
 			pParent->pWhere =
-				sql_and_expr_new(pWhere, pParent->pWhere);
+				sql_and_expr_new(pParent->pWhere, pWhere);
 		}
 		substSelect(pParse, pParent, iParent, pSub->pEList, 0);
 
@@ -4369,46 +4345,48 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	return 1;
 }
 
-/*
- * Make copies of relevant WHERE clause terms of the outer query into
- * the WHERE clause of subquery.  Example:
- *
- *    SELECT * FROM (SELECT a AS x, c-d AS y FROM t1) WHERE x=5 AND y=10;
- *
- * Transformed into:
- *
- *    SELECT * FROM (SELECT a AS x, c-d AS y FROM t1 WHERE a=5 AND c-d=10)
- *     WHERE x=5 AND y=10;
- *
- * The hope is that the terms added to the inner query will make it more
- * efficient.
- *
- * Do not attempt this optimization if:
- *
- *   (1) The inner query is an aggregate.  (In that case, we'd really want
- *       to copy the outer WHERE-clause terms onto the HAVING clause of the
- *       inner query.  But they probably won't help there so do not bother.)
- *
- *   (2) The inner query is the recursive part of a common table expression.
- */
-/*
- *   (3) The inner query has a LIMIT clause (since the changes to the WHERE
- *       clause would change the meaning of the LIMIT).
- *
- *   (4) The inner query is the right operand of a LEFT JOIN.  (The caller
- *       enforces this restriction since this routine does not have enough
- *       information to know.)
- *
- *   (5) The WHERE clause expression originates in the ON or USING clause
- *       of a LEFT JOIN.
- *
- *   (6) The inner query features one or more window-functions (since
- *       changes to the WHERE clause of the inner query could change the
- *       window over which window functions are calculated).
- *
- * Return 0 if no changes are made and non-zero if one or more WHERE clause
- * terms are duplicated into the subquery.
- */
+/**
+ ** Make copies of relevant WHERE clause terms of the outer query into
+ ** the WHERE clause of subquery.  Example:
+ **
+ **    SELECT * FROM (SELECT a AS x, c-d AS y FROM t1) WHERE x=5 AND y=10;
+ **
+ ** Transformed into:
+ **
+ **    SELECT * FROM (SELECT a AS x, c-d AS y FROM t1 WHERE a=5 AND c-d=10)
+ **     WHERE x=5 AND y=10;
+ **
+ ** The hope is that the terms added to the inner query will make it more
+ ** efficient.
+ **
+ ** Do not attempt this optimization if:
+ **
+ **  (**) This restriction was removed. We used to disallow this
+ **       optimization for aggregate subqueries, but now it is allowed by
+ **       putting the extra terms on the HAVING clause. The added HAVING
+ **       clause is pointless if the subquery lacks a GROUP BY clause.
+ **       But such a HAVING clause is also harmless so there does not
+ **       appear to be any reason to add extra logic to suppress it.
+ **
+ **   (2) The inner query is the recursive part of a common table expression.
+ **
+ **   (3) The inner query has a LIMIT clause (since the changes to the WHERE
+ **       clause would change the meaning of the LIMIT).
+ **
+ **   (4) The inner query is the right operand of a LEFT JOIN.  (The caller
+ **       enforces this restriction since this routine does not have enough
+ **       information to know.)
+ **
+ **   (5) The WHERE clause expression originates in the ON or USING clause
+ **       of a LEFT JOIN.
+ **
+ **   (6) The inner query features one or more window-functions (since
+ **       changes to the WHERE clause of the inner query could change the
+ **       window over which window functions are calculated).
+ **
+ ** Return 0 if no changes are made and non-zero if one or more WHERE clause
+ ** terms are duplicated into the subquery.
+ **/
 static int
 pushDownWhereTerms(Parse * pParse,	/* Parse context (for malloc() and error reporting) */
 		   Select * pSubq,	/* The subquery whose WHERE clause is to be augmented */
@@ -4421,8 +4399,8 @@ pushDownWhereTerms(Parse * pParse,	/* Parse context (for malloc() and error repo
 	if (pWhere == 0)
 		return 0;
 	for (pX = pSubq; pX; pX = pX->pPrior) {
-		if ((pX->selFlags & (SF_Aggregate | SF_Recursive)) != 0) {
-			return 0;	/* restrictions (1) and (2) */
+		if ((pX->selFlags & (SF_Recursive)) != 0) {
+			return 0;	/* restrictions (2) */
 		}
 	}
 	if (pSubq->pWin) {
@@ -4437,13 +4415,19 @@ pushDownWhereTerms(Parse * pParse,	/* Parse context (for malloc() and error repo
 		pWhere = pWhere->pLeft;
 	}
 	if (ExprHasProperty(pWhere, EP_FromJoin))
-		return 0;	/* restriction 5 */
+		return 0;	/* restriction (5) */
 	if (sqlExprIsTableConstant(pWhere, iCursor)) {
 		nChng++;
 		while (pSubq) {
 			pNew = sqlExprDup(pWhere, 0);
 			pNew = substExpr(pParse, pNew, iCursor, pSubq->pEList);
-			pSubq->pWhere = sql_and_expr_new(pSubq->pWhere, pNew);
+			if (pSubq->selFlags % SF_Aggregate) {
+				pSubq->pHaving =
+					sql_and_expr_new(pSubq->pHaving, pNew);
+			} else {
+				pSubq->pWhere =
+					sql_and_expr_new(pSubq->pWhere, pNew);
+			}
 			pSubq = pSubq->pPrior;
 		}
 	}
@@ -5680,7 +5664,6 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	for (i = 0; !p->pPrior && i < pTabList->nSrc; i++) {
 		struct SrcList_item *pItem = &pTabList->a[i];
 		Select *pSub = pItem->pSelect;
-		int isAggSub;
 		struct space *space = pItem->space;
 		if (pSub == 0)
 			continue;
@@ -5695,6 +5678,17 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			pParse->is_aborted = true;
 			goto select_end;
 		}
+
+		/* Do not try to flatten an aggregate subquery.
+		 *
+		 * Flattening an aggregate subquery is only possible if the
+		 * outer query is not a join.  But if the outer query is not
+		 * a join, then the subquery will be implemented as a co-routine
+		 * and there is no advantage to flattening in that case.
+		 */
+		if ((pSub->selFlags & SF_Aggregate) != 0)
+			continue;
+		assert(pSub->pGroupBy == 0);
 
 		/* If the outer query contains a "complex" result set (that is,
 		 * if the result set of the outer query uses functions or
@@ -5721,13 +5715,8 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			continue;
 		}
 
-		isAggSub = (pSub->selFlags & SF_Aggregate) != 0;
-		if (flattenSubquery(pParse, p, i, isAgg, isAggSub)) {
+		if (flattenSubquery(pParse, p, i, isAgg)) {
 			/* This subquery can be absorbed into its parent. */
-			if (isAggSub) {
-				isAgg = 1;
-				p->selFlags |= SF_Aggregate;
-			}
 			i = -1;
 		}
 		pTabList = p->pSrc;
@@ -5817,21 +5806,16 @@ sqlSelect(Parse * pParse,		/* The parser context */
 
 		/* Generate code to implement the subquery
 		 *
-		 * The subquery is implemented as a co-routine if all of these are true:
-		 *   (1)  The subquery is guaranteed to be the outer loop (so that it
-		 *        does not need to be computed more than once)
-		 *   (2)  The ALL keyword after SELECT is omitted.  (Applications are
-		 *        allowed to say "SELECT ALL" instead of just "SELECT" to disable
-		 *        the use of co-routines.)
+		 * The subquery is implemented as a co-routine if the subquery
+		 * is guaranteed to be the outer loop (so that it does not need
+		 * to be computed more than once)
 		 *
 		 * TODO: Are there other reasons beside (1) to use a co-routine
 		 * implementation?
 		 */
 		if (i == 0 && (pTabList->nSrc == 1 ||
 			       (pTabList->a[1].fg.jointype &
-				(JT_LEFT | JT_CROSS)) != 0) &&
-		    (p->selFlags & SF_All) == 0 &&
-		    OptimizationEnabled(SQL_SubqCoroutine)) {
+				(JT_LEFT | JT_CROSS)) != 0)) {
 			/* Implement a co-routine that will return a single row of the result
 			 * set on each invocation.
 			 */
