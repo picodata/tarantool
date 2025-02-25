@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(58)
+test:plan(59)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -736,4 +736,18 @@ test:do_catchsql_test(
     ]],
     -- {1, "misuse of window function SUM()"})
     {1, "At line 1 at or near position 35: keyword 'WHERE' is reserved. Please use double quotes if 'WHERE' is an identifier."})
+
+test:do_execsql_test(
+    "window1-AVG-inverse",
+    [[
+        WITH q(x) AS (VALUES (1), (2), (3), (4))
+        SELECT cast(a AS TEXT) FROM (
+            SELECT avg(cast(x AS DECIMAL)) OVER (
+                ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
+            ) AS a FROM q
+        );
+    ]], {
+        '1', '1.5', '2.5', '3.5'
+    })
+
 test:finish_test()
