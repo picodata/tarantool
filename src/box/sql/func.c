@@ -179,6 +179,25 @@ fin_avg(struct Mem *mem)
 	return mem_div(sum, &count, mem);
 }
 
+/** Inversion for the AVG() function. */
+static void
+inverse_avg(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 1);
+	(void)argc;
+	if (mem_is_null(&argv[0]) || mem_is_null(ctx->pOut))
+		return;
+	struct Mem *sum = (struct Mem *)ctx->pOut->z;
+	uint32_t *count = (uint32_t *)(sum + 1);
+	if (*count == 0) {
+		mem_set_null(sum);
+		return;
+	}
+	if (mem_sub(sum, &argv[0], sum) != 0)
+		ctx->is_aborted = true;
+	--*count;
+}
+
 /** Implementation of the COUNT() function. */
 static void
 step_count(struct sql_context *ctx, int argc, const struct Mem *argv)
@@ -1964,11 +1983,11 @@ static struct sql_func_definition definitions[] = {
 	{"ABS", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, func_abs_double,
 	 NULL, NULL, NULL},
 	{"AVG", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_avg, fin_avg,
-	 fin_avg, NULL},
+	 fin_avg, inverse_avg},
 	{"AVG", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_avg, fin_avg,
-	 fin_avg, NULL},
+	 fin_avg, inverse_avg},
 	{"AVG", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_avg, fin_avg,
-	 fin_avg, NULL},
+	 fin_avg, inverse_avg},
 	{"CHAR", -1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_STRING, func_char, NULL,
 	 NULL, NULL},
 	{"CHAR_LENGTH", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_INTEGER,
