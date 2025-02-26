@@ -1410,9 +1410,13 @@ struct Expr {
 				 * TK_AGG_FUNCTION: nesting depth
 				 */
 	AggInfo *pAggInfo;	/* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
-	/** Pointer for table relative definition. */
-	struct space_def *space_def;
-	Window *pWin;		/* Window definition for window functions */
+	union {
+		/** TK_COLUMN: Pointer for table relative definition. */
+		/* NOTE(gmoshkin) ported commit has changes here which I didn't
+		 * port */
+		struct space_def *space_def;
+		Window *pWin;/* TK_FUNCTION: Window definition for window functions */
+	} y;
 };
 
 /*
@@ -1441,9 +1445,10 @@ struct Expr {
 #define EP_Subquery  0x200000	/* Tree contains a TK_SELECT operator */
 #define EP_Alias     0x400000	/* Is an alias for a result set column */
 #define EP_Leaf      0x800000	/* Expr.pLeft, .pRight, .u.pSelect all NULL */
+#define EP_WinFunc  0x1000000   /* TK_FUNCTION with Expr.y.pWin set */
 /** Expression is system-defined. */
-#define EP_System    0x1000000
-#define EP_HasFunc   0x2000000	/* Contains one or more functions of any kind */
+#define EP_System   0x2000000
+#define EP_HasFunc  0x4000000	/* Contains one or more functions of any kind */
 
 
 /*
@@ -2347,6 +2352,7 @@ struct Walker {
 		/** Space definition. */
 		struct space_def *space_def;
 		struct WindowRewrite *pRewrite;	/* Window rewrite context */
+		Select *pSelect; /* NOTE(gmoshkin) introduced in commit I'm not porting */
 	} u;
 };
 
