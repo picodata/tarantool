@@ -2101,11 +2101,11 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 				assert(pColExpr != 0);
 			}
 			if (pColExpr->op == TK_COLUMN_REF
-			    && ALWAYS(pColExpr->space_def != NULL)) {
+			    && ALWAYS(pColExpr->y.space_def != NULL)) {
 				/* For columns use the column name name */
 				int iCol = pColExpr->iColumn;
 				assert(iCol >= 0);
-				space_def = pColExpr->space_def;
+				space_def = pColExpr->y.space_def;
 				name = space_def->fields[iCol].name;
 			} else if (pColExpr->op == TK_ID) {
 				assert(!ExprHasProperty(pColExpr, EP_IntValue));

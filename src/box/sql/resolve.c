@@ -183,7 +183,7 @@ sqlMatchSpanName(const char *zSpan,
  *
  *    pExpr->iTable        Set to the cursor number for the table obtained
  *                         from pSrcList.
- *    pExpr->space_def     Points to the space_def structure of X.Y
+ *    pExpr->y.space_def   Points to the space_def structure of X.Y
  *                         (even if X and/or Y are implied.)
  *    pExpr->iColumn       Set to the column number within the table.
  *    pExpr->op            Set to TK_COLUMN_REF.
@@ -222,7 +222,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 
 	/* Initialize the node to no-match */
 	pExpr->iTable = -1;
-	pExpr->space_def = NULL;
+	pExpr->y.space_def = NULL;
 	ExprSetVVAProperty(pExpr, EP_NoReduce);
 
 	/* Start at the inner-most context and move outward until a match is found */
@@ -295,7 +295,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 			}
 			if (pMatch) {
 				pExpr->iTable = pMatch->iCursor;
-				pExpr->space_def = pMatch->space->def;
+				pExpr->y.space_def = pMatch->space->def;
 				/* RIGHT JOIN not (yet) supported */
 				assert((pMatch->fg.jointype & JT_RIGHT) == 0);
 				if ((pMatch->fg.jointype & JT_LEFT) != 0) {
@@ -339,7 +339,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 							 &pParse->newmask;
 					column_mask_set_fieldno(mask, iCol);
 					pExpr->iColumn = iCol;
-					pExpr->space_def = space_def;
+					pExpr->y.space_def = space_def;
 					isTrigger = 1;
 				}
 			}
@@ -481,7 +481,7 @@ sql_expr_new_column(struct SrcList *src_list, int src_idx, int column)
 {
 	struct Expr *expr = sql_expr_new_anon(TK_COLUMN_REF);
 	struct SrcList_item *item = &src_list->a[src_idx];
-	expr->space_def = item->space->def;
+	expr->y.space_def = item->space->def;
 	expr->iTable = item->iCursor;
 	expr->iColumn = column;
 	item->colUsed |= ((Bitmask) 1) << (column >= BMS ? BMS - 1 : column);
@@ -616,7 +616,7 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 				pExpr->iTable = zId[0] == 'u' ?
 						8388608 : 125829120;
 			}
-			if (!is_agg && !is_window && pExpr->pWin) {
+			if (!is_agg && !is_window && ExprHasProperty(pExpr, EP_WinFunc)) {
 				const char *err = tt_sprintf(
 					"%.*s() may not be used as a window function",
 					nId, zId);
@@ -627,9 +627,9 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 			} else if (((is_agg || is_window) &&
 				    (pNC->ncFlags & NC_AllowAgg) == 0) ||
 				    ((is_agg || is_window) &&
-				     pExpr->pWin &&
+				     pExpr->y.pWin &&
 				     (pNC->ncFlags & NC_AllowWin) == 0)) {
-				const char *zType = pExpr->pWin ? "window"
+				const char *zType = pExpr->y.pWin ? "window"
 						    : "aggregate";
 				const char *err =
 				tt_sprintf("misuse of %s function %.*s()",
@@ -641,7 +641,7 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 				is_window = 0;
 			}
 			if (is_agg || is_window) {
-				pNC->ncFlags &= ~(pExpr->pWin ?
+				pNC->ncFlags &= ~(pExpr->y.pWin ?
 						  NC_AllowWin : NC_AllowAgg);
 			}
 			sqlWalkExprList(pWalker, pList);
@@ -673,24 +673,24 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 				ExprSetProperty(pExpr, EP_ConstFunc);
 
 			if (is_agg || is_window) {
-				if (pExpr->pWin) {
+				if (pExpr->y.pWin) {
 					Select *pSel = pNC->pWinSelect;
 					sqlWalkExprList(
 						pWalker,
-						pExpr->pWin->pPartition);
+						pExpr->y.pWin->pPartition);
 					sqlWalkExprList(pWalker,
-							pExpr->pWin->pOrderBy);
+							pExpr->y.pWin->pOrderBy);
 					sqlWalkExpr(pWalker,
-						    pExpr->pWin->pFilter);
+						    pExpr->y.pWin->pFilter);
 					sqlWindowUpdate(pParse, pSel->pWinDefn,
-							pExpr->pWin, func);
+							pExpr->y.pWin, func);
 					if (pSel->pWin == 0 ||
 					    sqlWindowCompare(pSel->pWin,
-							     pExpr->pWin) ==
+							     pExpr->y.pWin) ==
 					    0) {
-						pExpr->pWin->pNextWin =
+						pExpr->y.pWin->pNextWin =
 						pSel->pWin;
-						pSel->pWin = pExpr->pWin;
+						pSel->pWin = pExpr->y.pWin;
 					}
 					pNC->ncFlags |= NC_AllowWin;
 				} else {
@@ -1129,12 +1129,12 @@ resolveOrderGroupBy(NameContext * pNC,	/* The name context of the SELECT stateme
 		for (j = 0; j < pSelect->pEList->nExpr; j++) {
 			if (sqlExprCompare
 			    (pE, pSelect->pEList->a[j].pExpr, -1) == 0) {
-				if (pE->pWin != NULL) {
+				if (ExprHasProperty(pE, EP_WinFunc)) {
 					Window **pp;
 					for (pp = &pSelect->pWin;
 					    *pp != NULL;
 					     pp = &(*pp)->pNextWin) {
-						if (*pp == pE->pWin) {
+						if (*pp == pE->y.pWin) {
 							*pp = (*pp)->pNextWin;
 							break;
 						}

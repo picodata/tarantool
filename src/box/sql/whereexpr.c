@@ -283,7 +283,7 @@ like_optimization_is_valid(Parse *pParse, Expr *pExpr, Expr **ppPrefix,
 	 * implicit - index search won't be used. Ergo, we fail
 	 * get so far.
 	 */
-	struct field_def *fd = &pLeft->space_def->fields[pLeft->iColumn];
+	struct field_def *fd = &pLeft->y.space_def->fields[pLeft->iColumn];
 	uint32_t u_ci_id = coll_by_name("unicode_ci", strlen("unicode_ci"))->id;
 	uint32_t bin_id = coll_by_name("binary", strlen("binary"))->id;
 	if (fd->coll_id != COLL_NONE && fd->coll_id != u_ci_id &&
@@ -1416,7 +1416,7 @@ sqlWhereTabFuncArgs(Parse * pParse,	/* Parsing context */
 		pColRef = sql_expr_new_anon(TK_COLUMN_REF);
 		pColRef->iTable = pItem->iCursor;
 		pColRef->iColumn = k++;
-		pColRef->space_def = space_def;
+		pColRef->y.space_def = space_def;
 		pTerm = sqlPExpr(pParse, TK_EQ, pColRef,
 				 sqlExprDup(pArgs->a[j].pExpr, 0));
 		whereClauseInsert(pWC, pTerm, TERM_DYNAMIC);

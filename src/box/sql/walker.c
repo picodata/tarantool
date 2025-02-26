@@ -75,6 +75,15 @@ walkExpr(Walker * pWalker, Expr * pExpr)
 		if (sqlWalkExprList(pWalker, pExpr->x.pList))
 			return WRC_Abort;
 	}
+	if (ExprHasProperty(pExpr, EP_WinFunc)) {
+		Window *pWin = pExpr->y.pWin;
+		if (sqlWalkExprList(pWalker, pWin->pPartition))
+			return WRC_Abort;
+		if (sqlWalkExprList(pWalker, pWin->pOrderBy))
+			return WRC_Abort;
+		if (sqlWalkExpr(pWalker, pWin->pFilter))
+			return WRC_Abort;
+	}
 	return WRC_Continue;
 }
 
