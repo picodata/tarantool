@@ -233,12 +233,12 @@ selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr)
 
 	switch (pExpr->op) {
 	case TK_FUNCTION:
-		if (pExpr->pWin == 0) {
+		if (!ExprHasProperty(pExpr, EP_WinFunc)) {
 			break;
 		}
 		Window *pWin;
 		for (pWin = p->pWin; pWin; pWin = pWin->pNextWin) {
-			if (pExpr->pWin == pWin) {
+			if (pExpr->y.pWin == pWin) {
 				assert(pWin->pOwner == pExpr);
 				return WRC_Prune;
 			}
@@ -599,8 +599,10 @@ void
 sqlWindowAttach(Parse *pParse, Expr *p, Window *pWin)
 {
 	if (p) {
+		assert(p->op == TK_FUNCTION);
 		if (pWin != NULL) {
-			p->pWin = pWin;
+			p->y.pWin = pWin;
+			ExprSetProperty(p, EP_WinFunc);
 			pWin->pOwner = p;
 			if (p->flags & EP_Distinct) {
 				diag_set(ClientError, ER_SQL_PARSER_GENERIC,
@@ -1722,10 +1724,11 @@ Window *
 sqlWindowDup(Expr *pOwner, Window *p)
 {
 	Window *pNew = 0;
-	if (p) {
+	if (ALWAYS(p)) {
 		pNew = sql_xmalloc0(sizeof(Window));
 		pNew->zName = sql_xstrdup(p->zName);
 		pNew->pFilter = sqlExprDup(p->pFilter, 0);
+		pNew->pFunc = p->pFunc;
 		pNew->pPartition = sql_expr_list_dup(p->pPartition, 0);
 		pNew->pOrderBy = sql_expr_list_dup(p->pOrderBy, 0);
 		pNew->eType = p->eType;
