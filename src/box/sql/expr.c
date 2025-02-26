@@ -96,7 +96,7 @@ sql_expr_type(struct Expr *pExpr)
 	case TK_COLUMN_REF:
 	case TK_TRIGGER:
 		assert(pExpr->iColumn >= 0);
-		return pExpr->space_def->fields[pExpr->iColumn].type;
+		return pExpr->y.space_def->fields[pExpr->iColumn].type;
 	case TK_SELECT_COLUMN:
 		assert(pExpr->pLeft->flags & EP_xIsSelect);
 		el = pExpr->pLeft->x.pSelect->pEList;
@@ -304,16 +304,16 @@ sql_expr_coll(Parse *parse, Expr *p, bool *is_explicit_coll, uint32_t *coll_id,
 		}
 		if ((op == TK_AGG_COLUMN || op == TK_COLUMN_REF ||
 		     op == TK_REGISTER || op == TK_TRIGGER) &&
-		    p->space_def != NULL) {
+		    p->y.space_def != NULL) {
 			/*
-			 * op==TK_REGISTER && p->space_def!=0
+			 * op==TK_REGISTER && p->y.space_def!=0
 			 * happens when pExpr was originally
 			 * a TK_COLUMN_REF but was previously
 			 * evaluated and cached in a register.
 			 */
 			int j = p->iColumn;
 			if (j >= 0) {
-				*coll = sql_column_collation(p->space_def, j,
+				*coll = sql_column_collation(p->y.space_def, j,
 							     coll_id);
 			}
 			break;
@@ -1333,6 +1333,9 @@ sqlExprDeleteNN(struct Expr *p)
 	assert(p != 0);
 	/* Sanity check: Assert that the IntValue is non-negative if it exists */
 	assert(!ExprHasProperty(p, EP_IntValue) || p->u.iValue >= 0);
+	assert(!ExprHasProperty(p, EP_WinFunc) || p->y.pWin != 0);
+	assert(p->op != TK_FUNCTION || ExprHasProperty(p, EP_TokenOnly|EP_Reduced)
+	       || p->y.pWin==0 || ExprHasProperty(p, EP_WinFunc) );
 #ifdef SQL_DEBUG
 	if (ExprHasProperty(p, EP_Leaf) && !ExprHasProperty(p, EP_TokenOnly)) {
 		assert(p->pRight == 0);
@@ -1350,8 +1353,9 @@ sqlExprDeleteNN(struct Expr *p)
 		} else {
 			sql_expr_list_delete(p->x.pList);
 		}
-		if (!ExprHasProperty(p, EP_Reduced)) {
-			sqlWindowDelete(p->pWin);
+		if (ExprHasProperty(p, EP_WinFunc)) {
+			assert(p->op == TK_FUNCTION);
+			sqlWindowDelete(p->y.pWin);
 		}
 	}
 	if (ExprHasProperty(p, EP_MemToken))
@@ -1424,7 +1428,7 @@ dupedExprStructSize(Expr * p, int flags)
 	assert(flags == EXPRDUP_REDUCE || flags == 0);	/* Only one flag value allowed */
 	assert(EXPR_FULLSIZE <= 0xfff);
 	assert((0xfff & (EP_Reduced | EP_TokenOnly)) == 0);
-	if (flags == 0 || p->op == TK_SELECT_COLUMN || p->pWin) {
+	if (flags == 0 || p->op == TK_SELECT_COLUMN || ExprHasProperty(p, EP_WinFunc)) {
 		nSize = EXPR_FULLSIZE;
 	} else {
 		assert(!ExprHasProperty(p, EP_TokenOnly | EP_Reduced));
@@ -1562,10 +1566,9 @@ sql_expr_dup(struct Expr *p, int flags, char **buffer)
 		if (buffer != NULL)
 			*buffer = zAlloc;
 	} else {
-		if (ExprHasProperty(p, EP_Reduced | EP_TokenOnly)) {
-			pNew->pWin = 0;
-		} else {
-			pNew->pWin = sqlWindowDup(pNew, p->pWin);
+		if (ExprHasProperty(p, EP_WinFunc)) {
+			pNew->y.pWin = sqlWindowDup(pNew, p->y.pWin);
+			assert(ExprHasProperty(pNew, EP_WinFunc));
 		}
 		if (!ExprHasProperty(p, EP_TokenOnly | EP_Leaf)) {
 			if (pNew->op == TK_SELECT_COLUMN) {
@@ -1599,6 +1602,37 @@ withDup(struct With *p)
 		pRet->a[i].zName = sql_xstrdup(p->a[i].zName);
 	}
 	return pRet;
+}
+
+
+/*
+** The gatherSelectWindows() procedure and its helper routine
+** gatherSelectWindowsCallback() are used to scan all the expressions
+** an a newly duplicated SELECT statement and gather all of the Window
+** objects found there, assembling them onto the linked list at Select->pWin.
+*/
+static int
+gatherSelectWindowsCallback(Walker *pWalker, Expr *pExpr) {
+	if (pExpr->op == TK_FUNCTION && pExpr->y.pWin != 0) {
+		assert(ExprHasProperty(pExpr, EP_WinFunc));
+		pExpr->y.pWin->pNextWin = pWalker->u.pSelect->pWin;
+		pWalker->u.pSelect->pWin = pExpr->y.pWin;
+	}
+	return WRC_Continue;
+}
+
+/*
+** NOTE(gmoshkin) not in the original
+** See comments for gatherSelectWindowsCallback.
+*/
+static void
+gatherSelectWindows(Select *p){
+	Walker w;
+	w.xExprCallback = gatherSelectWindowsCallback;
+	w.xSelectCallback = 0;
+	w.u.pSelect = p;
+	sqlWalkSelectExpr(&w, p);
+	sqlWalkSelectFrom(&w, p);
 }
 
 struct Expr *
@@ -1756,6 +1790,8 @@ sqlSelectDup(struct Select *p, int flags)
 	pNew->pWith = withDup(p->pWith);
 	pNew->pWin = 0;
 	pNew->pWinDefn = sqlWindowListDup(p->pWinDefn);
+	if (p->pWin)
+		gatherSelectWindows(pNew);
 	sqlSelectSetName(pNew, p->zSelName);
 	return pNew;
 }
@@ -2174,10 +2210,10 @@ sqlExprCanBeNull(const Expr * p)
 		assert(p->pLeft);
 		return sqlExprCanBeNull(p->pLeft);
 	case TK_COLUMN_REF:
-		assert(p->space_def != 0);
+		assert(p->y.space_def != 0);
 		return ExprHasProperty(p, EP_CanBeNull) ||
 		       (p->iColumn >= 0
-		        && p->space_def->fields[p->iColumn].is_nullable);
+		        && p->y.space_def->fields[p->iColumn].is_nullable);
 	default:
 		return 1;
 	}
@@ -3933,8 +3969,8 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 
 			if (!ExprHasProperty(pExpr,
 					     EP_TokenOnly | EP_Reduced) &&
-			    pExpr->pWin) {
-				return pExpr->pWin->regResult;
+			    pExpr->y.pWin) {
+				return pExpr->y.pWin->regResult;
 			}
 
 			assert(!ExprHasProperty(pExpr, EP_xIsSelect));
@@ -4215,7 +4251,7 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 			 *   p1==1   ->    old.a         p1==4   ->    new.a
 			 *   p1==2   ->    old.b         p1==5   ->    new.b
 			 */
-			struct space_def *def = pExpr->space_def;
+			struct space_def *def = pExpr->y.space_def;
 			int p1 =
 			    pExpr->iTable * (def->field_count + 1) + 1 +
 			    pExpr->iColumn;
@@ -4228,7 +4264,7 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 			sqlVdbeAddOp2(v, OP_Param, p1, target);
 			VdbeComment((v, "%s.%s -> $%d",
 				    (pExpr->iTable ? "new" : "old"),
-				    pExpr->space_def->fields[
+				    pExpr->y.space_def->fields[
 					pExpr->iColumn].name, target));
 			break;
 		}
@@ -4962,6 +4998,19 @@ sqlExprCompare(Expr * pA, Expr * pB, int iTab)
 		if (pA->op == TK_FUNCTION) {
 			if (sqlStrICmp(pA->u.zToken, pB->u.zToken) != 0)
 				return 2;
+			/* Justification for the assert():
+			 ** window functions have p->op==TK_FUNCTION but aggregate functions
+			 ** have p->op==TK_AGG_FUNCTION.  So any comparison between an aggregate
+			 ** function and a window function should have failed before reaching
+			 ** this point.  And, it is not possible to have a window function and
+			 ** a scalar function with the same name and number of arguments.  So
+			 ** if we reach this point, either A and B both window functions or
+			 ** neither are a window functions. */
+			assert(ExprHasProperty(pA, EP_WinFunc) == ExprHasProperty(pB, EP_WinFunc));
+			if (ExprHasProperty(pA, EP_WinFunc)) {
+				if (sqlWindowCompare(pA->y.pWin, pB->y.pWin) != 0)
+					return 2;
+			}
 		} else if (strcmp(pA->u.zToken, pB->u.zToken) != 0) {
 			return pA->op == TK_COLLATE ? 1 : 2;
 		}
@@ -5208,7 +5257,7 @@ analyzeAggregate(Walker * pWalker, Expr * pExpr)
 							pCol =
 							    &pAggInfo->aCol[k];
 							pCol->space_def =
-							    pExpr->space_def;
+							    pExpr->y.space_def;
 							pCol->iTable =
 							    pExpr->iTable;
 							pCol->iColumn =

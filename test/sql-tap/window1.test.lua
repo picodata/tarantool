@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(66)
+test:plan(67)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -284,6 +284,20 @@ test:do_execsql_test(
         0, 7, '6.5.4.3.2.1.0'
     })
 
+test:do_execsql_test(
+    "window1-4.10.3-crash-with-subqueries",
+    [[
+        SELECT
+            AVG(a)
+            FILTER
+                (WHERE a > (SELECT MIN(a) OVER () FROM t1 LIMIT 1))
+            OVER ()
+        FROM t2;
+    ]], {
+        4, 4, 4, 4, 4, 4, 4
+    }
+)
+
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
     CREATE TABLE t1(x INT PRIMARY KEY);
@@ -340,6 +354,8 @@ test:execsql( [[
     INSERT INTO t1 VALUES(9, 10);
 ]])
 
+-- NOTE(gmoshkin) these tests are changed, because NTH_VALUE function is not
+-- supported, instead ROW_NUMBER is used
 test:do_catchsql_test(
     "window1-7.1.2",
     [[
