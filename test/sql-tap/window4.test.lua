@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(159)
+test:plan(160)
 
 test:execsql([[
     DROP TABLE IF EXISTS t3;
@@ -4910,5 +4910,21 @@ FROM ttt ORDER BY a
 --    ]], {
 --       1, 1, 4, 4, 6, 6, 7, 7
 -- })
+
+test:execsql([[
+DROP TABLE IF EXISTS t7;
+CREATE TABLE t7(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+INSERT INTO t7(id, a, b) VALUES
+  (1, 1, 2), (2, 1, NULL), (3, 1, 4),
+  (4, 3, NULL), (5, 3, 8), (6, 3, 1);
+]])
+
+test:do_execsql_test(
+   "10.1",
+   [[
+SELECT id, min(b) OVER (PARTITION BY a ORDER BY id) FROM t7;
+   ]], {
+      1, 2, 2, 2, 3, 2, 4, "", 5, 8, 6, 1
+})
 
 test:finish_test()
