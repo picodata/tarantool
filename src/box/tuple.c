@@ -162,6 +162,19 @@ tuple_validate_raw(struct tuple_format *format, const char *tuple)
 	size_t region_svp = region_used(region);
 	struct field_map_builder builder;
 	int rc = tuple_field_map_create(format, tuple, true, &builder);
+	if (rc != 0)
+		goto end;
+
+	/*
+	 * Perform a conservative size check (mostly for memtx);
+	 * vinyl has its own which uses vy_stmt instead.
+	 */
+	uint32_t field_map_size = field_map_build_size(&builder);
+	uint32_t data_offset = sizeof(struct tuple) + field_map_size;
+	rc = tuple_check_data_offset(data_offset);
+	if (rc != 0)
+		goto end;
+end:
 	region_truncate(region, region_svp);
 	return rc;
 }
