@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(24)
+test:plan(25)
 
 test:execsql([[
     DROP TABLE IF EXISTS over;
@@ -251,6 +251,16 @@ SELECT count() OVER (
 ) FROM c;
     ]],
     { 1, "frame ending offset must be a non-negative integer" }
+)
+
+test:do_execsql_test(
+    "10.0",
+    [[
+WITH t1(a,b) AS (VALUES(1,2))
+SELECT count() FILTER (where b<>5) OVER w1
+FROM t1
+WINDOW w1 AS (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING);
+    ]], { 1, }
 )
 
 test:finish_test()
