@@ -801,7 +801,9 @@ windowAggStep(
 			struct coll *coll = NULL;
 			if (pWin->pFilter) {
 				int regTmp;
-				assert(nArg == pWin->pOwner->x.pList->nExpr);
+				assert(nArg == 0 ||
+				       nArg == pWin->pOwner->x.pList->nExpr);
+				assert(nArg || pWin->pOwner->x.pList == 0);
 				if (csr > 0) {
 					regTmp = sqlGetTempReg(pParse);
 					sqlVdbeAddOp3(v, OP_Column, csr,
@@ -819,6 +821,7 @@ windowAggStep(
 			if (flags &SQL_FUNC_NEEDCOLL) {
 				bool unused;
 				uint32_t id;
+				assert(nArg > 0);
 				Expr *pExpr = pWin->pOwner->x.pList->a[0].pExpr;
 				if (sql_expr_coll(pParse, pExpr, &unused, &id,
 						  &coll) != 0) {
