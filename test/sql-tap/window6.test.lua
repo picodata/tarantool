@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(22)
+test:plan(24)
 
 test:execsql([[
     DROP TABLE IF EXISTS over;
@@ -92,6 +92,36 @@ ORDER BY "counter", row_number() OVER w
         2, 3.0, 1,
         2, 1.0, 2,
         3, 100.0, 1,
+    }
+)
+
+test:do_execsql_test(
+    "8.2",
+    [[
+SELECT "counter", "value", SUM("value") OVER
+(ORDER BY "id" ROWS 2 PRECEDING)
+FROM "sample"
+ORDER BY "id"
+    ]],
+    {
+        1, 10.0, 10.0,
+        1, 20.0, 30.0,
+        2, 1.0, 31.0,
+        2, 3.0, 24.0,
+        3, 100.0, 104.0
+    }
+)
+
+test:do_execsql_test(
+    "8.3",
+    [[
+SELECT SUM("value") OVER
+(ORDER BY "id" ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+FROM "sample"
+ORDER BY "id"
+    ]],
+    {
+        10.0, 30.0, 31.0, 24.0, 104.0
     }
 )
 
