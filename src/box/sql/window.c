@@ -778,6 +778,7 @@ windowAggStep(
 		bool is_minmax = (flags & SQL_FUNC_MIN) ||
 				 (flags & SQL_FUNC_MAX);
 		if (is_minmax && pWin->eStart != TK_UNBOUNDED) {
+			int addrIsNull = sqlVdbeAddOp1(v, OP_IsNull, regArg);
 			if (bInverse == 0) {
 				sqlVdbeAddOp2(v, OP_AddImm,
 					      pWin->regApp + 1, 1);
@@ -794,6 +795,7 @@ windowAggStep(
 				sqlVdbeAddOp1(v, OP_Delete, pWin->csrApp);
 				sqlVdbeJumpHere(v, sqlVdbeCurrentAddr(v) - 2);
 			}
+			sqlVdbeJumpHere(v, addrIsNull);
 		} else {
 			int addrIf = 0;
 			struct coll *coll = NULL;
