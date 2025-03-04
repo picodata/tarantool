@@ -1809,6 +1809,11 @@ sqlWindowCodeStep(
 	int addrGosub)		/* OP_Gosub here to return each row */
 {
 	Window *pMWin = p->pWin;
+	Vdbe *v = sqlGetVdbe(pParse);
+	/* Shut down the compiler warnings about unused parameters
+	 ** for release builds.
+	 */
+	(void)v;
 
 	/* There are three different functions that may be used to do the work
 	 * of this one, depending on the window frame and the specific built-in
@@ -1848,6 +1853,7 @@ sqlWindowCodeStep(
 	    (pMWin->eStart != TK_UNBOUNDED ||
 	    pMWin->eEnd != TK_CURRENT ||
 	    !pMWin->pOrderBy)) {
+		VdbeComment((v, "Begin RowExprStep()"));
 		windowCodeRowExprStep(pParse, p, pWInfo,
 				      regGosub, addrGosub);
 	} else {
@@ -1861,9 +1867,11 @@ sqlWindowCodeStep(
 
 		/* Otherwise, call windowCodeDefaultStep().	*/
 		if (bCache) {
+			VdbeComment((v, "Begin CacheStep()"));
 			windowCodeCacheStep(pParse, p, pWInfo,
 					    regGosub, addrGosub);
 		} else {
+			VdbeComment((v, "Begin DefaultStep()"));
 			windowCodeDefaultStep(pParse, p, pWInfo,
 					      regGosub, addrGosub);
 		}
