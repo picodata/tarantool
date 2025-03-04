@@ -214,8 +214,11 @@ sqlWindowUpdate(
 struct WindowRewrite {
 	/* Windows for this traversal */
 	Window *pWin;
+	SrcList *pSrc;
 	/* Rewritten expression list */
 	ExprList *pSub;
+	/* Current sub-select, if any */
+	Select *pSubSelect;
 };
 
 /*
@@ -227,6 +230,26 @@ static int
 selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr)
 {
 	struct WindowRewrite *p = pWalker->u.pRewrite;
+
+	/* If this function is being called from within a scalar sub-select
+	** that used by the SELECT statement being processed, only process
+	** TK_COLUMN_REF expressions that refer to it (the outer SELECT). Do
+	** not process aggregates or window functions at all, as they belong
+	** to the scalar sub-select.  */
+	if (p->pSubSelect) {
+		if (pExpr->op != TK_COLUMN_REF) {
+			return WRC_Continue;
+		} else {
+			int nSrc = p->pSrc->nSrc;
+			int i;
+			for (i = 0; i < nSrc; i++) {
+				if (pExpr->iTable == p->pSrc->a[i].iCursor)
+					break;
+			}
+			if (i == nSrc)
+				return WRC_Continue;
+		}
+	}
 
 	enum field_type eType = sql_expr_type(pExpr);
 	ExprClearProperty(pExpr, EP_Resolved);
@@ -272,8 +295,15 @@ selectWindowRewriteExprCb(Walker *pWalker, Expr *pExpr)
 static int
 selectWindowRewriteSelectCb(Walker *pWalker, Select *pSelect)
 {
-	(void)pWalker;
-	(void)pSelect;
+	struct WindowRewrite *p = pWalker->u.pRewrite;
+	Select *pSave = p->pSubSelect;
+	if (pSave == pSelect) {
+		return WRC_Continue;
+	} else {
+		p->pSubSelect = pSelect;
+		sqlWalkSelect(pWalker, pSelect);
+		p->pSubSelect = pSave;
+	}
 	return WRC_Prune;
 }
 
@@ -283,7 +313,7 @@ selectWindowRewriteSelectCb(Walker *pWalker, Select *pSelect)
  *   * TK_COLUMN_REF,
  *   * aggregate function, or
  *   * window function with a Window object that is not a member of the
- *     linked list passed as the second argument (pWin)
+ *     Window list passed as the second argument (pWin)
  *
  * Append the node to output expression-list (*ppSub). And replace it
  * with a TK_COLUMN_REF that reads the (N-1)th element of table
@@ -294,6 +324,7 @@ static void
 selectWindowRewriteEList(
 	Parse *pParse,
 	Window *pWin,
+	SrcList *pSrc,
 	ExprList *pEList,	/* Rewrite expressions in this list */
 	ExprList **ppSub)	/* IN/OUT: Sub-select expression-list */
 {
@@ -305,6 +336,7 @@ selectWindowRewriteEList(
 
 	sRewrite.pSub = *ppSub;
 	sRewrite.pWin = pWin;
+	sRewrite.pSrc = pSrc;
 
 	sWalker.pParse = pParse;
 	sWalker.xExprCallback = selectWindowRewriteExprCb;
@@ -397,8 +429,10 @@ sqlWindowRewrite(Parse *pParse, Select *p)
 		pMWin->iEphCsr = pParse->nTab++;
 		pMWin->regEph = ++pParse->nMem;
 
-		selectWindowRewriteEList(pParse, pMWin, p->pEList, &pSublist);
-		selectWindowRewriteEList(pParse, pMWin, p->pOrderBy, &pSublist);
+		selectWindowRewriteEList(pParse, pMWin, pSrc,
+					 p->pEList, &pSublist);
+		selectWindowRewriteEList(pParse, pMWin, pSrc,
+					 p->pOrderBy, &pSublist);
 		pMWin->nBufferCol = (pSublist ? pSublist->nExpr : 0);
 
 		/*
