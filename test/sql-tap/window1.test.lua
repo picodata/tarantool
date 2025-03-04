@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(67)
+test:plan(69)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -752,6 +752,32 @@ test:do_catchsql_test(
     ]],
     -- {1, "misuse of window function SUM()"})
     {1, "At line 1 at or near position 35: keyword 'WHERE' is reserved. Please use double quotes if 'WHERE' is an identifier."})
+
+-- Endless loop on a query with window functions and a limit
+test:do_execsql_test(
+    "window1-12.100",
+    [[
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(id INT PRIMARY KEY, b TEXT, c TEXT);
+INSERT INTO t1 VALUES(1, 'A', 'one');
+INSERT INTO t1 VALUES(2, 'B', 'two');
+INSERT INTO t1 VALUES(3, 'C', 'three');
+INSERT INTO t1 VALUES(4, 'D', 'one');
+INSERT INTO t1 VALUES(5, 'E', 'two');
+SELECT id, b, row_number() OVER(ORDER BY c) AS x
+FROM t1 WHERE id>1
+ORDER BY b LIMIT 1;
+    ]], { 2, "B", 3 })
+
+test:do_execsql_test(
+    "window1-12.110",
+    [[
+INSERT INTO t1 VALUES(6, 'F', 'three');
+INSERT INTO t1 VALUES(7, 'G', 'one');
+SELECT id, b, row_number() OVER(ORDER BY c) AS x
+FROM t1 WHERE id>1
+ORDER BY b LIMIT 2;
+    ]], { 2, "B", 5, 3, "C", 3,})
 
 test:do_execsql_test(
     "window1-AVG-inverse",
