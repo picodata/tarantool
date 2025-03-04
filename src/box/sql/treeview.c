@@ -161,6 +161,84 @@ sqlTreeViewWith(TreeView * pView, const With * pWith)
 }
 
 /*
+ ** Generate a description of starting or stopping bounds
+ */
+void
+sqlTreeViewBound(
+	TreeView *pView,	/* View context */
+	u8 eBound,		/* UNBOUNDED, CURRENT, PRECEDING, FOLLOWING */
+	Expr *pExpr,		/* Value for PRECEDING or FOLLOWING */
+	u8 moreToFollow)	/* True if more to follow */
+{
+	switch (eBound) {
+	case TK_UNBOUNDED: {
+		sqlTreeViewItem(pView, "UNBOUNDED", moreToFollow);
+		sqlTreeViewPop(pView);
+		break;
+	}
+	case TK_CURRENT: {
+		sqlTreeViewItem(pView, "CURRENT", moreToFollow);
+		sqlTreeViewPop(pView);
+		break;
+	}
+	case TK_PRECEDING: {
+		sqlTreeViewItem(pView, "PRECEDING", moreToFollow);
+		sqlTreeViewExpr(pView, pExpr, 0);
+		sqlTreeViewPop(pView);
+		break;
+	}
+	case TK_FOLLOWING: {
+		sqlTreeViewItem(pView, "FOLLOWING", moreToFollow);
+		sqlTreeViewExpr(pView, pExpr, 0);
+		sqlTreeViewPop(pView);
+		break;
+	}
+	}
+}
+
+/*
+** Generate a human-readable explanation for a Window object
+*/
+void
+sqlTreeViewWindow(TreeView *pView, const Window *pWin, u8 more)
+{
+	pView = sqlTreeViewPush(pView, more);
+	if (pWin->zName) {
+		sqlTreeViewLine(pView, "OVER %s", pWin->zName);
+	} else {
+		sqlTreeViewLine(pView, "OVER");
+	}
+	if (pWin->pPartition) {
+		sqlTreeViewExprList(pView, pWin->pPartition, 1, "PARTITION-BY");
+	}
+	if (pWin->pOrderBy) {
+		sqlTreeViewExprList(pView, pWin->pOrderBy, 1, "ORDER-BY");
+	}
+	if (pWin->eType) {
+		sqlTreeViewItem(pView,
+				pWin->eType == TK_RANGE ? "RANGE" : "ROWS", 0);
+		sqlTreeViewBound(pView, pWin->eStart, pWin->pStart, 1);
+		sqlTreeViewBound(pView, pWin->eEnd, pWin->pEnd, 0);
+		sqlTreeViewPop(pView);
+	}
+	sqlTreeViewPop(pView);
+}
+
+/*
+ ** Generate a human-readable explanation for a Window Function object
+ */
+void
+sqlTreeViewWinFunc(TreeView *pView, const Window *pWin, u8 more)
+{
+	pView = sqlTreeViewPush(pView, more);
+	sqlTreeViewLine(pView, "WINFUNC %s(%d)",
+			pWin->pFunc->def->name,
+			pWin->pFunc->def->param_count);
+	sqlTreeViewWindow(pView, pWin, 0);
+	sqlTreeViewPop(pView);
+}
+
+/*
  * Generate a human-readable description of a Select object.
  */
 void
@@ -203,9 +281,23 @@ sqlTreeViewSelect(TreeView * pView, const Select * p, u8 moreToFollow)
 				n++;
 			if (p->pOffset)
 				n++;
+			if (p->pWin)
+				n++;
+			if (p->pWinDefn)
+				n++;
 		}
 		sqlTreeViewExprList(pView, p->pEList, (n--) > 0,
 					"result-set");
+		if (p->pWin) {
+			Window *pX;
+			pView = sqlTreeViewPush(pView, (n--) > 0);
+			sqlTreeViewLine(pView, "window-functions");
+			for (pX = p->pWin; pX; pX = pX->pNextWin) {
+				sqlTreeViewWinFunc(pView, pX,
+						   pX->pNextWin != 0);
+			}
+			sqlTreeViewPop(pView);
+		}
 		if (p->pSrc && p->pSrc->nSrc) {
 			int i;
 			pView = sqlTreeViewPush(pView, (n--) > 0);
@@ -260,6 +352,14 @@ sqlTreeViewSelect(TreeView * pView, const Select * p, u8 moreToFollow)
 		if (p->pHaving) {
 			sqlTreeViewItem(pView, "HAVING", (n--) > 0);
 			sqlTreeViewExpr(pView, p->pHaving, 0);
+			sqlTreeViewPop(pView);
+		}
+		if (p->pWinDefn) {
+			Window *pX;
+			sqlTreeViewItem(pView, "WINDOW", (n--) > 0);
+			for (pX = p->pWinDefn; pX; pX = pX->pNextWin) {
+				sqlTreeViewWindow(pView, pX, pX->pNextWin != 0);
+			}
 			sqlTreeViewPop(pView);
 		}
 		if (p->pOrderBy) {
@@ -478,10 +578,13 @@ sqlTreeViewExpr(TreeView * pView, const Expr * pExpr, u8 moreToFollow)
 	case TK_AGG_FUNCTION:
 	case TK_FUNCTION:{
 			ExprList *pFarg;	/* List of function arguments */
+			Window *pWin;
 			if (ExprHasProperty(pExpr, EP_TokenOnly)) {
 				pFarg = 0;
+				pWin = 0;
 			} else {
 				pFarg = pExpr->x.pList;
+				pWin = pExpr->y.pWin;
 			}
 			if (pExpr->op == TK_AGG_FUNCTION) {
 				sqlTreeViewLine(pView, "AGG_FUNCTION%d %Q",
@@ -492,7 +595,7 @@ sqlTreeViewExpr(TreeView * pView, const Expr * pExpr, u8 moreToFollow)
 						    pExpr->u.zToken);
 			}
 			if (pFarg) {
-				sqlTreeViewExprList(pView, pFarg, 0, 0);
+				sqlTreeViewExprList(pView, pFarg, pWin != 0, 0);
 			}
 			break;
 		}
