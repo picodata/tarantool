@@ -2399,8 +2399,22 @@ struct TreeView {
 #endif				/* SQL_DEBUG */
 
 /*
- * Object used to encode the OVER() clause attached to a window-function
- * invocation. And some fields used while generating VM code for the same.
+ ** This object is used in varioius ways, all related to window functions
+ **
+ **   (1) A single instance of this structure is attached to the
+ **       the Expr.pWin field for each window function in an expression tree.
+ **       This object holds the information contained in the OVER clause,
+ **       plus additional fields used during code generation.
+ **
+ **   (2) All window functions in a single SELECT form a linked-list
+ **       attached to Select.pWin.  The Window.pFunc and Window.pExpr
+ **       fields point back to the expression that is the window function.
+ **
+ **   (3) The terms of the WINDOW clause of a SELECT are instances of this
+ **       object on a linked list attached to Select.pWinDefn.
+ **
+ ** The uses (1) and (2) are really the same Window object that just happens
+ ** to be accessible in two different ways.  Use (3) is are separate objects.
  */
 struct Window {
 	char *zName;		/* Name of window (may be NULL) */
@@ -2426,7 +2440,8 @@ struct Window {
 	int regAppCsr;		/* Register holding the function cursor */
 	int regApp;		/* Function value register (+used by min/max) */
 
-	int regPart;		/* Register holding partition */
+	int regPart;		/* First in a set of registers holding PARTITION
+				 ** BY and ORDER BY values for the window */
 	Expr *pOwner;		/* Expr object this window is attached to */
 	int nBufferCol;		/* Number of columns in buffer table */
 	int iArgCol;		/* Offset of first argument for this function */
@@ -2587,6 +2602,8 @@ void sqlTreeViewBareExprList(TreeView *, const ExprList *, const char *);
 void sqlTreeViewExprList(TreeView *, const ExprList *, u8, const char *);
 void sqlTreeViewSelect(TreeView *, const Select *, u8);
 void sqlTreeViewWith(TreeView *, const With *);
+void sqlite3TreeViewWindow(TreeView*, const Window*, u8);
+void sqlite3TreeViewWinFunc(TreeView*, const Window*, u8);
 #endif
 
 void sqlDequote(char *);
