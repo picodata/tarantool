@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(25)
+test:plan(26)
 
 test:execsql([[
     DROP TABLE IF EXISTS over;
@@ -261,6 +261,27 @@ SELECT count() FILTER (where b<>5) OVER w1
 FROM t1
 WINDOW w1 AS (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING);
     ]], { 1, }
+)
+
+test:execsql([[
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a INT, b INT PRIMARY KEY);
+INSERT INTO t1 VALUES (10,1),(15,2),(20,3),(20,4),
+                      (25,5),(30,6),(30,7),(50,8);
+DROP TABLE IF EXISTS t3;
+CREATE TABLE t3(x INT PRIMARY KEY, y TEXT);
+INSERT INTO t3(x,y) VALUES(10,'ten'),(15,'fifteen'),(30,'thirty');
+]])
+
+test:do_execsql_test(
+    "11.1",
+    [[
+SELECT a, (SELECT y FROM t3 WHERE x=a) FROM t1 ORDER BY a;
+    ]],
+    {
+10, "ten", 15, "fifteen", 20, "", 20, "",
+25, "", 30, "thirty", 30, "thirty", 50, "",
+    }
 )
 
 test:finish_test()
