@@ -6104,6 +6104,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					  addrGosub);
 			sqlVdbeAddOp2(v, OP_Goto, 0, iBreak);
 			sqlVdbeResolveLabel(v, addrGosub);
+			VdbeNoopComment((v, "inner-loop subroutine"));
 			selectInnerLoop(pParse, p, p->pEList, -1, &sSort,
 					&sDistinct, pDest, iCont, iBreak);
 			sqlVdbeResolveLabel(v, iCont);
