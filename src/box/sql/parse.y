@@ -1821,37 +1821,28 @@ number_typedef(A) ::= DECIMAL . { A.type = FIELD_TYPE_DECIMAL; }
 // TK_ILLEGAL.
 //
 %type windowdefn_list {Window*}
-%destructor windowdefn_list {sqlWindowDelete($$);}
+%destructor windowdefn_list {sqlWindowListDelete($$);}
 windowdefn_list(A) ::= windowdefn(Z). { A = Z; }
 windowdefn_list(A) ::= windowdefn_list(Y) COMMA windowdefn(Z). {
-  if( Z ) Z->pNextWin = Y;
+  assert (Z != 0);
+  Z->pNextWin = Y;
   A = Z;
 }
 
 %type windowdefn {Window*}
 %destructor windowdefn {sqlWindowDelete($$);}
 windowdefn(A) ::= nm(X) AS window(Y). {
-  if( Y ){
+  if (ALWAYS(Y)) {
     Y->zName = sql_xstrndup(X.z, X.n);
   }
   A = Y;
-}
-
-%type window_or_nm {Window*}
-%destructor window_or_nm {sqlWindowDelete($$);}
-window_or_nm(A) ::= window(Z). {A = Z;}
-window_or_nm(A) ::= nm(Z). {
-  A = (Window*)sql_xmalloc0(sizeof(Window));
-  if( A ){
-    A->zName = sql_xstrndup(Z.z, Z.n);
-  }
 }
 
 %type window {Window*}
 %destructor window {sqlWindowDelete($$);}
 window(A) ::= LP part_opt(X) orderby_opt(Y) frame_opt(Z) RP. {
   A = Z;
-  if( A ){
+  if (ALWAYS(A)) {
     A->pPartition = X;
     A->pOrderBy = Y;
   }
@@ -1895,16 +1886,27 @@ frame_bound_e(A) ::= UNBOUNDED(Y) FOLLOWING. { A.eType = @Y; A.pExpr = 0; }
 frame_bound_e(A) ::= frame_bound(Z).         { A = Z; }
 
 %type windowdefn_opt {Window*}
-%destructor windowdefn_opt {sqlWindowDelete($$);}
+%destructor windowdefn_opt {sqlWindowListDelete($$);}
 windowdefn_opt(A) ::= . { A = 0; }
 windowdefn_opt(A) ::= WINDOW windowdefn_list(B). { A = B; }
 
 %type over_opt {Window*}
 %destructor over_opt {sqlWindowDelete($$);}
 over_opt(A) ::= . { A = 0; }
-over_opt(A) ::= filter_opt(W) OVER window_or_nm(Z). {
+over_opt(A) ::= filter_opt(W) OVER window(Z). {
   A = Z;
-  if( A ) A->pFilter = W;
+  assert (A != 0);
+  A->pFilter = W;
+}
+
+over_opt(A) ::= filter_opt(W) OVER nm(Z). {
+  A = (Window *)sql_xmalloc0(sizeof(Window));
+  if (A) {
+    A->zName = sql_xstrndup(Z.z, Z.n);
+    A->pFilter = W;
+  } else {
+    sql_expr_delete(W);
+  }
 }
 
 %type filter_opt {Expr*}
