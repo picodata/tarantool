@@ -2431,7 +2431,7 @@ struct Window {
 	Expr *pFilter;		/* Filter expression */
 	struct func *pFunc;	/* Function object */
 
-	int iEphCsr;		/* Temp table cursor used by this window */
+	int iEphCsr;		/* Partition buffer or Peer buffer */
 	int regEph;		/* Register holding the window temp table */
 	int regAccum;		/* Register holding accumulator */
 	int regResult;		/* Register holding result of current row */
