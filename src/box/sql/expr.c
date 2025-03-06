@@ -5427,6 +5427,7 @@ sqlExprAnalyzeAggregates(NameContext * pNC, Expr * pExpr)
 	w.xExprCallback = analyzeAggregate;
 	w.xSelectCallback = analyzeAggregatesInSelect;
 	w.u.pNC = pNC;
+	w.pParse = 0;
 	assert(pNC->pSrcList != 0);
 	sqlWalkExpr(&w, pExpr);
 }
