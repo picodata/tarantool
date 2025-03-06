@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(69)
+test:plan(70)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -858,6 +858,32 @@ test:do_execsql_test(
   SELECT a, row_number() OVER(ORDER BY b DESC) FROM t1;
     ]],
     {}
+)
+
+-- Assertion fault when window functions are used.
+--
+-- Root cause is the query flattener invoking sqlExprDup() on
+-- expressions that contain subqueries with window functions.
+-- The sqlExprDup() routine is not making correctly initializing
+-- Select.pWin field of the subqueries.
+--
+test:do_execsql_test(
+    "window1-14.1",
+    [[
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(x INT PRIMARY KEY);
+INSERT INTO t1(x) VALUES(12345);
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2(c INT PRIMARY KEY);
+INSERT INTO t2(c) VALUES(1);
+
+SELECT y FROM (
+  SELECT c IN (
+    SELECT (row_number() OVER()) FROM t1
+  ) AS y FROM t2
+);
+    ]],
+    {true,}
 )
 
 test:finish_test()
