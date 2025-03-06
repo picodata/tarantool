@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(70)
+test:plan(72)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -884,6 +884,34 @@ SELECT y FROM (
 );
     ]],
     {true,}
+)
+
+test:execsql( [[
+DROP TABLE IF EXISTS t7;
+CREATE TABLE t7(rowid INT PRIMARY KEY, a INT, b INT);
+INSERT INTO t7(rowid, a, b) VALUES
+    (1, 1, 3),
+    (2, 10, 4),
+    (3, 100, 2);
+]])
+
+test:do_execsql_test(
+    "window1-16.1",
+    [[
+SELECT rowid, sum(a) OVER (
+  PARTITION BY b IN (SELECT rowid FROM t7)
+) FROM t7;
+    ]],
+    {2,10,1,101,3,101,}
+)
+
+test:do_execsql_test(
+    "window1-16.2",
+    [[
+SELECT rowid, sum(a) OVER w1 FROM t7
+WINDOW w1 AS (PARTITION BY b IN (SELECT rowid FROM t7));
+    ]],
+    {2,10,1,101,3,101,}
 )
 
 test:finish_test()

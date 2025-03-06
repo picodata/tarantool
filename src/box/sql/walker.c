@@ -38,6 +38,25 @@
 #include <string.h>
 
 /*
+ ** Walk all expressions linked into the list of Window objects passed
+ ** as the second argument.
+ */
+static int
+walkWindowList(Walker *pWalker, Window *pList)
+{
+	Window *pWin;
+	for (pWin = pList; pWin; pWin = pWin->pNextWin) {
+		if (sqlWalkExprList(pWalker, pWin->pOrderBy))
+			return WRC_Abort;
+		if (sqlWalkExprList(pWalker, pWin->pPartition))
+			return WRC_Abort;
+		if (sqlWalkExpr(pWalker, pWin->pFilter))
+			return WRC_Abort;
+	}
+	return WRC_Continue;
+}
+
+/*
  * Walk an expression tree.  Invoke the callback once for each node
  * of the expression, while descending.  (In other words, the callback
  * is invoked before visiting children.)
@@ -76,12 +95,7 @@ walkExpr(Walker * pWalker, Expr * pExpr)
 			return WRC_Abort;
 	}
 	if (ExprHasProperty(pExpr, EP_WinFunc)) {
-		Window *pWin = pExpr->y.pWin;
-		if (sqlWalkExprList(pWalker, pWin->pPartition))
-			return WRC_Abort;
-		if (sqlWalkExprList(pWalker, pWin->pOrderBy))
-			return WRC_Abort;
-		if (sqlWalkExpr(pWalker, pWin->pFilter))
+		if (walkWindowList(pWalker, pExpr->y.pWin))
 			return WRC_Abort;
 	}
 	return WRC_Continue;
