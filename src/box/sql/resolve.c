@@ -1055,6 +1055,39 @@ sqlResolveOrderGroupBy(Parse * pParse,	/* Parsing context.  Leave error messages
 }
 
 /*
+ ** Walker callback for resolveRemoveWindows().
+ */
+static int
+resolveRemoveWindowsCb(Walker *pWalker, Expr *pExpr)
+{
+	if (ExprHasProperty(pExpr, EP_WinFunc)) {
+		Window **pp;
+		for (pp = &pWalker->u.pSelect->pWin; *pp;
+		     pp = &(*pp)->pNextWin) {
+			if (*pp == pExpr->y.pWin) {
+				*pp = (*pp)->pNextWin;
+				break;
+			}
+		}
+	}
+	return WRC_Continue;
+}
+
+/*
+ ** Remove any Window objects owned by the expression pExpr from the
+ ** Select.pWin list of Select object pSelect.
+ */
+static void
+resolveRemoveWindows(Select *pSelect, Expr *pExpr)
+{
+	Walker sWalker;
+	memset(&sWalker, 0, sizeof(Walker));
+	sWalker.xExprCallback = resolveRemoveWindowsCb;
+	sWalker.u.pSelect = pSelect;
+	sqlWalkExpr(&sWalker, pExpr);
+}
+
+/*
  * pOrderBy is an ORDER BY or GROUP BY clause in SELECT statement pSelect.
  * The Name context of the SELECT statement is pNC.  zType is either
  * "ORDER" or "GROUP" depending on which type of clause pOrderBy is.
@@ -1129,17 +1162,13 @@ resolveOrderGroupBy(NameContext * pNC,	/* The name context of the SELECT stateme
 		for (j = 0; j < pSelect->pEList->nExpr; j++) {
 			if (sqlExprCompare
 			    (pE, pSelect->pEList->a[j].pExpr, -1) == 0) {
-				if (ExprHasProperty(pE, EP_WinFunc)) {
-					Window **pp;
-					for (pp = &pSelect->pWin;
-					    *pp != NULL;
-					     pp = &(*pp)->pNextWin) {
-						if (*pp == pE->y.pWin) {
-							*pp = (*pp)->pNextWin;
-							break;
-						}
-					}
-				}
+				/* Since this expression is being changed into
+				 ** a reference ** to an identical expression
+				 ** in the result set, remove all Window objects
+				 ** belonging to the expression from the
+				 ** Select.pWin list.
+				 */
+				resolveRemoveWindows(pSelect, pE);
 				pItem->u.x.iOrderByCol = j + 1;
 			}
 		}
