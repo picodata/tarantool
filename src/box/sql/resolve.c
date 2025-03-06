@@ -675,6 +675,8 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 			if (is_agg || is_window) {
 				if (pExpr->y.pWin) {
 					Select *pSel = pNC->pWinSelect;
+					sqlWindowUpdate(pParse, pSel->pWinDefn,
+							pExpr->y.pWin, func);
 					sqlWalkExprList(
 						pWalker,
 						pExpr->y.pWin->pPartition);
@@ -682,8 +684,6 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 							pExpr->y.pWin->pOrderBy);
 					sqlWalkExpr(pWalker,
 						    pExpr->y.pWin->pFilter);
-					sqlWindowUpdate(pParse, pSel->pWinDefn,
-							pExpr->y.pWin, func);
 					if (pSel->pWin == 0 ||
 					    sqlWindowCompare(pSel->pWin,
 							     pExpr->y.pWin) ==
