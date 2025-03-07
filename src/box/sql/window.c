@@ -1411,7 +1411,7 @@ windowCodeStep(
 	int addrIf;
 	int addrIfEnd;
 	int addrIfStart;
-	int addrGoto2;
+	int addrShortcut = 0;
 	int addrGosubFlush = 0;
 	int addrInteger = 0;
 
@@ -1473,37 +1473,90 @@ windowCodeStep(
 	if (pMWin->pPartition)
 		sqlVdbeAddOp3(v, OP_Copy, reg + pMWin->nBufferCol,
 			      pMWin->regPart, pMWin->pPartition->nExpr - 1);
+
+	regArg = windowInitAccum(pParse, pMWin);
+
+	sqlExprCode(pParse, pMWin->pStart, regStart);
+	windowCheckFrameOffset(pParse, regStart, 0);
+	sqlExprCode(pParse, pMWin->pEnd, regEnd);
+	windowCheckFrameOffset(pParse, regEnd, 1);
+
+	if (pMWin->eStart == TK_FOLLOWING ||
+	    pMWin->eEnd == TK_PRECEDING) {
+		int op = ((pMWin->eStart == TK_FOLLOWING) ? OP_Ge : OP_Le);
+		int addrGe = sqlVdbeAddOp3(v, op, regStart, 0, regEnd);
+		windowAggFinal(pParse, pMWin, 0);
+		sqlVdbeAddOp2(v, OP_Rewind, csrCurrent, 1);
+		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+		sqlVdbeAddOp1(v, OP_ResetSorter, csrCurrent);
+		addrShortcut = sqlVdbeAddOp0(v, OP_Goto);
+		sqlVdbeJumpHere(v, addrGe);
+	}
+	if (pMWin->eStart == TK_FOLLOWING)
+		sqlVdbeAddOp3(v, OP_Subtract, regStart, regEnd, regStart);
+
 	sqlVdbeAddOp2(v, OP_Rewind, csrStart, 1);
 	sqlVdbeChangeP5(v, 1);
 	sqlVdbeAddOp2(v, OP_Rewind, csrCurrent, 1);
 	sqlVdbeChangeP5(v, 1);
 	sqlVdbeAddOp2(v, OP_Rewind, csrEnd, 1);
-	regArg = windowInitAccum(pParse, pMWin);
+	sqlVdbeChangeP5(v, 1);
 
 	sqlVdbeAddOp2(v, OP_Bool, 0, pMWin->regFirst);
-	sqlExprCode(pParse, pMWin->pStart, regStart);
-	windowCheckFrameOffset(pParse, regStart, 0);
-	sqlExprCode(pParse, pMWin->pEnd, regEnd);
-	windowCheckFrameOffset(pParse, regEnd, 1);
 	addrGoto = sqlVdbeAddOp0(v, OP_Goto);
 
 	/* This block is run for the second and subsequent rows of each partition */
 	sqlVdbeJumpHere(v, addrIf);
-	sqlVdbeAddOp2(v, OP_Next, csrEnd, sqlVdbeCurrentAddr(v) + 1);
-	addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
-	windowAggFinal(pParse, pMWin, 0);
-	sqlVdbeAddOp2(v, OP_Next, csrCurrent, sqlVdbeCurrentAddr(v) + 1);
-	windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
-	addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
-	sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 1);
-	windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
-	sqlVdbeJumpHere(v, addrIfStart);
-	sqlVdbeJumpHere(v, addrIfEnd);
+	if (pMWin->eStart == TK_FOLLOWING) {
+		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
+		windowAggFinal(pParse, pMWin, 0);
+		sqlVdbeAddOp2(v, OP_Next, csrCurrent,
+			      sqlVdbeCurrentAddr(v) + 1);
+		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+		sqlVdbeJumpHere(v, addrIfEnd);
+
+		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
+		sqlVdbeAddOp2(v, OP_Next, csrStart,
+			      sqlVdbeCurrentAddr(v) + 1);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		sqlVdbeJumpHere(v, addrIfStart);
+	} else if (pMWin->eEnd == TK_PRECEDING) {
+		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
+		sqlVdbeAddOp2(v, OP_Next, csrEnd, sqlVdbeCurrentAddr(v) + 1);
+		windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+		sqlVdbeJumpHere(v, addrIfEnd);
+
+		windowAggFinal(pParse, pMWin, 0);
+		sqlVdbeAddOp2(v, OP_Next, csrCurrent,
+			      sqlVdbeCurrentAddr(v) + 1);
+		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+
+		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
+		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 1);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		sqlVdbeJumpHere(v, addrIfStart);
+	} else {
+		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
+		windowAggFinal(pParse, pMWin, 0);
+		sqlVdbeAddOp2(v, OP_Next, csrCurrent,
+			      sqlVdbeCurrentAddr(v) + 1);
+		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
+		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 1);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		sqlVdbeJumpHere(v, addrIfStart);
+		sqlVdbeJumpHere(v, addrIfEnd);
+	}
 
 	sqlVdbeJumpHere(v, addrGoto);
-	windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+	if (pMWin->eEnd != TK_PRECEDING) {
+		sqlVdbeAddOp2(v, OP_Next, csrEnd, sqlVdbeCurrentAddr(v) + 1);
+		windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+	}
 
 	/* End of the main input loop */
+	if (addrShortcut > 0)
+		sqlVdbeJumpHere(v, addrShortcut);
 	sqlWhereEnd(pWInfo);
 
 	if (pMWin->pPartition) {
@@ -1511,18 +1564,50 @@ windowCodeStep(
 		sqlVdbeJumpHere(v, addrGosubFlush);
 	}
 
-	sqlVdbeAddOp2(v, OP_Next, csrCurrent, sqlVdbeCurrentAddr(v) + 2);
-	addrGoto = sqlVdbeAddOp0(v, OP_Goto);
-	windowAggFinal(pParse, pMWin, 0);
-	windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
-	addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
-	sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 2);
-	addrGoto2 = sqlVdbeAddOp0(v, OP_Goto);
-	windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
-	sqlVdbeJumpHere(v, addrIfStart);
-	sqlVdbeAddOp2(v, OP_Goto, 0, addrGoto - 1);
-	sqlVdbeJumpHere(v, addrGoto);
-	sqlVdbeJumpHere(v, addrGoto2);
+	if (pMWin->eStart == TK_FOLLOWING) {
+		int addrBreak;
+		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
+		sqlVdbeAddOp2(v, OP_Next, csrCurrent,
+			      sqlVdbeCurrentAddr(v) + 2);
+		addrBreak = sqlVdbeAddOp0(v, OP_Goto);
+		windowAggFinal(pParse, pMWin, 0);
+		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+		sqlVdbeJumpHere(v, addrIfEnd);
+
+		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
+		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 2);
+		sqlVdbeAddOp0(v, OP_Goto);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		sqlVdbeJumpHere(v, addrIfStart);
+		sqlVdbeJumpHere(v, addrIfStart + 2);
+
+		sqlVdbeAddOp2(v, OP_Goto, 0, addrIfEnd);
+		sqlVdbeJumpHere(v, addrBreak);
+	} else {
+		sqlVdbeAddOp2(v, OP_Next, csrCurrent,
+			      sqlVdbeCurrentAddr(v) + 2);
+		addrGoto = sqlVdbeAddOp0(v, OP_Goto);
+		if (pMWin->eEnd == TK_PRECEDING) {
+			addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
+			sqlVdbeAddOp2(v, OP_Next, csrEnd,
+				      sqlVdbeCurrentAddr(v) + 1);
+			windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+			sqlVdbeJumpHere(v, addrIfEnd);
+			windowAggFinal(pParse, pMWin, 0);
+			windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+		} else {
+			windowAggFinal(pParse, pMWin, 0);
+			windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
+			addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart,
+						    0, 1);
+			sqlVdbeAddOp2(v, OP_Next, csrStart,
+				      sqlVdbeCurrentAddr(v) + 1);
+			windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+			sqlVdbeJumpHere(v, addrIfStart);
+			sqlVdbeAddOp2(v, OP_Goto, 0, addrGoto - 1);
+		}
+		sqlVdbeJumpHere(v, addrGoto);
+	}
 
 	sqlVdbeAddOp1(v, OP_ResetSorter, csrCurrent);
 	sqlVdbeAddOp2(v, OP_Bool, 1, pMWin->regFirst);
@@ -2015,8 +2100,10 @@ sqlWindowCodeStep(
 	    (pMWin->eStart != TK_UNBOUNDED ||
 	    pMWin->eEnd != TK_CURRENT ||
 	    !pMWin->pOrderBy)) {
-		if (pMWin->eStart != TK_PRECEDING ||
-		    pMWin->eEnd != TK_FOLLOWING) {
+		if ((pMWin->eStart != TK_PRECEDING &&
+		     pMWin->eStart != TK_FOLLOWING) ||
+		    (pMWin->eEnd != TK_FOLLOWING &&
+		     pMWin->eEnd != TK_PRECEDING)) {
 			VdbeComment((pParse->pVdbe, "Begin RowExprStep()"));
 			windowCodeRowExprStep(pParse, p, pWInfo, regGosub,
 					      addrGosub);
