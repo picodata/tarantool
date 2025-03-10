@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(75)
+test:plan(84)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -912,6 +912,125 @@ SELECT rowid, sum(a) OVER w1 FROM t7
 WINDOW w1 AS (PARTITION BY b IN (SELECT rowid FROM t7));
     ]],
     {2,10,1,101,3,101,}
+)
+
+-- Test error cases from chaining window definitions.
+--
+test:execsql( [[
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a INTEGER PRIMARY KEY, b TEXT, c TEXT, d INTEGER);
+INSERT INTO t1 VALUES(1, 'odd',  'one',   1);
+INSERT INTO t1 VALUES(2, 'even', 'two',   2);
+INSERT INTO t1 VALUES(3, 'odd',  'three', 3);
+INSERT INTO t1 VALUES(4, 'even', 'four',  4);
+INSERT INTO t1 VALUES(5, 'odd',  'five',  5);
+INSERT INTO t1 VALUES(6, 'even', 'six',   6);
+]])
+
+test:do_catchsql_test(
+    "window1-17.2.1",
+    [[
+SELECT c, sum(d) OVER (win1 ORDER BY b) FROM t1
+WINDOW win1 AS (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)
+    ]],
+    {1, "cannot override frame specification of window: win1"}
+)
+
+test:do_catchsql_test(
+    "window1-17.2.2",
+    [[
+SELECT c, sum(d) OVER (win4 ORDER BY b) FROM t1
+WINDOW win1 AS ()
+    ]],
+    {1, "no such window: win4"}
+)
+
+test:do_catchsql_test(
+    "window1-17.2.3",
+    [[
+SELECT c, sum(d) OVER (win1 PARTITION BY d) FROM t1
+WINDOW win1 AS ()
+    ]],
+    {1, "cannot override PARTITION clause of window: win1"}
+)
+
+test:do_catchsql_test(
+    "window1-17.2.4",
+    [[
+SELECT c, sum(d) OVER (win1 ORDER BY d) FROM t1
+WINDOW win1 AS (ORDER BY b)
+    ]],
+    {1, "cannot override ORDER BY clause of window: win1"}
+)
+
+test:do_execsql_test(
+    "window1-17.3.1",
+    [[
+SELECT group_concat(c, '.') OVER (PARTITION BY b ORDER BY c)
+FROM t1
+    ]],
+    {
+"four", "four.six", "four.six.two",
+"five", "five.one", "five.one.three",
+    }
+)
+
+test:do_execsql_test(
+    "window1-17.3.2",
+    [[
+SELECT group_concat(c, '.') OVER (win1 ORDER BY c)
+FROM t1
+WINDOW win1 AS (PARTITION BY b)
+    ]],
+    {
+"four", "four.six", "four.six.two",
+"five", "five.one", "five.one.three",
+    }
+)
+
+test:do_execsql_test(
+    "window1-17.3.3",
+    [[
+SELECT group_concat(c, '.') OVER win2
+FROM t1
+WINDOW win1 AS (PARTITION BY b),
+       win2 AS (win1 ORDER BY c)
+    ]],
+    {
+"four", "four.six", "four.six.two",
+"five", "five.one", "five.one.three",
+    }
+)
+
+test:do_execsql_test(
+    "window1-17.3.4",
+    [[
+SELECT group_concat(c, '.') OVER (win2)
+FROM t1
+WINDOW win1 AS (PARTITION BY b),
+       win2 AS (win1 ORDER BY c)
+    ]],
+    {
+"four", "four.six", "four.six.two",
+"five", "five.one", "five.one.three",
+    }
+)
+
+test:do_execsql_test(
+    "window1-17.3.5",
+    [[
+SELECT group_concat(c, '.') OVER win5
+FROM t1
+WINDOW win1 AS (PARTITION BY b),
+       win2 AS (win1),
+       win3 AS (win2),
+       win4 AS (win3),
+       win5 AS (win4 ORDER BY c)
+    ]],
+    {
+"four", "four.six", "four.six.two",
+"five", "five.one", "five.one.three",
+    }
 )
 
 test:execsql( [[
