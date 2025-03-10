@@ -744,19 +744,21 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
  * an exception if it is not.
  */
 static void
-windowCheckFrameOffset(Parse *pParse, int reg, int bEnd)
+windowCheckIntValue(Parse *pParse, int reg, int eCond)
 {
 	static const char *const azErr[] = {
 		"frame starting offset must be a non-negative integer",
 		"frame ending offset must be a non-negative integer"
 	};
+	static int aOp[] = { OP_Ge, OP_Ge };
 	Vdbe *v = sqlGetVdbe(pParse);
 	int regZero = sqlGetTempReg(pParse);
+	assert(eCond == 0 || eCond == 1);
 	sqlVdbeAddOp2(v, OP_Integer, 0, regZero);
 	sqlVdbeAddOp2(v, OP_MustBeInt, reg, sqlVdbeCurrentAddr(v) + 2);
-	sqlVdbeAddOp3(v, OP_Ge, regZero, sqlVdbeCurrentAddr(v) + 2, reg);
+	sqlVdbeAddOp3(v, aOp[eCond], regZero, sqlVdbeCurrentAddr(v) + 2, reg);
 	sqlVdbeAddOp2(v, OP_Halt, -1, ON_CONFLICT_ACTION_ABORT);
-	sqlVdbeAppendP4(v, (void *)azErr[bEnd], P4_STATIC);
+	sqlVdbeAppendP4(v, (void *)azErr[eCond], P4_STATIC);
 	sqlReleaseTempReg(pParse, regZero);
 }
 
@@ -1272,11 +1274,11 @@ windowCodeRowExprStep(
 	 */
 	if (pMWin->pStart) {
 		sqlExprCode(pParse, pMWin->pStart, regStart);
-		windowCheckFrameOffset(pParse, regStart, 0);
+		windowCheckIntValue(pParse, regStart, 0);
 	}
 	if (pMWin->pEnd) {
 		sqlExprCode(pParse, pMWin->pEnd, regEnd);
-		windowCheckFrameOffset(pParse, regEnd, 1);
+		windowCheckIntValue(pParse, regEnd, 1);
 	}
 
 	/* If this is "ROWS <expr1> FOLLOWING AND ROWS <expr2> FOLLOWING", do:
@@ -1477,9 +1479,9 @@ windowCodeStep(
 	regArg = windowInitAccum(pParse, pMWin);
 
 	sqlExprCode(pParse, pMWin->pStart, regStart);
-	windowCheckFrameOffset(pParse, regStart, 0);
+	windowCheckIntValue(pParse, regStart, 0);
 	sqlExprCode(pParse, pMWin->pEnd, regEnd);
-	windowCheckFrameOffset(pParse, regEnd, 1);
+	windowCheckIntValue(pParse, regEnd, 1);
 
 	if (pMWin->eStart == TK_FOLLOWING ||
 	    pMWin->eEnd == TK_PRECEDING) {
