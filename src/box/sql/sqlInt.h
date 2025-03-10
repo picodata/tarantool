@@ -2418,11 +2418,13 @@ struct TreeView {
  */
 struct Window {
 	char *zName;		/* Name of window (may be NULL) */
+	char *zBase;		/* Name of base window for chaining (may be NULL) */
 	ExprList *pPartition;	/* PARTITION BY clause */
 	ExprList *pOrderBy;	/* ORDER BY clause */
 	u8 eType;		/* TK_RANGE or TK_ROWS */
 	u8 eStart;		/* UNBOUNDED, CURRENT, PRECEDING or FOLLOWING */
 	u8 eEnd;		/* UNBOUNDED, CURRENT, PRECEDING or FOLLOWING */
+	u8 bImplicitFrame;	/* True if frame was implicitly specified */
 	Expr *pStart;		/* Expression for "<expr> PRECEDING" */
 	Expr *pEnd;		/* Expression for "<expr> FOLLOWING" */
 
@@ -2491,6 +2493,13 @@ sqlWindowListDup(Window *p);
 
 void
 sqlWindowFunctions(void);
+
+void
+sqlWindowChain(Parse *pParse, Window *pWin, Window *pList);
+
+Window *
+sqlWindowAssemble(Window *pWin, ExprList *pPartition,
+		  ExprList *pOrderBy, Token *pBase);
 
 /*
  * The following macros mimic the standard library functions toupper(),
