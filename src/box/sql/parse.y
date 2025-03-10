@@ -1825,13 +1825,14 @@ number_typedef(A) ::= DECIMAL . { A.type = FIELD_TYPE_DECIMAL; }
 windowdefn_list(A) ::= windowdefn(Z). { A = Z; }
 windowdefn_list(A) ::= windowdefn_list(Y) COMMA windowdefn(Z). {
   assert (Z != 0);
+  sqlWindowChain(pParse, Z, Y);
   Z->pNextWin = Y;
   A = Z;
 }
 
 %type windowdefn {Window*}
 %destructor windowdefn {sqlWindowDelete($$);}
-windowdefn(A) ::= nm(X) AS window(Y). {
+windowdefn(A) ::= nm(X) AS LP window(Y) RP. {
   if (ALWAYS(Y)) {
     Y->zName = sql_xstrndup(X.z, X.n);
   }
@@ -1840,23 +1841,32 @@ windowdefn(A) ::= nm(X) AS window(Y). {
 
 %type window {Window*}
 %destructor window {sqlWindowDelete($$);}
-window(A) ::= LP part_opt(X) orderby_opt(Y) frame_opt(Z) RP. {
+window(A) ::= PARTITION BY nexprlist(X) orderby_opt(Y) frame_opt(Z). {
+  A = sqlWindowAssemble(Z, X, Y, 0);
+}
+window(A) ::= nm(W) PARTITION BY nexprlist(X) orderby_opt(Y) frame_opt(Z). {
+  A = sqlWindowAssemble(Z, X, Y, &W);
+}
+window(A) ::= ORDER BY sortlist(Y) frame_opt(Z). {
+  A = sqlWindowAssemble(Z, 0, Y, 0);
+}
+window(A) ::= nm(W) ORDER BY sortlist(Y) frame_opt(Z). {
+  A = sqlWindowAssemble(Z, 0, Y, &W);
+}
+window(A) ::= frame_opt(Z). {
   A = Z;
-  if (ALWAYS(A)) {
-    A->pPartition = X;
-    A->pOrderBy = Y;
-  }
 }
 
 %type part_opt {ExprList*}
 %destructor part_opt {sql_expr_list_delete($$);}
-part_opt(A) ::= PARTITION BY exprlist(X). { A = X; }
-part_opt(A) ::= .                         { A = 0; }
+window(A) ::= nm(W) frame_opt(Z). {
+  A = sqlWindowAssemble(Z, 0, 0, &W);
+}
 
 %type frame_opt {Window*}
 %destructor frame_opt {sqlWindowDelete($$);}
 frame_opt(A) ::= .                             {
-  A = sqlWindowAlloc(pParse, TK_RANGE, TK_UNBOUNDED, 0, TK_CURRENT, 0);
+  A = sqlWindowAlloc(pParse, 0, TK_UNBOUNDED, 0, TK_CURRENT, 0);
 }
 frame_opt(A) ::= range_or_rows(X) frame_bound_s(Y). {
   A = sqlWindowAlloc(pParse, X, Y.eType, Y.pExpr, TK_CURRENT, 0);
@@ -1893,7 +1903,7 @@ windowdefn_opt(A) ::= WINDOW windowdefn_list(B). { A = B; }
 %type over_opt {Window*}
 %destructor over_opt {sqlWindowDelete($$);}
 over_opt(A) ::= . { A = 0; }
-over_opt(A) ::= filter_opt(W) OVER window(Z). {
+over_opt(A) ::= filter_opt(W) OVER LP window(Z) RP. {
   A = Z;
   assert (A != 0);
   A->pFilter = W;

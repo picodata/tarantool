@@ -141,6 +141,23 @@
  * UNBOUNDED PRECEDING.
  */
 
+static Window *
+windowFind(Parse *pParse, Window *pList, const char *zName)
+{
+	Window *p;
+	for (p = pList; p; p = p->pNextWin) {
+		if (sqlStrICmp(p->zName, zName) == 0)
+			break;
+	}
+	if (p == 0) {
+		const char *err_msg = tt_sprintf("no such window: %s",
+						 zName);
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC, err_msg);
+		pParse->is_aborted = true;
+	}
+	return p;
+}
+
 /*
  * This function is called immediately after resolving the function name
  * for a window function within a SELECT statement. Argument pList is a
@@ -166,18 +183,9 @@ sqlWindowUpdate(
 	struct func *pFunc)	/* Window function definition */
 {
 	if (pWin->zName && pWin->eType == 0) {
-		Window *p;
-		for (p = pList; p; p = p->pNextWin) {
-			if (sqlStrICmp(p->zName, pWin->zName) == 0)
-				break;
-		}
-		if (p == 0) {
-			const char *err_msg = tt_sprintf("no such window: %s",
-							 pWin->zName);
-			diag_set(ClientError, ER_SQL_PARSER_GENERIC, err_msg);
-			pParse->is_aborted = true;
+		Window *p = windowFind(pParse, pList, pWin->zName);
+		if (p == 0)
 			return;
-		}
 		pWin->pPartition = sql_expr_list_dup(p->pPartition, 0);
 		pWin->pOrderBy = sql_expr_list_dup(p->pOrderBy, 0);
 		pWin->pStart = sqlExprDup(p->pStart, 0);
@@ -185,6 +193,8 @@ sqlWindowUpdate(
 		pWin->eStart = p->eStart;
 		pWin->eEnd = p->eEnd;
 		pWin->eType = p->eType;
+	} else {
+		sqlWindowChain(pParse, pWin, pList);
 	}
 	uint32_t flags = sql_func_flags(pFunc->def->name);
 	if ((flags & SQL_FUNC_WINDOW) != 0) {
@@ -532,6 +542,7 @@ sqlWindowDelete(Window *p)
 		sql_expr_delete(p->pEnd);
 		sql_expr_delete(p->pStart);
 		sql_xfree(p->zName);
+		sql_xfree(p->zBase);
 		sql_xfree(p);
 	}
 }
@@ -575,6 +586,8 @@ sqlWindowAlloc(
 	int eStart, Expr *pStart,
 	int eEnd, Expr *pEnd)
 {
+	int bImplicitFrame = 0;
+
 	/* Parser assures the following: */
 	assert(eType == 0 || eType == TK_RANGE || eType == TK_ROWS);
 	assert(eStart == TK_CURRENT || eStart == TK_PRECEDING ||
@@ -585,6 +598,11 @@ sqlWindowAlloc(
 	       == (pStart != 0));
 	assert((eEnd == TK_FOLLOWING || eEnd == TK_PRECEDING)
 	       == (pEnd != 0));
+
+	if (eType == 0) {
+		bImplicitFrame = 1;
+		eType = TK_RANGE;
+	}
 
 	if (eType == TK_RANGE && (pStart != 0 || pEnd != 0)) {
 		diag_set(ClientError, ER_SQL_PARSER_GENERIC,
@@ -620,9 +638,72 @@ sqlWindowAlloc(
 	pWin->eType = eType;
 	pWin->eStart = eStart;
 	pWin->eEnd = eEnd;
+	pWin->bImplicitFrame = bImplicitFrame;
 	pWin->pEnd = sqlWindowOffsetExpr(pEnd);
 	pWin->pStart = sqlWindowOffsetExpr(pStart);
 	return pWin;
+}
+
+/*
+ ** Attach PARTITION and ORDER BY clauses pPartition and pOrderBy to window
+ ** pWin. Also, if parameter pBase is not NULL, set pWin->zBase to the
+ ** equivalent nul-terminated string.
+ */
+Window *
+sqlWindowAssemble(Window *pWin, ExprList *pPartition, ExprList *pOrderBy,
+		  Token *pBase)
+{
+	if (pWin) {
+		pWin->pPartition = pPartition;
+		pWin->pOrderBy = pOrderBy;
+		if (pBase)
+			pWin->zBase = sql_xstrndup(pBase->z,
+						   pBase->n);
+	} else {
+		sql_expr_list_delete(pPartition);
+		sql_expr_list_delete(pOrderBy);
+	}
+	return pWin;
+}
+
+/*
+ ** Window *pWin has just been created from a WINDOW clause. Tokne pBase
+ ** is the base window. Earlier windows from the same WINDOW clause are
+ ** stored in the linked list starting at pWin->pNextWin. This function
+ ** either updates *pWin according to the base specification, or else
+ ** leaves an error in pParse.
+ */
+void
+sqlWindowChain(Parse *pParse, Window *pWin, Window *pList)
+{
+	if (pWin->zBase == NULL)
+		return;
+	Window *pExist = windowFind(pParse, pList, pWin->zBase);
+	if (pExist) {
+		const char *zErr = 0;
+		/* Check for errors */
+		if (pWin->pPartition)
+			zErr = "PARTITION clause";
+		else if (pExist->pOrderBy && pWin->pOrderBy)
+			zErr = "ORDER BY clause";
+		else if (pExist->bImplicitFrame == 0)
+			zErr = "frame specification";
+		if (zErr) {
+			const char *err_msg;
+			err_msg = tt_sprintf("cannot override %s of window: %s",
+					     zErr, pWin->zBase);
+			diag_set(ClientError, ER_SQL_PARSER_GENERIC, err_msg);
+			pParse->is_aborted = true;
+			return;
+		} else {
+			pWin->pPartition = sql_expr_list_dup(pExist->pPartition, 0);
+			if (pExist->pOrderBy) {
+				assert(pWin->pOrderBy == 0);
+				pWin->pOrderBy = sql_expr_list_dup(pExist->pOrderBy, 0);
+			}
+			pWin->zBase = 0;
+		}
+	}
 }
 
 /*
