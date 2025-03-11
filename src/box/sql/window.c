@@ -775,6 +775,8 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
 
 	pMWin->regFirst = ++pParse->nMem;
 	sqlVdbeAddOp2(v, OP_Bool, 1, pMWin->regFirst);
+	pMWin->regSize = ++pParse->nMem;
+	sqlVdbeAddOp2(v, OP_Integer, 0, pMWin->regSize);
 
 	for (pWin = pMWin; pWin; pWin = pWin->pNextWin) {
 		struct func *p = pWin->pFunc;
@@ -1526,7 +1528,12 @@ windowCodeStep(
 	}
 	sqlVdbeAddOp3(v, OP_MakeRecord, reg, nSub, regRecord);
 
-	/* Check if the current iteration is the first row of a new partition */
+	/* An input row has just been read into an array of registers starting
+	 ** at reg. If the window has a PARTITION clause, this block generates
+	 ** VM code to check if the input row is the start of a new partition.
+	 ** If so, it does an OP_Gosub to an address to be filled in later. The
+	 ** address of the OP_Gosub is stored in local variable addrGosubFlush.
+	 */
 	if (pMWin->pPartition) {
 		int addr;
 		struct sql_key_info *key_info;
@@ -1539,10 +1546,12 @@ windowCodeStep(
 		addr = sqlVdbeAddOp3(v, OP_Compare, regNewPart, pMWin->regPart,
 				     nPart);
 		sqlVdbeAppendP4(v, (void *)key_info, P4_KEYINFO);
-		sqlVdbeAddOp3(v, OP_Jump, addr + 2, addr + 3, addr + 2);
+		sqlVdbeAddOp3(v, OP_Jump, addr + 2, addr + 4, addr + 2);
 		addrGosubFlush = sqlVdbeAddOp1(v, OP_Gosub, regFlushPart);
 		VdbeComment((v, "call flush_partition"));
 		sqlVdbeJumpHere(v, addrIf);
+		sqlVdbeAddOp3(v, OP_Copy, regNewPart, pMWin->regPart,
+			      nPart - 1);
 	}
 
 	/* Insert the new row into the ephemeral table */
@@ -1550,13 +1559,11 @@ windowCodeStep(
 	sqlVdbeAddOp3(v, OP_MakeRecord, reg, nSub + 1, regRecord);
 	sqlVdbeChangeP5(v, 1);
 	sqlVdbeAddOp2(v, OP_IdxInsert, regRecord, pMWin->regEph);
+	sqlVdbeAddOp2(v, OP_AddImm, pMWin->regSize, 1);
+
+	addrIf = sqlVdbeAddOp1(v, OP_IfNot, pMWin->regFirst);
 
 	/* This block is run for the first row of each partition */
-	addrIf = sqlVdbeAddOp1(v, OP_IfNot, pMWin->regFirst);
-	if (pMWin->pPartition)
-		sqlVdbeAddOp3(v, OP_Copy, reg + pMWin->nBufferCol,
-			      pMWin->regPart, pMWin->pPartition->nExpr - 1);
-
 	regArg = windowInitAccum(pParse, pMWin);
 
 	sqlExprCode(pParse, pMWin->pStart, regStart);
@@ -1590,6 +1597,7 @@ windowCodeStep(
 
 	/* This block is run for the second and subsequent rows of each partition */
 	sqlVdbeJumpHere(v, addrIf);
+
 	if (pMWin->eStart == TK_FOLLOWING) {
 		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
 		windowAggFinal(pParse, pMWin, 0);
@@ -1601,12 +1609,12 @@ windowCodeStep(
 		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
 		sqlVdbeAddOp2(v, OP_Next, csrStart,
 			      sqlVdbeCurrentAddr(v) + 1);
-		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, pMWin->regSize);
 		sqlVdbeJumpHere(v, addrIfStart);
 	} else if (pMWin->eEnd == TK_PRECEDING) {
 		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
 		sqlVdbeAddOp2(v, OP_Next, csrEnd, sqlVdbeCurrentAddr(v) + 1);
-		windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+		windowAggStep(pParse, pMWin, csrEnd, 0, regArg, pMWin->regSize);
 		sqlVdbeJumpHere(v, addrIfEnd);
 
 		windowAggFinal(pParse, pMWin, 0);
@@ -1616,7 +1624,7 @@ windowCodeStep(
 
 		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
 		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 1);
-		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, pMWin->regSize);
 		sqlVdbeJumpHere(v, addrIfStart);
 	} else {
 		addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
@@ -1626,7 +1634,7 @@ windowCodeStep(
 		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
 		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
 		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 1);
-		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, pMWin->regSize);
 		sqlVdbeJumpHere(v, addrIfStart);
 		sqlVdbeJumpHere(v, addrIfEnd);
 	}
@@ -1634,7 +1642,7 @@ windowCodeStep(
 	sqlVdbeJumpHere(v, addrGoto);
 	if (pMWin->eEnd != TK_PRECEDING) {
 		sqlVdbeAddOp2(v, OP_Next, csrEnd, sqlVdbeCurrentAddr(v) + 1);
-		windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+		windowAggStep(pParse, pMWin, csrEnd, 0, regArg, pMWin->regSize);
 	}
 
 	/* End of the main input loop */
@@ -1660,7 +1668,7 @@ windowCodeStep(
 		addrIfStart = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
 		sqlVdbeAddOp2(v, OP_Next, csrStart, sqlVdbeCurrentAddr(v) + 2);
 		sqlVdbeAddOp0(v, OP_Goto);
-		windowAggStep(pParse, pMWin, csrStart, 1, regArg, 0);
+		windowAggStep(pParse, pMWin, csrStart, 1, regArg, pMWin->regSize);
 		sqlVdbeJumpHere(v, addrIfStart);
 		sqlVdbeJumpHere(v, addrIfStart + 2);
 
@@ -1674,7 +1682,7 @@ windowCodeStep(
 			addrIfEnd = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
 			sqlVdbeAddOp2(v, OP_Next, csrEnd,
 				      sqlVdbeCurrentAddr(v) + 1);
-			windowAggStep(pParse, pMWin, csrEnd, 0, regArg, 0);
+			windowAggStep(pParse, pMWin, csrEnd, 0, regArg, pMWin->regSize);
 			sqlVdbeJumpHere(v, addrIfEnd);
 			windowAggFinal(pParse, pMWin, 0);
 			windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
@@ -1693,6 +1701,7 @@ windowCodeStep(
 	}
 
 	sqlVdbeAddOp1(v, OP_ResetSorter, csrCurrent);
+	sqlVdbeAddOp2(v, OP_Integer, 0, pMWin->regSize);
 	sqlVdbeAddOp2(v, OP_Bool, 1, pMWin->regFirst);
 	if (pMWin->pPartition) {
 		sqlVdbeChangeP1(v, addrInteger, sqlVdbeCurrentAddr(v));
