@@ -1179,295 +1179,6 @@ windowInitAccum(Parse *pParse, Window *pMWin)
 	return regArg;
 }
 
-/*
- * This function does the work of sqlWindowCodeStep() for all "ROWS"
- * window frame types except for "BETWEEN UNBOUNDED PRECEDING AND CURRENT
- * ROW". Pseudo-code for each follows.
- *
- * ROWS BETWEEN <expr1> PRECEDING AND <expr2> FOLLOWING
- *
- *     ...
- *       if( new partition ){
- *         Gosub flush_partition
- *       }
- *       Insert (record in eph-table)
- *     sqlWhereEnd()
- *     Gosub flush_partition
- *
- *   flush_partition:
- *     Once {
- *       OpenDup (iEphCsr -> csrStart)
- *       OpenDup (iEphCsr -> csrEnd)
- *     }
- *     regStart = <expr1>                // PRECEDING expression
- *     regEnd = <expr2>                  // FOLLOWING expression
- *     if( regStart<0 || regEnd<0 ){ error! }
- *     Rewind (csr,csrStart,csrEnd)      // if EOF goto flush_partition_done
- *       Next(csrEnd)                    // if EOF skip aggregation step
- *       Aggstep (csrEnd)
- *       if( (regEnd--)<=0 ){
- *         AggFinal (xValue)
- *         Gosub addrGosub
- *         Next(csr)                // if EOF goto flush_partition_done
- *         if( (regStart--)<=0 ){
- *           AggStep (csrStart, xInverse)
- *           Next(csrStart)
- *         }
- *       }
- *   flush_partition_done:
- *     ResetSorter (csr)
- *     Return
- *
- * ROWS BETWEEN <expr> PRECEDING    AND CURRENT ROW
- * ROWS BETWEEN CURRENT ROW         AND <expr> FOLLOWING
- * ROWS BETWEEN UNBOUNDED PRECEDING AND <expr> FOLLOWING
- *
- *   These are similar to the above. For "CURRENT ROW", initialize the
- *   register to 0. For "UNBOUNDED PRECEDING" to infinity.
- *
- * ROWS BETWEEN <expr> PRECEDING    AND UNBOUNDED FOLLOWING
- * ROWS BETWEEN CURRENT ROW         AND UNBOUNDED FOLLOWING
- *
- *     Rewind (csr,csrStart,csrEnd)    // if EOF goto flush_partition_done
- *     while( 1 ){
- *       Next(csrEnd)                  // Exit while(1) at EOF
- *       Aggstep (csrEnd)
- *     }
- *     while( 1 ){
- *       AggFinal (xValue)
- *       Gosub addrGosub
- *       Next(csr)                     // if EOF goto flush_partition_done
- *       if( (regStart--)<=0 ){
- *         AggStep (csrStart, xInverse)
- *         Next(csrStart)
- *       }
- *     }
- *
- *   For the "CURRENT ROW AND UNBOUNDED FOLLOWING" case, the final if()
- *   condition is always true (as if regStart were initialized to 0).
- *
- * RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
- *
- *   This is the only RANGE case handled by this routine. It modifies the
- *   second while( 1 ) loop in "ROWS BETWEEN CURRENT ... UNBOUNDED..." to
- *   be:
- *
- *     while( 1 ){
- *       AggFinal (xValue)
- *       while( 1 ){
- *         regPeer++
- *         Gosub addrGosub
- *         Next(csr)                     // if EOF goto flush_partition_done
- *         if( new peer ) break;
- *       }
- *       while( (regPeer--)>0 ){
- *         AggStep (csrStart, xInverse)
- *         Next(csrStart)
- *       }
- *     }
- *
- * ROWS BETWEEN <expr> FOLLOWING    AND <expr> FOLLOWING
- *
- *   regEnd = regEnd - regStart
- *   Rewind (csr,csrStart,csrEnd)   // if EOF goto flush_partition_done
- *     Aggstep (csrEnd)
- *     Next(csrEnd)                 // if EOF pass-through
- *     if( (regEnd--)<=0 ){
- *       if( (regStart--)<=0 ){
- *         AggFinal (xValue)
- *         Gosub addrGosub
- *         Next(csr)              // if EOF goto flush_partition_done
- *       }
- *       AggStep (csrStart, xInverse)
- *       Next (csrStart)
- *     }
- *
- * ROWS BETWEEN <expr> PRECEDING    AND <expr> PRECEDING
- *
- *   Replace the bit after "Rewind" in the above with:
- *
- *     if( (regEnd--)<=0 ){
- *       AggStep (csrEnd)
- *       Next (csrEnd)
- *     }
- *     AggFinal (xValue)
- *     Gosub addrGosub
- *     Next(csr)                  // if EOF goto flush_partition_done
- *     if( (regStart--)<=0 ){
- *       AggStep (csr2, xInverse)
- *       Next (csr2)
- *     }
- *
- */
-static void
-windowCodeRowExprStep(
-	Parse *pParse,
-	Select *p,
-	WhereInfo *pWInfo,
-	int regGosub,
-	int addrGosub)
-{
-	Window *pMWin = p->pWin;
-	Vdbe *v = sqlGetVdbe(pParse);
-	int regFlushPart;	/* Register for "Gosub flush_partition" */
-	int lblFlushPart;	/* Label for "Gosub flush_partition" */
-	int lblFlushDone;	/* Label for "Gosub flush_partition_done" */
-
-	int regArg;
-	int addr;
-	int csrStart = pParse->nTab++;
-	int csrEnd = pParse->nTab++;
-	int regStart;	/* Value of <expr> PRECEDING */
-	int regEnd;	/* Value of <expr> FOLLOWING */
-	int addrGoto;
-	int addrTop;
-	int addrIfPos1 = 0;
-	int addrIfPos2 = 0;
-	int regSize = 0;
-
-	assert(pMWin->eStart == TK_PRECEDING ||
-	       pMWin->eStart == TK_CURRENT ||
-	       pMWin->eStart == TK_FOLLOWING ||
-	       pMWin->eStart == TK_UNBOUNDED);
-	assert(pMWin->eEnd == TK_FOLLOWING ||
-	       pMWin->eEnd == TK_CURRENT ||
-	       pMWin->eEnd == TK_UNBOUNDED ||
-	       pMWin->eEnd == TK_PRECEDING);
-
-	/* Allocate register and label for the "flush_partition" sub-routine. */
-	regFlushPart = ++pParse->nMem;
-	lblFlushPart = sqlVdbeMakeLabel(v);
-	lblFlushDone = sqlVdbeMakeLabel(v);
-
-	regStart = ++pParse->nMem;
-	regEnd = ++pParse->nMem;
-
-	windowPartitionCache(pParse, p, pWInfo, regFlushPart,
-			     lblFlushPart, &regSize);
-
-	addrGoto = sqlVdbeAddOp0(v, OP_Goto);
-
-	/* Start of "flush_partition" */
-	sqlVdbeResolveLabel(v, lblFlushPart);
-	sqlVdbeAddOp2(v, OP_Once, 0, sqlVdbeCurrentAddr(v) + 3);
-	sqlVdbeAddOp3(v, OP_IteratorOpen, csrStart, 0, pMWin->regEph);
-	sqlVdbeChangeP5(v, OPFLAG_EPH_DUP);
-	sqlVdbeAddOp3(v, OP_IteratorOpen, csrEnd, 0, pMWin->regEph);
-	sqlVdbeChangeP5(v, OPFLAG_EPH_DUP);
-
-	/* If either regStart or regEnd are not non-negative integers, throw
-	 * an exception.
-	 */
-	if (pMWin->pStart) {
-		sqlExprCode(pParse, pMWin->pStart, regStart);
-		windowCheckIntValue(pParse, regStart, 0);
-	}
-	if (pMWin->pEnd) {
-		sqlExprCode(pParse, pMWin->pEnd, regEnd);
-		windowCheckIntValue(pParse, regEnd, 1);
-	}
-
-	/* If this is "ROWS <expr1> FOLLOWING AND ROWS <expr2> FOLLOWING", do:
-	 *
-	 *	 if( regEnd<regStart ){
-	 *		 // The frame always consists of 0 rows
-	 *		 regStart = regSize;
-	 *	 }
-	 *	 regEnd = regEnd - regStart;
-	 */
-	if (pMWin->pEnd && pMWin->pStart && pMWin->eStart == TK_FOLLOWING) {
-		assert(pMWin->eEnd == TK_FOLLOWING);
-		sqlVdbeAddOp3(v, OP_Ge, regStart,
-			      sqlVdbeCurrentAddr(v) + 2, regEnd);
-		sqlVdbeAddOp2(v, OP_Copy, regSize, regStart);
-		sqlVdbeAddOp3(v, OP_Subtract, regStart, regEnd, regEnd);
-	}
-
-	if (pMWin->pEnd && pMWin->pStart && pMWin->eEnd == TK_PRECEDING) {
-		assert(pMWin->eStart == TK_PRECEDING);
-		sqlVdbeAddOp3(v, OP_Le, regStart,
-			      sqlVdbeCurrentAddr(v) + 3, regEnd);
-		sqlVdbeAddOp2(v, OP_Copy, regSize, regStart);
-		sqlVdbeAddOp2(v, OP_Copy, regSize, regEnd);
-	}
-
-	/* Initialize the accumulator register for each window function to NULL */
-	regArg = windowInitAccum(pParse, pMWin);
-
-	sqlVdbeAddOp2(v, OP_Rewind, pMWin->iEphCsr, lblFlushDone);
-	sqlVdbeAddOp2(v, OP_Rewind, csrStart, lblFlushDone);
-	sqlVdbeChangeP5(v, 1);
-	sqlVdbeAddOp2(v, OP_Rewind, csrEnd, lblFlushDone);
-	sqlVdbeChangeP5(v, 1);
-
-	/* Invoke AggStep function for each window function using the row that
-	 * csrEnd currently points to. Or, if csrEnd is already at EOF,
-	 * do nothing.
-	 */
-	addrTop = sqlVdbeCurrentAddr(v);
-	if (pMWin->eEnd == TK_PRECEDING) {
-		addrIfPos1 = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
-	}
-	sqlVdbeAddOp2(v, OP_Next, csrEnd, sqlVdbeCurrentAddr(v) + 2);
-	addr = sqlVdbeAddOp0(v, OP_Goto);
-	windowAggStep(pParse, pMWin, csrEnd, 0, regArg, regSize);
-	if (pMWin->eEnd == TK_UNBOUNDED) {
-		sqlVdbeAddOp2(v, OP_Goto, 0, addrTop);
-		sqlVdbeJumpHere(v, addr);
-		addrTop = sqlVdbeCurrentAddr(v);
-	} else {
-		sqlVdbeJumpHere(v, addr);
-		if (pMWin->eEnd == TK_PRECEDING) {
-			sqlVdbeJumpHere(v, addrIfPos1);
-		}
-	}
-
-	if (pMWin->eEnd == TK_FOLLOWING) {
-		addrIfPos1 = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
-	}
-	if (pMWin->eStart == TK_FOLLOWING) {
-		addrIfPos2 = sqlVdbeAddOp3(v, OP_IfPos, regStart, 0, 1);
-	}
-	windowAggFinal(pParse, pMWin, 0);
-	windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
-	sqlVdbeAddOp2(v, OP_Next, pMWin->iEphCsr, sqlVdbeCurrentAddr(v) + 2);
-	sqlVdbeAddOp2(v, OP_Goto, 0, lblFlushDone);
-	if (pMWin->eStart == TK_FOLLOWING) {
-		sqlVdbeJumpHere(v, addrIfPos2);
-	}
-
-	if (pMWin->eStart == TK_CURRENT ||
-	    pMWin->eStart == TK_PRECEDING ||
-	    pMWin->eStart == TK_FOLLOWING) {
-		int lblSkipInverse = sqlVdbeMakeLabel(v);
-		if (pMWin->eStart == TK_PRECEDING) {
-			sqlVdbeAddOp3(v, OP_IfPos, regStart, lblSkipInverse, 1);
-		}
-		if (pMWin->eStart == TK_FOLLOWING) {
-			sqlVdbeAddOp2(v, OP_Next, csrStart,
-				      sqlVdbeCurrentAddr(v) + 2);
-			sqlVdbeAddOp2(v, OP_Goto, 0, lblSkipInverse);
-		} else {
-			sqlVdbeAddOp2(v, OP_Next, csrStart,
-				      sqlVdbeCurrentAddr(v) + 1);
-		}
-		windowAggStep(pParse, pMWin, csrStart, 1, regArg, regSize);
-		sqlVdbeResolveLabel(v, lblSkipInverse);
-	}
-	if (pMWin->eEnd == TK_FOLLOWING) {
-		sqlVdbeJumpHere(v, addrIfPos1);
-	}
-	sqlVdbeAddOp2(v, OP_Goto, 0, addrTop);
-
-	/* flush_partition_done: */
-	sqlVdbeResolveLabel(v, lblFlushDone);
-	sqlVdbeAddOp1(v, OP_ResetSorter, pMWin->iEphCsr);
-	sqlVdbeAddOp1(v, OP_Return, regFlushPart);
-
-	/* Jump to here to skip over flush_partition */
-	sqlVdbeJumpHere(v, addrGoto);
-}
-
 typedef struct WindowCodeArg WindowCodeArg;
 struct WindowCodeArg {
 	Parse *pParse;
@@ -1486,28 +1197,33 @@ static int
 windowCodeOp(WindowCodeArg *p, int op, int csr,
 	     int regCountdown, int jumpOnEof)
 {
+	Window *pMWin = p->pMWin;
 	int ret = 0;
 	Vdbe *v = p->pVdbe;
 	int addrIf = 0;
+
+	/* Special case - WINDOW_AGGINVERSE is always a no-op if the frame
+	** starts with UNBOUNDED PRECEDING. */
+	if( op==WINDOW_AGGINVERSE && pMWin->eStart==TK_UNBOUNDED ){
+		assert( regCountdown==0 && jumpOnEof==0 );
+		return 0;
+	}
 
 	if (regCountdown > 0)
 		addrIf = sqlVdbeAddOp3(v, OP_IfPos, regCountdown, 0, 1);
 
 	switch (op) {
 	case WINDOW_RETURN_ROW:
-	windowAggFinal(p->pParse, p->pMWin, 0);
-	windowReturnOneRow(p->pParse, p->pMWin,
-			   p->regGosub, p->addrGosub);
+		windowAggFinal(p->pParse, pMWin, 0);
+		windowReturnOneRow(p->pParse, pMWin, p->regGosub, p->addrGosub);
 	break;
 
 	case WINDOW_AGGINVERSE:
-	windowAggStep(p->pParse, p->pMWin, csr, 1,
-		      p->regArg, p->pMWin->regSize);
+		windowAggStep(p->pParse, pMWin, csr, 1, p->regArg, pMWin->regSize);
 	break;
 
 	case WINDOW_AGGSTEP:
-	windowAggStep(p->pParse, p->pMWin, csr, 0,
-		      p->regArg, p->pMWin->regSize);
+		windowAggStep(p->pParse, pMWin, csr, 0, p->regArg, pMWin->regSize);
 	break;
 	}
 
@@ -1609,11 +1325,6 @@ windowCodeStep(
 	int csrStart = csrCurrent + 2;
 	int csrEnd = csrCurrent + 3;
 
-	/* Value of <expr> PRECEDING */
-	int regStart;
-	/* Value of <expr> FOLLOWING */
-	int regEnd;
-
 	/* Cursor of sub-select */
 	int iSubCsr = p->pSrc->a[0].iCursor;
 	/* Number of cols returned by sub */
@@ -1626,6 +1337,9 @@ windowCodeStep(
 	int addrEmpty = 0;
 	int addrGosubFlush = 0;
 	int addrInteger = 0;
+
+	int regStart = 0;               /* Value of <expr> PRECEDING */
+	int regEnd = 0;                 /* Value of <expr> FOLLOWING */
 
 	int reg = pParse->nMem + 1;
 	int regRowid = reg + nSub;
@@ -1642,8 +1356,13 @@ windowCodeStep(
 	pParse->nMem += 1 + nSub + 1;
 
 	regFlushPart = ++pParse->nMem;
-	regStart = ++pParse->nMem;
-	regEnd = ++pParse->nMem;
+
+	if( pMWin->eStart==TK_PRECEDING || pMWin->eStart==TK_FOLLOWING  ){
+		regStart = ++pParse->nMem;
+	}
+	if( pMWin->eEnd==TK_PRECEDING || pMWin->eEnd==TK_FOLLOWING  ){
+		regEnd = ++pParse->nMem;
+	}
 
 	assert(pMWin->eStart == TK_PRECEDING ||
 	       pMWin->eStart == TK_CURRENT ||
@@ -1701,13 +1420,16 @@ windowCodeStep(
 	/* This block is run for the first row of each partition */
 	s.regArg = windowInitAccum(pParse, pMWin);
 
-	sqlExprCode(pParse, pMWin->pStart, regStart);
-	windowCheckIntValue(pParse, regStart, 0);
-	sqlExprCode(pParse, pMWin->pEnd, regEnd);
-	windowCheckIntValue(pParse, regEnd, 1);
+	if( regStart ){
+		sqlExprCode(pParse, pMWin->pStart, regStart);
+		windowCheckIntValue(pParse, regStart, 0);
+	}
+	if( regEnd  ){
+		sqlExprCode(pParse, pMWin->pEnd, regEnd);
+		windowCheckIntValue(pParse, regEnd, 1);
+	}
 
-	if (pMWin->eStart == pMWin->eEnd &&
-	    pMWin->eStart != TK_CURRENT && pMWin->eStart != TK_UNBOUNDED) {
+	if( pMWin->eStart == pMWin->eEnd && regStart && regEnd ){
 		int op = ((pMWin->eStart == TK_FOLLOWING) ? OP_Ge : OP_Le);
 		int addrGe = sqlVdbeAddOp3(v, op, regStart, 0, regEnd);
 		windowAggFinal(pParse, pMWin, 0);
@@ -1717,10 +1439,14 @@ windowCodeStep(
 		addrShortcut = sqlVdbeAddOp0(v, OP_Goto);
 		sqlVdbeJumpHere(v, addrGe);
 	}
-	if (pMWin->eStart == TK_FOLLOWING)
+	if (pMWin->eStart == TK_FOLLOWING && regEnd) {
+		assert( pMWin->eEnd==TK_FOLLOWING );
 		sqlVdbeAddOp3(v, OP_Subtract, regStart, regEnd, regStart);
+	}
 
-	sqlVdbeAddOp2(v, OP_Rewind, csrStart, 1);
+	if( pMWin->eStart!=TK_UNBOUNDED ){
+		sqlVdbeAddOp2(v, OP_Rewind, csrStart, 1);
+	}
 	sqlVdbeAddOp2(v, OP_Rewind, csrCurrent, 1);
 	sqlVdbeAddOp2(v, OP_Rewind, csrEnd, 1);
 
@@ -1733,8 +1459,10 @@ windowCodeStep(
 
 	if (pMWin->eStart == TK_FOLLOWING) {
 		windowCodeOp(&s, WINDOW_AGGSTEP, csrEnd, 0, 0);
-		windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, regEnd, 0);
-		windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, regStart, 0);
+		if( pMWin->eEnd!=TK_UNBOUNDED ){
+			windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, regEnd, 0);
+			windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, regStart, 0);
+		}
 	} else if (pMWin->eEnd == TK_PRECEDING) {
 		windowCodeOp(&s, WINDOW_AGGSTEP, csrEnd, regEnd, 0);
 		windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, 0, 0);
@@ -1742,10 +1470,12 @@ windowCodeStep(
 	} else {
 		int addr;
 		windowCodeOp(&s, WINDOW_AGGSTEP, csrEnd, 0, 0);
-		addr = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
-		windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, 0, 0);
-		windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, regStart, 0);
-		sqlVdbeJumpHere(v, addr);
+		if( pMWin->eEnd!=TK_UNBOUNDED ){
+			if( regEnd ) addr = sqlVdbeAddOp3(v, OP_IfPos, regEnd, 0, 1);
+			windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, 0, 0);
+			windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, regStart, 0);
+			if( regEnd ) sqlVdbeJumpHere(v, addr);
+		}
 	}
 	VdbeComment((v, "End windowCodeStep.SECOND_ROW_CODE"));
 
@@ -1771,9 +1501,16 @@ windowCodeStep(
 		int addrBreak2;
 		int addrBreak3;
 		windowCodeOp(&s, WINDOW_AGGSTEP, csrEnd, 0, 0);
-		addrStart = sqlVdbeCurrentAddr(v);
-		addrBreak1 = windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, regEnd, 1);
-		addrBreak2 = windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, regStart, 1);
+		if( pMWin->eEnd==TK_UNBOUNDED  ){
+			addrStart = sqlVdbeCurrentAddr(v);
+			addrBreak1 = windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, regStart, 1);
+			addrBreak2 = windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, 0, 1);
+		}else{
+			assert( pMWin->eEnd==TK_FOLLOWING );
+			addrStart = sqlVdbeCurrentAddr(v);
+			addrBreak1 = windowCodeOp(&s, WINDOW_RETURN_ROW, csrCurrent, regEnd, 1);
+			addrBreak2 = windowCodeOp(&s, WINDOW_AGGINVERSE, csrStart, regStart, 1);
+		}
 		sqlVdbeAddOp2(v, OP_Goto, 0, addrStart);
 		sqlVdbeJumpHere(v, addrBreak2);
 		addrStart = sqlVdbeCurrentAddr(v);
@@ -2283,23 +2020,10 @@ sqlWindowCodeStep(
 	 * does not cache each partition in a temp table before beginning to
 	 * return rows.
 	 */
-	if (pMWin->eType == TK_ROWS &&
-	    (pMWin->eStart != TK_UNBOUNDED ||
-	    pMWin->eEnd != TK_CURRENT ||
-	    !pMWin->pOrderBy)) {
-		if ((pMWin->eEnd != TK_FOLLOWING &&
-		     pMWin->eEnd != TK_PRECEDING) ||
-			(pMWin->eStart != TK_FOLLOWING &&
-		     pMWin->eStart != TK_PRECEDING)) {
-			VdbeComment((pParse->pVdbe, "Begin RowExprStep()"));
-			windowCodeRowExprStep(pParse, p, pWInfo, regGosub,
-					      addrGosub);
-			VdbeComment((pParse->pVdbe, "End RowExprStep()"));
-		} else {
-			VdbeComment((pParse->pVdbe, "Begin windowCodeStep()"));
-			windowCodeStep(pParse, p, pWInfo, regGosub, addrGosub);
-			VdbeComment((pParse->pVdbe, "End windowCodeStep()"));
-		}
+	if( pMWin->eType==TK_ROWS  ){
+		VdbeComment((v, "Begin windowCodeStep()"));
+		windowCodeStep(pParse, p, pWInfo, regGosub, addrGosub);
+		VdbeComment((v, "End windowCodeStep()"));
 	} else {
 		/* True to use CacheStep() */
 		int bCache = 0;
