@@ -361,6 +361,8 @@ vdbe_field_ref_fetch(struct vdbe_field_ref *field_ref, uint32_t fieldno,
  */
 int sqlVdbeExec(Vdbe *p)
 {
+	/* NOTE(gmoshkin): uncomment to enable vdbe tracing */
+	/* p->sql_flags |= (SQL_VdbeListing|SQL_VdbeEQP|SQL_VdbeTrace); */
 	Op *aOp = p->aOp;          /* Copy of p->aOp */
 	Op *pOp = aOp;             /* Current operation */
 #if defined(SQL_DEBUG)
