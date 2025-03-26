@@ -852,6 +852,12 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
 	}
 }
 
+#define WINDOW_STARTING_INT  0
+#define WINDOW_ENDING_INT    1
+#define WINDOW_NTH_VALUE_INT 2
+#define WINDOW_STARTING_NUM  3
+#define WINDOW_ENDING_NUM    4
+
 /*
  * A "PRECEDING <expr>" (bEnd==0) or "FOLLOWING <expr>" (bEnd==1) has just
  * been evaluated and the result left in register reg. This function generates
@@ -859,18 +865,22 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
  * an exception if it is not.
  */
 static void
-windowCheckIntValue(Parse *pParse, int reg, int eCond)
+windowCheckValue(Parse *pParse, int reg, int eCond)
 {
 	static const char *const azErr[] = {
 		"frame starting offset must be a non-negative integer",
-		"frame ending offset must be a non-negative integer"
+		"frame ending offset must be a non-negative integer",
+		"second argument to nth_value must be a positive integer",
+		"frame starting offset must be a non-negative number",
+		"frame ending offset must be a non-negative number",
 	};
-	static int aOp[] = { OP_Ge, OP_Ge };
+	static int aOp[] = { OP_Ge, OP_Ge, OP_Gt, OP_Ge, OP_Ge };
 	Vdbe *v = sqlGetVdbe(pParse);
 	int regZero = sqlGetTempReg(pParse);
-	assert(eCond == 0 || eCond == 1);
+	assert(eCond >= 0 && eCond < ArraySize(azErr));
 	sqlVdbeAddOp2(v, OP_Integer, 0, regZero);
 	sqlVdbeAddOp2(v, OP_MustBeInt, reg, sqlVdbeCurrentAddr(v) + 2);
+	if( eCond>=WINDOW_STARTING_NUM ) sqlVdbeChangeP5(v, 1);
 	sqlVdbeAddOp3(v, aOp[eCond], regZero, sqlVdbeCurrentAddr(v) + 2, reg);
 	sqlVdbeAddOp2(v, OP_Halt, -1, ON_CONFLICT_ACTION_ABORT);
 	sqlVdbeAppendP4(v, (void *)azErr[eCond], P4_STATIC);
@@ -1066,6 +1076,8 @@ windowReturnOneRow(
 {
 	(void)pMWin;
 	Vdbe *v = sqlGetVdbe(pParse);
+	/* NOTE: omitting a bunch of code related to window functions which
+	 * we don't yet support. */
 	sqlVdbeAddOp2(v, OP_Gosub, regGosub, addrGosub);
 }
 
@@ -1615,11 +1627,11 @@ sqlWindowCodeStep(
 
 	if( regStart ){
 		sqlExprCode(pParse, pMWin->pStart, regStart);
-		windowCheckIntValue(pParse, regStart, 0);
+		windowCheckValue(pParse, regStart, 0 + (pMWin->eType==TK_RANGE ? 3 : 0));
 	}
 	if( regEnd  ){
 		sqlExprCode(pParse, pMWin->pEnd, regEnd);
-		windowCheckIntValue(pParse, regEnd, 1);
+		windowCheckValue(pParse, regEnd, 1 + (pMWin->eType==TK_RANGE ? 3 : 0));
 	}
 
 	if( pMWin->eStart == pMWin->eEnd && regStart && regEnd ){
