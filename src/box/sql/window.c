@@ -206,12 +206,43 @@ sqlWindowUpdate(
 			diag_set(ClientError, ER_SQL_PARSER_GENERIC, err_msg);
 			pParse->is_aborted = true;
 		} else {
-			/* The only supported window function is row_number() */
-			pWin->pStart = 0;
-			pWin->pEnd = 0;
-			pWin->eType = TK_ROWS;
-			pWin->eStart = TK_UNBOUNDED;
-			pWin->eEnd = TK_CURRENT;
+			struct WindowUpdate {
+				const char *zFunc;
+				int eType;
+				int eStart;
+				int eEnd;
+			} aUp[] = {
+				{ "ROW_NUMBER",   TK_ROWS,   TK_UNBOUNDED, TK_CURRENT },
+				/* NOTE(gmoshkin) the rest is commented out because we don't support those yet */
+				/* { "DENSE_RANK",   TK_RANGE,  TK_UNBOUNDED, TK_CURRENT }, */
+				/* { "RANK",         TK_RANGE,  TK_UNBOUNDED, TK_CURRENT }, */
+				/* { "PERCENT_RANK", TK_GROUPS, TK_CURRENT,   TK_UNBOUNDED }, */
+				/* { "CUME_DIST",    TK_GROUPS, TK_FOLLOWING, TK_UNBOUNDED }, */
+				/* { "NTILE",        TK_ROWS,   TK_CURRENT,   TK_UNBOUNDED }, */
+				/* { "LEAD",         TK_ROWS,   TK_UNBOUNDED, TK_UNBOUNDED }, */
+			};
+			int i;
+			for(i=0; i<ArraySize(aUp); i++){
+				/* NOTE(gmoshkin) sqlite doesn't use strcmp here, instead they compare
+				 * the string pointers against the named constants, because they
+				 * deduplicate the tokens in the parser. Tarantool doesn't seem to do
+				 * this, so the best thing I can think of is to use strcmp...
+				 */
+				if( strcmp(pFunc->def->name, aUp[i].zFunc) == 0 ){
+					sql_expr_delete(pWin->pStart);
+					sql_expr_delete(pWin->pEnd);
+					pWin->pEnd = pWin->pStart = 0;
+					pWin->eType = aUp[i].eType;
+					pWin->eStart = aUp[i].eStart;
+					pWin->eEnd = aUp[i].eEnd;
+					if( pWin->eStart==TK_FOLLOWING ){
+						Token t;
+						sqlTokenInit(&t, "1");
+						pWin->pStart = sql_expr_new(TK_INTEGER, &t);
+					}
+					break;
+				}
+			}
 		}
 	}
 	pWin->pFunc = pFunc;
@@ -778,8 +809,6 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
 
 	pMWin->regFirst = ++pParse->nMem;
 	sqlVdbeAddOp2(v, OP_Bool, 1, pMWin->regFirst);
-	pMWin->regSize = ++pParse->nMem;
-	sqlVdbeAddOp2(v, OP_Integer, 0, pMWin->regSize);
 
 	for (pWin = pMWin; pWin; pWin = pWin->pNextWin) {
 		struct func *p = pWin->pFunc;
@@ -1185,13 +1214,13 @@ windowCodeOp(WindowCodeArg *p, int op,
 	case WINDOW_AGGINVERSE:
 		csr = p->start.csr;
 		reg = p->start.reg;
-		windowAggStep(pParse, pMWin, csr, 1, p->regArg, pMWin->regSize);
+		windowAggStep(pParse, pMWin, csr, 1, p->regArg, 0);
 	break;
 
 	case WINDOW_AGGSTEP:
 		csr = p->end.csr;
 		reg = p->end.reg;
-		windowAggStep(pParse, pMWin, csr, 0, p->regArg, pMWin->regSize);
+		windowAggStep(pParse, pMWin, csr, 0, p->regArg, 0);
 	break;
 	}
 
@@ -1446,26 +1475,6 @@ sqlWindowListDup(Window *p)
 **     while( !eof csrCurrent ){
 **       RETURN_ROW
 **     }
-**
-** Sometimes, this function generates code to run in "cache mode" - meaning
-** the entire partition is cached in the ephemeral table before any of its
-** rows are processed, instead of processing rows as the sub-select delivers
-** them. This is required by certain built-in window functions, for example
-** percent_rank() or lead(). In that case, the relevant pseudo-code above
-** is modified to:
-**
-**     ... loop started by sqlite3WhereBegin() ...
-**     if( new partition ){
-**       Gosub flush
-**     }
-**     Insert new row into eph table.
-**   }
-**   flush:
-**     for each row in eph table {
-**
-** followed immediately by the code that usually follows the "Insert new row
-** into eph table." line.
-**
 */
 void
 sqlWindowCodeStep(
@@ -1479,8 +1488,6 @@ sqlWindowCodeStep(
 	Window *pMWin = p->pWin;
 	ExprList *pOrderBy = pMWin->pOrderBy;
 	Vdbe *v = sqlGetVdbe(pParse);
-	/* NOTE(gmoshkin): commenting out this because we don't support cache yet */
-	/* int bCache;                     /\* True if generating "cache-mode" code */
 	int regFlushPart;               /* Register for "Gosub flush_partition" */
 	int csrWrite;                   /* Cursor used to write to eph. table */
 	int csrInput = p->pSrc->a[0].iCursor;     /* Cursor of sub-select */
@@ -1491,9 +1498,6 @@ sqlWindowCodeStep(
 	int addrIfNot;                  /* Address of OP_IfNot */
 	int addrGosubFlush = -1;        /* Address of OP_Gosub to flush: */
 	int addrInteger = -1;           /* Address of OP_Integer */
-	/* NOTE(gmoshkin): commenting out this because we don't support cache yet */
-	/* int addrCacheRewind;            /\* Address of OP_Rewind used in cache-mode */
-	/* int addrCacheNext;              /\* Jump here for next row in cache-mode */
 	int addrShortcut = 0;
 	int addrEmpty = 0;              /* Address of OP_Rewind in flush: */
 	int addrPeerJump = 0;           /* Address of jump taken if not new peer */
@@ -1603,7 +1607,6 @@ sqlWindowCodeStep(
 	sqlVdbeAddOp3(v, OP_MakeRecord, regNew, nInput + 1, regRecord);
 	sqlVdbeChangeP5(v, 1);
 	sqlVdbeAddOp2(v, OP_IdxInsert, regRecord, pMWin->regEph);
-	sqlVdbeAddOp2(v, OP_AddImm, pMWin->regSize, 1);
 
 	addrIfNot = sqlVdbeAddOp1(v, OP_IfNot, pMWin->regFirst);
 
@@ -1640,7 +1643,6 @@ sqlWindowCodeStep(
 	sqlVdbeAddOp2(v, OP_Rewind, s.current.csr, 1);
 	sqlVdbeAddOp2(v, OP_Rewind, s.end.csr, 1);
 	if( regPeer && pOrderBy ){
-		/* NOTE(gmoshkin) omitting windowReadPeerValues in case of bCache */
 		sqlVdbeAddOp3(v, OP_Copy, regNewPeer, regPeer, pOrderBy->nExpr-1);
 		sqlVdbeAddOp3(v, OP_Copy, regPeer, s.start.reg, pOrderBy->nExpr-1);
 		sqlVdbeAddOp3(v, OP_Copy, regPeer, s.current.reg, pOrderBy->nExpr-1);
@@ -1652,7 +1654,6 @@ sqlWindowCodeStep(
 
 	/* Begin generating SECOND_ROW_CODE */
 	VdbeComment((v, "Begin windowCodeStep.SECOND_ROW"));
-	/* NOTE(gmoshkin) omitting windowReadPeerValues in case of bCache */
 	sqlVdbeJumpHere(v, addrIfNot);
 	if( regPeer ){
 		addrPeerJump = windowIfNewPeer(pParse, pOrderBy, regNewPeer, regPeer);
@@ -1689,6 +1690,7 @@ sqlWindowCodeStep(
 		sqlVdbeJumpHere(v, addrShortcut);
 	sqlWhereEnd(pWInfo);
 
+	/* Fall through */
 	if (pMWin->pPartition) {
 		addrInteger = sqlVdbeAddOp2(v, OP_Integer, 0, regFlushPart);
 		sqlVdbeJumpHere(v, addrGosubFlush);
@@ -1736,7 +1738,6 @@ sqlWindowCodeStep(
 	sqlVdbeJumpHere(v, addrEmpty);
 
 	sqlVdbeAddOp1(v, OP_ResetSorter, s.current.csr);
-	sqlVdbeAddOp2(v, OP_Integer, 0, pMWin->regSize);
 	sqlVdbeAddOp2(v, OP_Bool, 1, pMWin->regFirst);
 	VdbeComment((v, "End windowCodeStep.FLUSH"));
 	if (pMWin->pPartition) {
