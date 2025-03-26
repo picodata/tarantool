@@ -1325,16 +1325,26 @@ case OP_AddImm: {            /* in1 */
 	break;
 }
 
-/* Opcode: MustBeInt P1 P2 * * *
+/* Opcode: MustBeInt P1 P2 * * P5
  *
- * Force the value in register P1 to be an integer.  If the value
- * in P1 is not an integer and cannot be converted into an integer
- * without data loss, then jump immediately to P2, or if P2==0
+ * If P5 is 0, force the value in register P1 to be an integer. If
+ * the value in P1 is not an integer and cannot be converted into an
+ * integer without data loss, then jump immediately to P2, or if P2==0
  * raise an ER_SQL_TYPE_MISMATCH error.
+ *
+ * Or, if P5 is non-zero, then force the register in P1 to be a number
+ * (real or integer). Jump to P2 if this cannot be accomplished without
+ * data loss. P2 must be non-zero in this case.
  */
 case OP_MustBeInt: {            /* jump, in1 */
 	pIn1 = &aMem[pOp->p1];
-	if (mem_to_int_precise(pIn1) != 0) {
+	int rc;
+	/* NOTE(gmoshkin) code is somewhat modified compared to sqlite */
+	if (pOp->p5)
+		rc = mem_to_number(pIn1);
+	else
+		rc = mem_to_int_precise(pIn1);
+	if (rc != 0) {
 		if (pOp->p2 != 0)
 			goto jump_to_p2;
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
