@@ -2449,7 +2449,6 @@ struct Window {
 	int iArgCol;		/* Offset of first argument for this function */
 
 	int regFirst;		/* Register holding first row of partition */
-	int regSize;
 };
 
 void
