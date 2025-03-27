@@ -136,6 +136,8 @@ struct auth_method {
 	 * Authenticates a request.
 	 *
 	 * Returns true if authentication was successful.
+	 * If external authentication (e.g. LDAP) fails, sets diag to
+	 * ER_SYSTEM.
 	 *
 	 * The request must be well-formed.
 	 * The salt must match the salt used to prepare the request.
@@ -197,6 +199,8 @@ authenticator_delete(struct authenticator *auth)
  * Authenticates a request.
  *
  * Returns true if authentication was successful.
+ * If external authentication (e.g. LDAP) fails, sets diag to
+ * ER_SYSTEM.
  *
  * NOTE: the request must be well-formed (checked by auth_request_check).
  */

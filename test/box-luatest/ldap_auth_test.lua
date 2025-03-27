@@ -26,7 +26,7 @@ local glauth_tmp = fio.tempdir()
 
 local g = t.group()
 
-g.before_all(function(cg)
+g.before_test('test_net_box', function(cg)
     -- NB: configure magic LDAP environment variables.
     local env = {
         TT_LDAP_URL = 'ldap://127.0.0.1:1389',
@@ -89,7 +89,7 @@ g.before_all(function(cg)
     sock:close()
 end)
 
-g.after_all(function(cg)
+g.after_test('test_net_box', function(cg)
     cg.server:drop()
     glauth:close()
     fio.rmtree(glauth_tmp)
@@ -127,7 +127,7 @@ g.test_net_box = function(cg)
     })
     t.assert_equals(
         conn.error,
-        "User not found or supplied credentials are invalid"
+        "Invalid credentials"
     )
     conn:close()
 
@@ -140,6 +140,38 @@ g.test_net_box = function(cg)
     t.assert_equals(
         conn.error,
         "User not found or supplied credentials are invalid"
+    )
+    conn:close()
+end
+
+g.before_test('test_ldap_server_down', function(cg)
+    local env = {
+        TT_LDAP_URL = 'ldap://127.0.0.1:1389',
+        TT_LDAP_DN_FMT = 'cn=$USER,dc=example,dc=org'
+    }
+
+    cg.server = server:new({alias = 'master', env = env})
+    cg.server:start()
+    cg.server:exec(function()
+        box.cfg{auth_type = 'ldap'}
+        box.schema.user.create('mickey', {password = ''})
+        box.session.su('admin', box.schema.user.grant, 'mickey', 'super')
+    end)
+end)
+
+g.after_test('test_ldap_server_down', function(cg)
+    cg.server:drop()
+end)
+
+g.test_ldap_server_down = function(cg)
+    local conn = net.connect(cg.server.net_box_uri, {
+        user = 'mickey',
+        password = 'dogood',
+        auth_type = 'ldap',
+    })
+    t.assert_equals(
+        conn.error,
+        "Can't contact LDAP server"
     )
     conn:close()
 end
