@@ -1121,26 +1121,27 @@ windowInitAccum(Parse *pParse, Window *pMWin)
 ** regOld and control falls through. Otherwise, if the contents of the arrays
 ** are equal, an OP_Goto is executed. The address of the OP_Goto is returned.
 */
-static int windowIfNewPeer(
+static void
+windowIfNewPeer(
 	Parse *pParse,
 	ExprList *pOrderBy,
 	int regNew,                     /* First in array of new values */
-	int regOld                      /* First in array of old values */
+	int regOld,                     /* First in array of old values */
+	int addr                        /* Jump here */
 ){
 	Vdbe *v = sqlGetVdbe(pParse);
-	int addr;
 	if( pOrderBy ){
 		int nVal = pOrderBy->nExpr;
 		struct sql_key_info *pKeyInfo = sql_expr_list_to_key_info(pParse, pOrderBy, 0);
 		sqlVdbeAddOp3(v, OP_Compare, regOld, regNew, nVal);
 		sqlVdbeAppendP4(v, (void*)pKeyInfo, P4_KEYINFO);
-		addr = sqlVdbeAddOp3(v, OP_Jump, sqlVdbeCurrentAddr(v) + 1,
-				     0, sqlVdbeCurrentAddr(v) + 1);
-		sqlVdbeAddOp3(v, OP_Copy, regNew, regOld, nVal - 1);
+		sqlVdbeAddOp3(v, OP_Jump,
+		  sqlVdbeCurrentAddr(v)+1, addr, sqlVdbeCurrentAddr(v)+1
+		);
+		sqlVdbeAddOp3(v, OP_Copy, regNew, regOld, nVal-1);
 	}else{
-		addr = sqlVdbeAddOp0(v, OP_Goto);
+		sqlVdbeAddOp2(v, OP_Goto, 0, addr);
 	}
-	return addr;
 }
 
 typedef struct WindowCodeArg WindowCodeArg;
@@ -1247,12 +1248,10 @@ windowCodeOp(WindowCodeArg *p, int op,
 	}
 
 	if( bPeer ){
-		int addr;
 		int nReg = (pMWin->pOrderBy ? pMWin->pOrderBy->nExpr : 0);
 		int regTmp = (nReg ? sqlGetTempRange(pParse, nReg) : 0);
 		windowReadPeerValues(p, csr, regTmp);
-		addr = windowIfNewPeer(pParse, pMWin->pOrderBy, regTmp, reg);
-		sqlVdbeChangeP2(v, addr, addrContinue);
+		windowIfNewPeer(pParse, pMWin->pOrderBy, regTmp, reg, addrContinue);
 		sqlReleaseTempRange(pParse, regTmp, nReg);
 	}
 
@@ -1391,9 +1390,7 @@ sqlWindowListDup(Window *p)
 **       }
 **       Insert new row into eph table.
 **       if( first row of partition ){
-**         Rewind(csrEnd)
-**         Rewind(csrStart)
-**         Rewind(csrCurrent)
+**         Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
 **         regEnd = <expr2>
 **         regStart = <expr1>
 **       }else{
@@ -1421,9 +1418,7 @@ sqlWindowListDup(Window *p)
 **     }
 **     Insert new row into eph table.
 **     if( first row of partition ){
-**       Rewind(csrEnd)
-**       Rewind(csrStart)
-**       Rewind(csrCurrent)
+**       Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
 **       regEnd = <expr2>
 **       regStart = regEnd - <expr1>
 **     }else{
@@ -1467,9 +1462,7 @@ sqlWindowListDup(Window *p)
 **     }
 **     Insert new row into eph table.
 **     if( first row of partition ){
-**       Rewind(csrEnd)
-**       Rewind(csrStart)
-**       Rewind(csrCurrent)
+**       Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
 **       regStart = <expr1>
 **     }else{
 **       AGGSTEP
@@ -1487,6 +1480,162 @@ sqlWindowListDup(Window *p)
 **     while( !eof csrCurrent ){
 **       RETURN_ROW
 **     }
+**
+** Also requiring special handling are the cases:
+**
+**   ROWS BETWEEN <expr1> PRECEDING AND <expr2> PRECEDING
+**   ROWS BETWEEN <expr1> FOLLOWING AND <expr2> FOLLOWING
+**
+** when (expr1 < expr2). This is detected at runtime, not by this function.
+** To handle this case, the pseudo-code programs depicted above are modified
+** slightly to be:
+**
+**     ... loop started by sqlite3WhereBegin() ...
+**     if( new partition ){
+**       Gosub flush
+**     }
+**     Insert new row into eph table.
+**     if( first row of partition ){
+**       Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
+**       regEnd = <expr2>
+**       regStart = <expr1>
+**       if( regEnd < regStart ){
+**         RETURN_ROW
+**         delete eph table contents
+**         continue
+**       }
+**     ...
+**
+** The new "continue" statement in the above jumps to the next iteration
+** of the outer loop - the one started by sqlite3WhereBegin().
+**
+** The various GROUPS cases are implemented using the same patterns as
+** ROWS. The VM code is modified slightly so that:
+**
+**   1. The else branch in the main loop is only taken if the row just
+**      added to the ephemeral table is the start of a new group. In
+**      other words, it becomes:
+**
+**         ... loop started by sqlite3WhereBegin() ...
+**         if( new partition ){
+**           Gosub flush
+**         }
+**         Insert new row into eph table.
+**         if( first row of partition ){
+**           Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
+**           regEnd = <expr2>
+**           regStart = <expr1>
+**         }else if( new group ){
+**           ...
+**         }
+**       }
+**
+**   2. Instead of processing a single row, each RETURN_ROW, AGGSTEP or
+**      AGGINVERSE step processes the current row of the relevant cursor and
+**      all subsequent rows belonging to the same group.
+**
+** RANGE window frames are a little different again. As for GROUPS, the
+** main loop runs once per group only. And RETURN_ROW, AGGSTEP and AGGINVERSE
+** deal in groups instead of rows. As for ROWS and GROUPS, there are three
+** basic cases:
+**
+**   RANGE BETWEEN <expr1> PRECEDING AND <expr2> FOLLOWING
+**
+**     ... loop started by sqlite3WhereBegin() ...
+**       if( new partition ){
+**         Gosub flush
+**       }
+**       Insert new row into eph table.
+**       if( first row of partition ){
+**         Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
+**         regEnd = <expr2>
+**         regStart = <expr1>
+**       }else{
+**         AGGSTEP
+**         while( (csrCurrent.key + regEnd) < csrEnd.key ){
+**           RETURN_ROW
+**           while( csrStart.key + regStart) < csrCurrent.key ){
+**             AGGINVERSE
+**           }
+**         }
+**       }
+**     }
+**     flush:
+**       AGGSTEP
+**       while( 1 ){
+**         RETURN ROW
+**         if( csrCurrent is EOF ) break;
+**           while( csrStart.key + regStart) < csrCurrent.key ){
+**             AGGINVERSE
+**           }
+**         }
+**       }
+**
+** In the above notation, "csr.key" means the current value of the ORDER BY
+** expression (there is only ever 1 for a RANGE that uses an <expr> FOLLOWING
+** or <expr PRECEDING) read from cursor csr.
+**
+**   RANGE BETWEEN <expr1> PRECEDING AND <expr2> PRECEDING
+**
+**     ... loop started by sqlite3WhereBegin() ...
+**       if( new partition ){
+**         Gosub flush
+**       }
+**       Insert new row into eph table.
+**       if( first row of partition ){
+**         Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
+**         regEnd = <expr2>
+**         regStart = <expr1>
+**       }else{
+**         while( (csrEnd.key + regEnd) <= csrCurrent.key ){
+**           AGGSTEP
+**         }
+**         RETURN_ROW
+**         while( (csrStart.key + regStart) < csrCurrent.key ){
+**           AGGINVERSE
+**         }
+**       }
+**     }
+**     flush:
+**       while( (csrEnd.key + regEnd) <= csrCurrent.key ){
+**         AGGSTEP
+**       }
+**       RETURN_ROW
+**
+**   RANGE BETWEEN <expr1> FOLLOWING AND <expr2> FOLLOWING
+**
+**     ... loop started by sqlite3WhereBegin() ...
+**       if( new partition ){
+**         Gosub flush
+**       }
+**       Insert new row into eph table.
+**       if( first row of partition ){
+**         Rewind(csrEnd) ; Rewind(csrStart) ; Rewind(csrCurrent)
+**         regEnd = <expr2>
+**         regStart = <expr1>
+**       }else{
+**         AGGSTEP
+**         while( (csrCurrent.key + regEnd) < csrEnd.key ){
+**           while( (csrCurrent.key + regStart) > csrStart.key ){
+**             AGGINVERSE
+**           }
+**           RETURN_ROW
+**         }
+**       }
+**     }
+**     flush:
+**       AGGSTEP
+**       while( 1 ){
+**         while( (csrCurrent.key + regStart) > csrStart.key ){
+**           AGGINVERSE
+**           if( eof ) break "while( 1 )" loop.
+**         }
+**         RETURN_ROW
+**       }
+**       while( !eof csrCurrent ){
+**         RETURN_ROW
+**       }
+**
 */
 void
 sqlWindowCodeStep(
@@ -1505,14 +1654,11 @@ sqlWindowCodeStep(
 	int csrInput = p->pSrc->a[0].iCursor;     /* Cursor of sub-select */
 	int nInput = p->pSrc->a[0].space->def->field_count;    /* Number of cols returned by sub */
 	int iInput;                     /* To iterate through sub cols */
-	int addrGoto;                   /* Address of OP_Goto */
 	int addrIf;                     /* NOTE(gmoshkin): this is removed in commit 72b9fdcf2 */
 	int addrIfNot;                  /* Address of OP_IfNot */
 	int addrGosubFlush = -1;        /* Address of OP_Gosub to flush: */
 	int addrInteger = -1;           /* Address of OP_Integer */
-	int addrShortcut = 0;
 	int addrEmpty = 0;              /* Address of OP_Rewind in flush: */
-	int addrPeerJump = 0;           /* Address of jump taken if not new peer */
 	int regStart = 0;               /* Value of <expr> PRECEDING */
 	int regEnd = 0;                 /* Value of <expr> FOLLOWING */
 	int regNew;                     /* Array of registers holding new input row */
@@ -1521,6 +1667,7 @@ sqlWindowCodeStep(
 	int regNewPeer = 0;             /* Peer values for new row (part of regNew) */
 	int regPeer = 0;                /* Peer values for current row */
 	WindowCodeArg s;                /* Context object for sub-routines */
+	int lblWhereEnd;                /* Label just before sqlite3WhereEnd() code */
 
 	assert( pMWin->eStart==TK_PRECEDING || pMWin->eStart==TK_CURRENT
 	     || pMWin->eStart==TK_FOLLOWING || pMWin->eStart==TK_UNBOUNDED
@@ -1528,6 +1675,8 @@ sqlWindowCodeStep(
 	assert( pMWin->eEnd==TK_FOLLOWING || pMWin->eEnd==TK_CURRENT
 	     || pMWin->eEnd==TK_UNBOUNDED || pMWin->eEnd==TK_PRECEDING
 	);
+
+	lblWhereEnd = sqlVdbeMakeLabel(v);
 
 	/* Fill in the context object */
 	memset(&s, 0, sizeof(WindowCodeArg));
@@ -1641,7 +1790,7 @@ sqlWindowCodeStep(
 		sqlVdbeAddOp2(v, OP_Rewind, s.current.csr, 1);
 		windowReturnOneRow(pParse, pMWin, regGosub, addrGosub);
 		sqlVdbeAddOp1(v, OP_ResetSorter, s.current.csr);
-		addrShortcut = sqlVdbeAddOp0(v, OP_Goto);
+		sqlVdbeAddOp2(v, OP_Goto, 0, lblWhereEnd);
 		sqlVdbeJumpHere(v, addrGe);
 	}
 	if (pMWin->eStart == TK_FOLLOWING && regEnd) {
@@ -1662,13 +1811,13 @@ sqlWindowCodeStep(
 	}
 
 	sqlVdbeAddOp2(v, OP_Bool, 0, pMWin->regFirst);
-	addrGoto = sqlVdbeAddOp0(v, OP_Goto);
+	sqlVdbeAddOp2(v, OP_Goto, 0, lblWhereEnd);
 
 	/* Begin generating SECOND_ROW_CODE */
 	VdbeComment((v, "Begin windowCodeStep.SECOND_ROW"));
 	sqlVdbeJumpHere(v, addrIfNot);
 	if( regPeer ){
-		addrPeerJump = windowIfNewPeer(pParse, pOrderBy, regNewPeer, regPeer);
+		windowIfNewPeer(pParse, pOrderBy, regNewPeer, regPeer, lblWhereEnd);
 	}
 
 	if (pMWin->eStart == TK_FOLLOWING) {
@@ -1691,15 +1840,10 @@ sqlWindowCodeStep(
 			if( regEnd ) sqlVdbeJumpHere(v, addr);
 		}
 	}
-	if( addrPeerJump ){
-		sqlVdbeJumpHere(v, addrPeerJump);
-	}
 	VdbeComment((v, "End windowCodeStep.SECOND_ROW"));
 
 	/* End of the main input loop */
-	sqlVdbeJumpHere(v, addrGoto);
-	if (addrShortcut > 0)
-		sqlVdbeJumpHere(v, addrShortcut);
+	sqlVdbeResolveLabel(v, lblWhereEnd);
 	sqlWhereEnd(pWInfo);
 
 	/* Fall through */
@@ -1746,7 +1890,6 @@ sqlWindowCodeStep(
 		sqlVdbeAddOp2(v, OP_Goto, 0, addrStart);
 		sqlVdbeJumpHere(v, addrBreak);
 	}
-
 	sqlVdbeJumpHere(v, addrEmpty);
 
 	sqlVdbeAddOp1(v, OP_ResetSorter, s.current.csr);
