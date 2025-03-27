@@ -118,7 +118,8 @@ authenticate(const char *user_name, uint32_t user_name_len,
 		auth_res.is_authenticated = false;
 		if (session_run_on_auth_triggers(&auth_res) != 0)
 			return -1;
-		diag_set(ClientError, ER_CREDS_MISMATCH);
+		if (diag_is_empty(diag_get()))
+			diag_set(ClientError, ER_CREDS_MISMATCH);
 		return -1;
 	}
 	if (security_check_auth_post(user) != 0)

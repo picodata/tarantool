@@ -108,6 +108,7 @@ coio_ldap_check_password(va_list ap)
 	if (ret != LDAP_SUCCESS) {
 		say_error("failed to initialize LDAP connection: %s",
 			  ldap_err2string(ret));
+		diag_set(ClientError, ER_SYSTEM, ldap_err2string(ret));
 		goto cleanup;
 	}
 
@@ -117,6 +118,7 @@ coio_ldap_check_password(va_list ap)
 	if (ret != LDAP_SUCCESS) {
 		say_error("failed to set LDAP connection option: %s",
 			  ldap_err2string(ret));
+		diag_set(ClientError, ER_SYSTEM, ldap_err2string(ret));
 		goto cleanup;
 	}
 
@@ -132,6 +134,7 @@ coio_ldap_check_password(va_list ap)
 	if (ret != LDAP_SUCCESS) {
 		say_error("ldap authentication failed: %s",
 			  ldap_err2string(ret));
+		diag_set(ClientError, ER_SYSTEM, ldap_err2string(ret));
 		goto cleanup;
 	}
 
@@ -277,6 +280,7 @@ auth_ldap_authenticate_request(const struct authenticator *auth,
 	if (getenv_safe("TT_LDAP_URL", url, sizeof(url)) == NULL) {
 		say_error("LDAP server not configured, "
 			  "please set env variable TT_LDAP_URL");
+		diag_set(ClientError, ER_SYSTEM, "LDAP server not configured");
 		goto fail;
 	}
 
@@ -284,6 +288,8 @@ auth_ldap_authenticate_request(const struct authenticator *auth,
 	if (getenv_safe("TT_LDAP_DN_FMT", dn_fmt, sizeof(dn_fmt)) == NULL) {
 		say_error("LDAP DN format string not configured, "
 			  "please set env variable TT_LDAP_DN_FMT");
+		diag_set(ClientError, ER_SYSTEM,
+			 "LDAP DN format string not configured");
 		goto fail;
 	}
 
