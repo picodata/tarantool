@@ -56,11 +56,12 @@ int
 sql_unprepare(uint32_t stmt_id);
 
 /**
- * Execute prepared query (exported version).
+ * Extract a prepared statement from the statement cache and execute it.
+ * The result is stored into an out buffer (exported version).
  * @param stmt_id prepared statement ID.
  * @param mp_params MessagePack array of parameters.
  * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
- * @param[out] out_buf Output buffer for SQL response.
+ * @param[out] out_buf Output buffer for SQL result.
  *
  * @retval  0 Success.
  * @retval -1 Error.
@@ -69,22 +70,51 @@ int
 sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
 			 uint64_t vdbe_max_steps, struct obuf *out_buf);
 
+/**
+ * Extract a prepared statement from the statement cache and execute it.
+ * The result is stored into a port (exported version).
+ * @param stmt_id prepared statement ID.
+ * @param mp_params MessagePack array of parameters.
+ * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
+ * @param[out] port Initialized port to store SQL result.
+ *
+ * @retval  0 Success.
+ * @retval -1 Error.
+ */
+int
+stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
+		       uint64_t vdbe_max_steps, struct port *port);
+
 int
 sql_execute_prepared(uint32_t query_id, const struct sql_bind *bind,
 		     uint32_t bind_count, uint64_t vdbe_max_steps,
 		     struct region *region, struct port *port);
 
 /**
- * Prepare and execute an SQL statement (exported version).
+ * Execute an SQL query bypassing the statement cache and store its result
+ * into an out buffer (exported version).
  * @param sql SQL text.
  * @param len Length of the SQL text.
  * @param mp_params MessagePack array of parameters.
  * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
- * @param[out] out_buf Output buffer for SQL response.
+ * @param[out] out_buf Output buffer for SQL result.
  */
 int
 sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
 			    uint64_t vdbe_max_steps, struct obuf *out_buf);
+
+/**
+ * Execute an SQL query bypassing the statement cache and store its result
+ * into a port (exported version).
+ * @param sql SQL text.
+ * @param len Length of the SQL text.
+ * @param mp_params MessagePack array of parameters.
+ * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
+ * @param[out] port Initialized port to store SQL result.
+ */
+int
+sql_execute_into_port(const char *sql, int len, const char *mp_params,
+		      uint64_t vdbe_max_steps, struct port *port);
 
 /**
  * Prepare and execute an SQL statement.
