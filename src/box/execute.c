@@ -126,16 +126,16 @@ sql_stmt_find_or_create(const char *sql, int len,
 	struct sql_stmt *new_stmt = sql_stmt_cache_find(stmt_id);
 	rmean_collect(rmean_box, IPROTO_PREPARE, 1);
 	if (new_stmt == NULL) {
-		if (unlikely(sql_stmt_compile(sql, len, NULL, &new_stmt, NULL) != 0))
+		if (sql_stmt_compile(sql, len, NULL, &new_stmt, NULL) != 0)
 			return -1;
-		if (unlikely(sql_stmt_cache_insert(new_stmt) != 0)) {
+		if (sql_stmt_cache_insert(new_stmt) != 0) {
 			sql_stmt_finalize(new_stmt);
 			return -1;
 		}
 	} else {
 		if (!sql_stmt_schema_version_is_valid(new_stmt) &&
 		    !sql_stmt_busy(new_stmt)) {
-			if (unlikely(sql_reprepare(&new_stmt) != 0))
+			if (sql_reprepare(&new_stmt) != 0)
 				return -1;
 		}
 	}
@@ -153,7 +153,7 @@ sql_prepare(const char *sql, int len, struct port *port)
 {
 	uint32_t stmt_id = sql_stmt_calculate_id(sql, len);
 	struct sql_stmt *stmt = NULL;
-	if (unlikely(sql_stmt_find_or_create(sql, len, stmt_id, &stmt) != 0))
+	if (sql_stmt_find_or_create(sql, len, stmt_id, &stmt) != 0)
 		return -1;
 
 	/* Add id to the list of available statements in session. */
@@ -176,13 +176,13 @@ int
 sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id, uint64_t *session_id)
 {
 	uint32_t new_id = sql_stmt_calculate_id(sql, len);
-	if (unlikely(session_check_stmt_id(current_session(), new_id))) {
+	if (session_check_stmt_id(current_session(), new_id)) {
 		diag_set(ClientError, ER_SQL_STATEMENT_DUPLICATE, new_id);
 		return -1;
 	}
 
 	struct sql_stmt *stmt = NULL;
-	if (unlikely(sql_stmt_find_or_create(sql, len, new_id, &stmt) != 0))
+	if (sql_stmt_find_or_create(sql, len, new_id, &stmt) != 0)
 		return -1;
 
 	session_add_stmt_id(current_session(), new_id);
@@ -273,24 +273,76 @@ sql_stmt_run_vdbe(struct sql_stmt *stmt, uint64_t vdbe_max_steps,
 	return 0;
 }
 
+/**
+ * Borrow statement from the cache.
+ *
+ * If the statement was prepared in some other session, we borrow
+ * it and add to the current session until execution is finished.
+ * It is required to prevent the statement from being removed out
+ * of the cache while the statement is being executed.
+ *
+ * The statement must be removed by the caller out of the current
+ * session to restore the original session state.
+ *
+ * @param stmt_id ID of the statement to borrow.
+ * @param[out] stmt Pointer to store statement.
+ * @param[out] is_borrowed True if the statement was borrowed.
+ *
+ * @retval  0 Success.
+ * @retval -1 Error.
+ */
+static int
+cache_get_stmt(uint32_t stmt_id, struct sql_stmt **stmt, bool *is_borrowed)
+{
+	*stmt = sql_stmt_cache_find(stmt_id);
+	if (*stmt == NULL) {
+		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
+		return -1;
+	}
+	if (!session_check_stmt_id(current_session(), stmt_id)) {
+		session_add_stmt_id(current_session(), stmt_id);
+		*is_borrowed = true;
+	} else {
+		*is_borrowed = false;
+	}
+	return 0;
+}
+
+/**
+ * Remove the borrowed statement from the current session.
+ *
+ * @param stmt_id ID of the borrowed statement.
+ */
+static void
+cache_put_stmt(uint32_t stmt_id)
+{
+	session_remove_stmt_id(current_session(), stmt_id);
+	sql_stmt_unref(stmt_id);
+}
+
 static int
 sql_stmt_execute(struct sql_stmt *stmt, const struct sql_bind *bind,
 		 uint32_t bind_count, uint64_t vdbe_max_steps,
 		 struct region *region, struct port *port)
 {
+	int rc = 0;
 	assert(stmt != NULL);
-	if (!sql_stmt_schema_version_is_valid(stmt)) {
-		if (sql_reprepare(&stmt) != 0) {
-			diag_set(ClientError, ER_SQL_EXECUTE,
-				 "statement reprepare failed");
-			return -1;
-		}
-	}
+	/*
+	 * We cannot use the statement while it's being executed by another
+	 * fiber. In such cases, we compile our own copy of the statement
+	 * from SQL and execute it, bypassing the statement cache.
+	 */
 	if (sql_stmt_busy(stmt)) {
 		const char *sql_str = sql_stmt_query_str(stmt);
 		return sql_prepare_and_execute(sql_str, strlen(sql_str), bind,
 					       bind_count, vdbe_max_steps,
 					       region, port);
+	}
+	if (!sql_stmt_schema_version_is_valid(stmt) &&
+	    sql_reprepare(&stmt) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "statement reprepare failed");
+		return -1;
 	}
 	/*
 	 * Clear all set from previous execution cycle values to be bound and
@@ -305,14 +357,11 @@ sql_stmt_execute(struct sql_stmt *stmt, const struct sql_bind *bind,
 	port_sql_create(port, stmt, format, false);
 	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0) {
 		port_destroy(port);
-		sql_stmt_reset(stmt);
-		sql_unbind(stmt);
-		return -1;
+		rc = -1;
 	}
 	sql_stmt_reset(stmt);
 	sql_unbind(stmt);
-
-	return 0;
+	return rc;
 }
 
 int
@@ -330,58 +379,96 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 }
 
 int
+stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
+		       uint64_t vdbe_max_steps, struct port *port)
+{
+	struct sql_stmt *stmt = NULL;
+	struct sql_bind *bind = NULL;
+	bool stmt_is_borrowed = false;
+	int rc = -1;
+
+	assert(port->vtab != NULL);
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+
+	if (cache_get_stmt(stmt_id, &stmt, &stmt_is_borrowed) != 0)
+		goto finally;
+	/*
+	 * We cannot use the statement while it's being executed by another
+	 * fiber. In such cases, we compile our own copy of the statement
+	 * from SQL and execute it, bypassing the statement cache.
+	 */
+	if (sql_stmt_busy(stmt)) {
+		const char *sql_str = sql_stmt_query_str(stmt);
+		if (sql_execute_into_port(sql_str, strlen(sql_str),
+					  mp_params, vdbe_max_steps, port) == 0)
+			rc = 0;
+		goto finally;
+	}
+	if (!sql_stmt_schema_version_is_valid(stmt) &&
+	    sql_reprepare(&stmt) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "statement reprepare failed");
+		goto finally;
+	}
+	int bind_count = sql_bind_list_decode(mp_params, &bind);
+	if (bind_count < 0)
+		goto finally;
+	/*
+	 * Clear all set from previous execution cycle values to be bound and
+	 * remove autoincrement IDs generated in that cycle.
+	 */
+	sql_unbind(stmt);
+	if (sql_bind(stmt, bind, bind_count) != 0)
+		goto finally;
+	sql_reset_autoinc_id_list(stmt);
+	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0)
+		goto statement;
+	rc = 0;
+statement:
+	sql_stmt_reset(stmt);
+	sql_unbind(stmt);
+finally:
+	if (stmt_is_borrowed)
+		cache_put_stmt(stmt_id);
+	region_truncate(region, region_svp);
+	return rc;
+}
+
+int
 sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
 			 uint64_t vdbe_max_steps, struct obuf *out_buf)
 {
 	struct port port;
+	struct sql_stmt *stmt = NULL;
 	struct sql_bind *bind = NULL;
+	bool stmt_is_borrowed = false;
+	int rc = -1;
 
-	size_t region_svp = region_used(&fiber()->gc);
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
 
 	int bind_count = sql_bind_list_decode(mp_params, &bind);
 	if (bind_count < 0)
-		goto cleanup;
-
-	struct sql_stmt *stmt = sql_stmt_cache_find(stmt_id);
-	if (stmt == NULL) {
-		diag_set(ClientError, ER_WRONG_QUERY_ID, stmt_id);
-		goto cleanup;
-	}
-	/*
-	 * If the statement was prepared in some other session, we borrow
-	 * it and add to the current session until execution is finished.
-	 * It is required to prevent the statement from being removed out
-	 * of the cache while the statement is being executed. Then the
-	 * statement is removed out of the current session to restore the
-	 * original session state.
-	 */
-	bool stmt_is_borrowed = false;
-	if (!session_check_stmt_id(current_session(), stmt_id)) {
-		session_add_stmt_id(current_session(), stmt_id);
-		stmt_is_borrowed = true;
-	}
-	int rc = sql_stmt_execute(stmt, bind, (uint32_t)bind_count,
-				  vdbe_max_steps, &fiber()->gc, &port);
-	if (stmt_is_borrowed) {
-		session_remove_stmt_id(current_session(), stmt_id);
-		sql_stmt_unref(stmt_id);
-	}
-	if (rc != 0)
-		goto cleanup;
-
+		goto finally;
+	if (cache_get_stmt(stmt_id, &stmt, &stmt_is_borrowed) != 0)
+		goto finally;
+	if (sql_stmt_execute(stmt, bind, (uint32_t)bind_count,
+			     vdbe_max_steps, region, &port) != 0)
+		goto finally;
 	struct obuf_svp out_svp = obuf_create_svp(out_buf);
 	if (port_dump_msgpack(&port, out_buf) != 0) {
 		obuf_rollback_to_svp(out_buf, &out_svp);
-		port_destroy(&port);
-		goto cleanup;
+		goto destroy;
 	}
-
+	rc = 0;
+destroy:
 	port_destroy(&port);
-	region_truncate(&fiber()->gc, region_svp);
-	return 0;
-cleanup:
-	region_truncate(&fiber()->gc, region_svp);
-	return -1;
+finally:
+	if (stmt_is_borrowed)
+		cache_put_stmt(stmt_id);
+	region_truncate(region, region_svp);
+	return rc;
 }
 
 int
@@ -399,7 +486,8 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
 		return -1;
 	}
 
-	if (sql_prepare_and_execute(sql, len, bind, (uint32_t)bind_count,
+	if (sql_prepare_and_execute(sql, len, bind,
+				    (uint32_t)bind_count,
 				    vdbe_max_steps, &fiber()->gc, &port) != 0) {
 		region_truncate(&fiber()->gc, region_svp);
 		return -1;
@@ -419,6 +507,37 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
 }
 
 int
+sql_execute_into_port(const char *sql, int len, const char *mp_params,
+		      uint64_t vdbe_max_steps, struct port *port)
+{
+	struct sql_bind *bind = NULL;
+	int rc = -1;
+
+	assert(port->vtab != NULL);
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+
+	int bind_count = sql_bind_list_decode(mp_params, &bind);
+	if (bind_count < 0)
+		goto truncate;
+
+	struct sql_stmt *stmt;
+	if (sql_stmt_compile(sql, len, NULL, &stmt, NULL) != 0)
+		goto truncate;
+	assert(stmt != NULL);
+	if (sql_bind(stmt, bind, bind_count) != 0)
+		goto finally;
+	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0)
+		goto finally;
+	rc = 0;
+finally:
+	sql_stmt_finalize(stmt);
+truncate:
+	region_truncate(region, region_svp);
+	return rc;
+}
+
+int
 sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 			uint32_t bind_count, uint64_t vdbe_max_steps,
 			struct region *region, struct port *port)
@@ -427,12 +546,14 @@ sql_prepare_and_execute(const char *sql, int len, const struct sql_bind *bind,
 	if (sql_stmt_compile(sql, len, NULL, &stmt, NULL) != 0)
 		return -1;
 	assert(stmt != NULL);
-	enum sql_serialization_format format = sql_column_count(stmt) > 0 ?
-					   DQL_EXECUTE : DML_EXECUTE;
+	if (sql_bind(stmt, bind, bind_count) != 0)
+		return -1;
+	enum sql_serialization_format format = sql_column_count(stmt) > 0
+					       ? DQL_EXECUTE : DML_EXECUTE;
 	port_sql_create(port, stmt, format, true);
-	if (sql_bind(stmt, bind, bind_count) == 0 &&
-		sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) == 0)
-		return 0;
-	port_destroy(port);
-	return -1;
+	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0) {
+		port_destroy(port);
+		return -1;
+	}
+	return 0;
 }

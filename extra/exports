@@ -603,13 +603,14 @@ obuf_create
 obuf_destroy
 obuf_dup
 obuf_reset
-stmt_populate_port
+stmt_execute_into_port
 sql_prepare_ext
 sql_stmt_finalize
 sql_unprepare_ext
 sql_stmt_query_str
 sql_stmt_calculate_id
 sql_execute_prepared_ext
+sql_execute_into_port
 sql_prepare_and_execute_ext
 # picodata decimal
 decNumberToString
