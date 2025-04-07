@@ -34,14 +34,25 @@ g.before_all(function()
             const char *sql, int len, const char *mp_params,
             uint64_t vdbe_max_steps, struct obuf *out_buf);
 
+        int sql_execute_into_port(
+            const char *sql, int len, const char *mp_params,
+            uint64_t vdbe_max_steps, struct port *port);
+
         int sql_execute_prepared_ext(
             uint32_t stmt_id, const char *mp_params,
             uint64_t vdbe_max_steps, struct obuf *out_buf);
 
+        int stmt_execute_into_port(
+            uint32_t stmt_id, const char *mp_params,
+            uint64_t vdbe_max_steps, struct port *port);
+
         int sql_prepare_ext(
             const char *sql, int len,
             uint32_t *stmt_id, uint64_t *sid);
+
         int sql_unprepare_ext(uint32_t stmt_id, uint64_t sid);
+
+        void port_c_create(struct port *base);
     ]]
     g.server = server:new({alias = 'sql_api'})
     g.server:start()
@@ -96,6 +107,26 @@ g.test_stmt_preparetion_and_execution = function()
     end)
 end
 
+g.test_sql_execute_into_port = function()
+    g.server:exec(function()
+        local res, params, sql
+
+        local ffi = require('ffi')
+        local port_alloc = ffi.new("struct port[1]")
+        local port = ffi.cast("struct port *", port_alloc)
+        ffi.C.port_c_create(port)
+
+        params = ffi.cast('char *', '\x91\xd9\x01A')
+        sql = 'INSERT INTO t VALUES (?)'
+        res = ffi.C.sql_execute_into_port(sql, #sql, params, 1024, port)
+        t.assert_equals(res, 0)
+
+        -- Check the result.
+        res = box.execute([[SELECT * FROM t WHERE a = 'A']])
+        t.assert_equals(res.rows[1][1], 'A')
+    end)
+end
+
 g.test_prepared_stmt_execution = function()
     g.server:exec(function()
         local res, buf
@@ -121,6 +152,31 @@ g.test_prepared_stmt_execution = function()
 
         s:unprepare()
         ffi.C.obuf_destroy(obuf)
+    end)
+end
+
+g.test_stmt_execute_into_port = function()
+    g.server:exec(function()
+        local res, params
+
+        local ffi = require('ffi')
+        local port_alloc = ffi.new("struct port[1]")
+        local port = ffi.cast("struct port *", port_alloc)
+        ffi.C.port_c_create(port)
+
+        -- Prepare the statement.
+        local s = box.prepare('INSERT INTO t VALUES (?)')
+
+        -- Prepare and execute the statement with C API.
+        params = ffi.cast('char *', '\x91\xd9\x01B')
+        res = ffi.C.stmt_execute_into_port(s.stmt_id, params, 1024, port)
+        t.assert_equals(res, 0)
+
+        -- Check the result.
+        res = box.execute([[SELECT * FROM t WHERE a = 'B']])
+        t.assert_equals(res.rows[1][1], 'B')
+
+        s:unprepare()
     end)
 end
 
