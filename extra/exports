@@ -455,7 +455,6 @@ memtx_tx_story_gc_step
 PMurHash32
 PMurHash32_Process
 PMurHash32_Result
-port_destroy
 prbuf_create
 prbuf_open
 prbuf_prepare
@@ -595,6 +594,9 @@ _say_strerror
 
 # picodata sql
 port_destroy
+port_c_create
+port_c_add_tuple
+port_c_add_mp
 cord_slab_cache
 obuf_create
 obuf_destroy
@@ -672,7 +674,6 @@ coio_write_timeout
 
 authenticate
 user_auth_method_name
-port_c_create
 
 # picodata audit log
 log_create
