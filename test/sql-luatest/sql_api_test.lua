@@ -352,3 +352,29 @@ g.test_execution_references_from_other_session = function()
         t.assert_equals(box.info.sql().cache.stmt_count, initial_stmt_count)
     end)
 end
+
+g.test_double_prepared_stmt = function()
+    g.server:exec(function()
+        local res
+
+        local ffi = require('ffi')
+        local stmt_id = ffi.new('uint32_t[1]')
+        local session_id = ffi.new('uint64_t[1]')
+        local stmt = 'VALUES (?)'
+
+        -- Prepare the statement.
+        res = ffi.C.sql_prepare_ext(stmt, #stmt, stmt_id, session_id)
+        t.assert_equals(res, 0)
+
+        local stmt_id_2 = ffi.new('uint32_t[1]')
+
+        -- Prepare the statement again. Expect error
+        res = ffi.C.sql_prepare_ext(stmt, #stmt, stmt_id_2, session_id)
+        t.assert_not_equals(res, 0)
+        local err = tostring(box.error.last())
+        local s = string.format("SQL statement %u already exists in the cache",
+        tonumber(stmt_id[0]))
+        t.assert_str_contains(err, s)
+
+    end)
+end
