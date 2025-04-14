@@ -325,7 +325,7 @@ struct errcode_record {
 	/*270 */_(ER_CANT_GENERATE,		"Can't generate %s") \
 	/*271 */_(ER_SQL_STATEMENT_BUSY,	"SQL statement %d is busy") \
 	/*272 */_(ER_SCHEMA_UPGRADE_IN_PROGRESS, "Schema upgrade is already in progress") \
-	/*273 */_(ER_UNUSED7,			"") \
+	/*273 */_(ER_SQL_STATEMENT_DUPLICATE,   "SQL statement %u already exists in the cache") \
 	/*274 */_(ER_UNCONFIGURED,		"Please call box.cfg{} first") \
 	/*275 */_(ER_UNUSED8,			"") \
 	/*276 */_(ER_UNUSED9,			"") \

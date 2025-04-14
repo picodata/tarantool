@@ -109,13 +109,11 @@ sql_reprepare(struct sql_stmt **stmt)
 /**
  * Find or create prepared statement by its SQL query.
  * If statement is outdated or not found in the statement
- * cache, it will be compiled and added to the cache. Also,
- * the statement ID will be added to the list of available
- * statements in the current session.
+ * cache, it will be compiled and added to the cache.
  *
  * @param sql SQL query.
  * @param len Length of the query.
- * @param stmt_id Pointer to store statement ID.
+ * @param stmt_id Statement ID.
  * @param stmt Pointer to store statement.
  *
  * @retval  0 Success.
@@ -123,30 +121,25 @@ sql_reprepare(struct sql_stmt **stmt)
  */
 static int
 sql_stmt_find_or_create(const char *sql, int len,
-			uint32_t *stmt_id, struct sql_stmt **stmt)
+			uint32_t stmt_id, struct sql_stmt **stmt)
 {
-	uint32_t new_id = sql_stmt_calculate_id(sql, len);
-	struct sql_stmt *new_stmt = sql_stmt_cache_find(new_id);
+	struct sql_stmt *new_stmt = sql_stmt_cache_find(stmt_id);
 	rmean_collect(rmean_box, IPROTO_PREPARE, 1);
 	if (new_stmt == NULL) {
-		if (sql_stmt_compile(sql, len, NULL, &new_stmt, NULL) != 0)
+		if (unlikely(sql_stmt_compile(sql, len, NULL, &new_stmt, NULL) != 0))
 			return -1;
-		if (sql_stmt_cache_insert(new_stmt) != 0) {
+		if (unlikely(sql_stmt_cache_insert(new_stmt) != 0)) {
 			sql_stmt_finalize(new_stmt);
 			return -1;
 		}
 	} else {
 		if (!sql_stmt_schema_version_is_valid(new_stmt) &&
 		    !sql_stmt_busy(new_stmt)) {
-			if (sql_reprepare(&new_stmt) != 0)
+			if (unlikely(sql_reprepare(&new_stmt) != 0))
 				return -1;
 		}
 	}
 	assert(new_stmt != NULL);
-	/* Add id to the list of available statements in session. */
-	if (!session_check_stmt_id(current_session(), new_id))
-		session_add_stmt_id(current_session(), new_id);
-	*stmt_id = new_id;
 	*stmt = new_stmt;
 	return 0;
 }
@@ -158,10 +151,15 @@ sql_stmt_find_or_create(const char *sql, int len,
 int
 sql_prepare(const char *sql, int len, struct port *port)
 {
-	uint32_t stmt_id = 0;
+	uint32_t stmt_id = sql_stmt_calculate_id(sql, len);
 	struct sql_stmt *stmt = NULL;
-	if (sql_stmt_find_or_create(sql, len, &stmt_id, &stmt) != 0)
+	if (unlikely(sql_stmt_find_or_create(sql, len, stmt_id, &stmt) != 0))
 		return -1;
+
+	/* Add id to the list of available statements in session. */
+	if (!session_check_stmt_id(current_session(), stmt_id))
+		session_add_stmt_id(current_session(), stmt_id);
+
 	enum sql_serialization_format format = sql_column_count(stmt) > 0 ?
 					   DQL_PREPARE : DML_PREPARE;
 	port_sql_create(port, stmt, format, false);
@@ -170,15 +168,25 @@ sql_prepare(const char *sql, int len, struct port *port)
 }
 
 /**
- * Find or create prepared statement by its SQL query.
+ * Create prepared statement by its SQL query.
  * Returns compiled statement ID and session ID.
+ * Error if prepared statement is duplicate
  */
 int
 sql_prepare_ext(const char *sql, int len, uint32_t *stmt_id, uint64_t *session_id)
 {
-	struct sql_stmt *stmt = NULL;
-	if (sql_stmt_find_or_create(sql, len, stmt_id, &stmt) != 0)
+	uint32_t new_id = sql_stmt_calculate_id(sql, len);
+	if (unlikely(session_check_stmt_id(current_session(), new_id))) {
+		diag_set(ClientError, ER_SQL_STATEMENT_DUPLICATE, new_id);
 		return -1;
+	}
+
+	struct sql_stmt *stmt = NULL;
+	if (unlikely(sql_stmt_find_or_create(sql, len, new_id, &stmt) != 0))
+		return -1;
+
+	session_add_stmt_id(current_session(), new_id);
+	*stmt_id = new_id;
 	*session_id = current_session()->id;
 	return 0;
 }
