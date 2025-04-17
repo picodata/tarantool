@@ -21,7 +21,7 @@ local EOL = "\n...\n"
 
 local test = tap.test("console")
 
-test:plan(78)
+test:plan(79)
 
 -- Start console and connect to it
 local server = console.listen(CONSOLE_SOCKET)
@@ -229,11 +229,12 @@ test:is(addr.host, '127.0.0.1', 'console.listen uri support')
 test:isnt(addr.port, 0, 'console.listen uri support')
 s:close()
 
-local s = console.listen('console://unix/:'..CONSOLE_SOCKET)
+local s = console.listen('console://unix/:'..CONSOLE_SOCKET, tonumber('660', 8))
 addr = s:name()
 test:is(addr.family, 'AF_UNIX', 'console.listen uri support')
 test:is(addr.host, 'unix/', 'console.listen uri support')
 test:is(addr.port, CONSOLE_SOCKET, 'console.listen uri support')
+test:is(bit.band(fio.stat(CONSOLE_SOCKET).mode, 0x1FF), 0x1B0)
 s:close()
 
 --
