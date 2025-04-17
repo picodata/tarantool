@@ -944,7 +944,7 @@ end
 --
 -- Start admin console
 --
-local function listen(uri)
+local function listen(uri, permissions)
     local host, port
     if uri == nil then
         host = 'unix/'
@@ -958,7 +958,7 @@ local function listen(uri)
         port = u.service or 3313
     end
     local s = socket.tcp_server(host, port, { handler = client_handler,
-        name = 'console'})
+        name = 'console', permissions = permissions })
     if not s then
         error(string.format('failed to create server %s:%s: %s',
             host, port, errno.strerror()))

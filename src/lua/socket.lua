@@ -1129,6 +1129,9 @@ local function tcp_server_do_bind(s, addr)
                 fio.unlink(addr.port)
                 return socket_close(self)
             end
+            if addr.permissions then
+                fio.chmod(addr.port, addr.permissions)
+            end
         end
         return true
     end
@@ -1172,12 +1175,12 @@ local function tcp_server_bind_addr(s, addr)
 end
 
 
-local function tcp_server_bind(host, port, prepare, timeout)
+local function tcp_server_bind(host, port, prepare, timeout, permissions)
     timeout = timeout and tonumber(timeout) or TIMEOUT_INFINITY
     local dns, err
     if host == 'unix/' then
         dns = {{host = host, port = port, family = 'AF_UNIX', protocol = 0,
-            type = 'SOCK_STREAM' }}
+            type = 'SOCK_STREAM', permissions = permissions }}
     else
         dns, err = getaddrinfo(host, port, timeout, {
             protocol = 'tcp',
@@ -1228,7 +1231,8 @@ local function tcp_server(host, port, opts, timeout)
         tcp_server_usage()
     end
     server.name = server.name or 'server'
-    local s, addr = tcp_server_bind(host, port, server.prepare, timeout)
+    local s, addr = tcp_server_bind(
+        host, port, server.prepare, timeout, server.permissions)
     if not s then
         -- addr is error message now.
         return nil, addr
