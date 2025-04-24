@@ -594,9 +594,10 @@ _say_strerror
 
 # picodata sql
 port_destroy
-port_c_create
 port_c_add_tuple
 port_c_add_mp
+port_c_create
+port_c_destroy
 cord_slab_cache
 obuf_create
 obuf_destroy
