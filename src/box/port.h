@@ -146,6 +146,10 @@ struct port_c {
 static_assert(sizeof(struct port_c) <= sizeof(struct port),
 	      "sizeof(struct port_c) must be <= sizeof(struct port)");
 
+/** Destroy a C port object. */
+void
+port_c_destroy(struct port *base);
+
 /** Create a C port object. */
 void
 port_c_create(struct port *base);
