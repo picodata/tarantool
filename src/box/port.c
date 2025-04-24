@@ -66,7 +66,7 @@ port_c_destroy_entry(struct port_c_entry *pe)
 		tuple_format_unref(pe->mp_format);
 }
 
-static void
+void
 port_c_destroy(struct port *base)
 {
 	struct port_c *port = (struct port_c *)base;
