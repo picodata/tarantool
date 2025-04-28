@@ -80,6 +80,7 @@
 #include "box/memtx_tx.h"
 #include "box/module_cache.h"
 #include "box/watcher.h"
+#include "box/wal_ext.h"
 #include "systemd.h"
 #include "core/ssl.h"
 #include "core/popen.h"
@@ -495,6 +496,15 @@ load_cfg(void)
 	}
 
 	memtx_tx_manager_use_mvcc_engine = cfg_getb("memtx_use_mvcc_engine");
+
+#if defined(ENABLE_WAL_EXT)
+	struct wal_extensions_config wal_ext;
+	if (cfg_get_wal_ext("wal_ext", &wal_ext) != 0) {
+		diag_log();
+		exit(EXIT_FAILURE);
+	}
+	wal_ext_set_cfg(&wal_ext);
+#endif
 
 	if (background)
 		daemonize();

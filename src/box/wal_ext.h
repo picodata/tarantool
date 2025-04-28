@@ -29,6 +29,14 @@ wal_ext_free(void)
 {
 }
 
+/**
+ * Load WAL extensions configuration.
+ * This reads `box.wal_ext` lua value to figure out which extensions to
+ * enable.
+ */
+void
+wal_ext_load_cfg(void);
+
 struct space_wal_ext;
 struct txn_stmt;
 struct request;

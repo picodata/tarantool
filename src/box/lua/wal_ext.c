@@ -1,59 +1,15 @@
 #include "lua.h"
-#include "lib/core/mp_extension_types.h"
-#include <lauxlib.h>
-
-#include "lua/utils.h" /* luaT_error() */
-
-#include "box/txn.h"
-
+#include "luajit/src/lauxlib.h"
+#include "lua/utils.h"
 #include "box/lua/misc.h"
-#include "box/lua/execute.h"
-#include "box/wal_ext.h"
 
-/* Enable or disable wal extensions */
+/* A dummy export to make lua side know that WAL_EXT is enabled */
 static int
 cfg_set_wal_ext(struct lua_State *L)
 {
-	char *error = "";
-
-	if (luaL_dostring(L, "return box.cfg.wal_ext") != 0)
-		panic("cfg_get('wal_ext')");
-
-	bool is_table = lua_istable(L, -1);
-	if (!is_table) {
-		error = "wal_ext value must be a table";
-		goto validation_error;
-	}
-
-	lua_pushnil(L);
-	/* "wal_ext" table now at -2 */
-	while (lua_next(L, -2) != 0) {
-		const char *key = lua_tostring(L, -2);
-
-		/* key is an extension name */
-		if (!lua_isboolean(L, -1)) {
-			error = "extension value must be a boolean";
-			goto validation_error;
-		}
-		bool value = lua_toboolean(L, -1);
-		if (set_enable_extension(key, value) != 0) {
-			error = "no such extension";
-			goto validation_error;
-		}
-
-		/* pop a value */
-		lua_pop(L, 1);
-	}
-
-	goto end;
-
-validation_error:
 	lua_settop(L, 0);
-	return luaL_error(L, error);
-
-end:
-	lua_settop(L, 0);
-	return 0;
+	return luaL_error(L, "setting WAL_EXT dynamically"
+			  " is not supported in picodata's tarantool fork");
 }
 
 void
