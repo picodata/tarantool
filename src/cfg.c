@@ -54,6 +54,17 @@ cfg_get_uri_set(const char *param, struct uri_set *uri_set)
 	return rc;
 }
 
+#if defined(ENABLE_WAL_EXT)
+int
+cfg_get_wal_ext(const char *param, struct wal_extensions_config *ext_config)
+{
+	cfg_get(param);
+	int rc = luaT_wal_ext_config_create(tarantool_L, -1, ext_config);
+	lua_pop(tarantool_L, 1);
+	return rc;
+}
+#endif
+
 int
 cfg_geti(const char *param)
 {

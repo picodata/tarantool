@@ -16,6 +16,19 @@ wal_ext_init(void);
 void
 wal_ext_free(void);
 
+struct wal_extensions_config {
+	bool new_old;
+};
+
+/** Parse WAL extensions config from lua value */
+int
+luaT_wal_ext_config_create(struct lua_State *L, int idx,
+			   struct wal_extensions_config *ext_config);
+
+/** Load WAL extensions configuration. */
+void
+wal_ext_set_cfg(struct wal_extensions_config *ext_config);
+
 struct space_wal_ext;
 struct txn_stmt;
 struct request;
