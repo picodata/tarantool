@@ -516,7 +516,6 @@ local dynamic_cfg = {
     password_enforce_digits = ifdef_security(nop),
     password_enforce_specialchars = ifdef_security(nop),
     password_history_length = ifdef_security(nop),
-    wal_ext                 = private.cfg_set_wal_ext,
 
     metrics = function()
         require('metrics').cfg(box.cfg.metrics)
