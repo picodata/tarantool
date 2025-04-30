@@ -157,7 +157,14 @@ checkpatch:
       - CHECKPATCH_IGNORE=$(python3 extra/pico_parse_git_log.py --git HEAD~${COUNT_COMMIT}..HEAD)
       - checkpatch/checkpatch.pl --show-types --ignore DEEP_INDENTATION,NEW_TYPEDEFS,ASSIGN_IN_IF,${CHECKPATCH_IGNORE} --color=always --git HEAD~${COUNT_COMMIT}..HEAD
     rules:
+      # skip for tags
+      - if: $CI_COMMIT_TAG
+        when: never
+      # execute for non-main branches (regular merge requests)
       - if: $CI_COMMIT_BRANCH != $MAIN_BRANCH
+        when: on_success
+      # skip for main branch
+      - when: never
 
 # run long tests and coverage on release build
 coverage:
