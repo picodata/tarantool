@@ -20,6 +20,7 @@ variables:
     DOCKER_AUTH_CONFIG: $DOCKER_AUTH_RW
     KANIKO_REGISTRY_MIRROR: docker-proxy.binary.picodata.io
     BASE_IMAGE_LATEST: latest
+    BASE_IMAGE_TAG: ${BASE_IMAGE_LATEST}
     MAIN_BRANCH: &main-branch 2.11.5-picodata
     # k8s runner config
     KUBERNETES_CPU_REQUEST: 6
