@@ -1306,7 +1306,12 @@ expr_new_variable(struct Parse *parse, const struct Token *spec,
 	struct Expr *expr = sql_expr_new_empty(TK_VARIABLE, len + 1);
 	if (expr == NULL)
 		return NULL;
-	if (spec->n == 1 && spec->z[0] == '?') {
+	/* In case we have '$1', '$' is `spec` token of length 1
+	 * and '1' is `id` token. Same for ':param1' where ':'
+	 * is `spec` token of length 1 and param1 is `id` token.
+	 */
+	if (spec->n == 1 &&
+	    (spec->z[0] == '?' || spec->z[0] == '$' || spec->z[0] == ':')) {
 		expr->type = FIELD_TYPE_ANY;
 	} else {
 		expr->type = FIELD_TYPE_BOOLEAN;
