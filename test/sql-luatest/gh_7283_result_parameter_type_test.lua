@@ -18,6 +18,16 @@ g.test_result_parameter_type_1 = function()
         local q = box.prepare([[SELECT COLUMN_1 FROM t1 JOIN (VALUES (?)) AS t2 ON true]])
         local res, _ = q:execute()
         t.assert_equals(res.metadata[1].type, 'any')
+        local q = box.prepare(
+            [[SELECT COLUMN_1 FROM t1 JOIN (VALUES ($1)) AS t2 ON true]]
+        )
+        local res, _ = q:execute()
+        t.assert_equals(res.metadata[1].type, 'any')
+        local q = box.prepare(
+            [[SELECT COLUMN_1 FROM t1 JOIN (VALUES (:p1)) AS t2 ON true]]
+        )
+        local res, _ = q:execute()
+        t.assert_equals(res.metadata[1].type, 'any')
         box.execute([[DROP TABLE t1;]])
     end)
 end
