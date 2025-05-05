@@ -293,6 +293,12 @@ step_group_concat(struct sql_context *ctx, int argc, const struct Mem *argv)
 		sep = argv[1].z;
 		sep_len = argv[1].n;
 	}
+	uint64_t len = ctx->pOut->n + argv[0].n + sep_len;
+	if (len > SQL_MAX_LENGTH) {
+		ctx->is_aborted = true;
+		diag_set(ClientError, ER_SQL_EXECUTE, "string or blob too big");
+		return;
+	}
 	if (mem_append(ctx->pOut, sep, sep_len) != 0) {
 		ctx->is_aborted = true;
 		return;
