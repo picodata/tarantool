@@ -67,7 +67,7 @@ run-perf-test:
 test-release: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                              -DENABLE_WERROR=ON \
                              -DTEST_BUILD=ON
-
+test-release: TEST_RUN_PARAMS += --long
 test-release: build run-luajit-test run-test
 
 .PHONY: test-perf
@@ -138,6 +138,7 @@ test-debug-asan: LUAJIT_TEST_ENV = ${LUAJIT_TEST_ENV_ASAN}
 test-debug-asan: TEST_RUN_PARAMS += --test-timeout 620 \
                                     --no-output-timeout 630 \
                                     --server-start-timeout 610
+test-debug-asan: TEST_RUN_PARAMS += --long
 test-debug-asan: build run-luajit-test run-test
 
 # Debug build
@@ -145,6 +146,7 @@ test-debug-asan: build run-luajit-test run-test
 .PHONY: test-debug
 test-debug: CMAKE_PARAMS = -DCMAKE_BUILD_TYPE=Debug \
                            -DTEST_BUILD=ON
+test-debug: TEST_RUN_PARAMS += --long
 test-debug: build run-luajit-test run-test
 
 # Static build
