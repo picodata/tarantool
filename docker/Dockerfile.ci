@@ -12,6 +12,7 @@ RUN set -e; \
         curl \
         git \
         gnupg \
+        lcov \
         libcurl4-openssl-dev \
         libicu-dev \
         liblua5.3-dev \
