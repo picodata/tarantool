@@ -200,7 +200,8 @@ end)
 
 g.test_compat = function()
     t.assert_equals(compat.binary_data_decoding.current, 'default')
-    t.assert_equals(compat.binary_data_decoding.default, 'new')
+    t.assert_equals(compat.binary_data_decoding.default, 'old')
+    compat.binary_data_decoding = 'new'
     local v = varbinary.new()
     t.assert(varbinary.is(yaml.decode(yaml.encode(v))))
     t.assert(varbinary.is(msgpack.decode(msgpack.encode(v))))
