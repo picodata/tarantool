@@ -339,6 +339,20 @@ alloc_failure(const char *filename, int line, size_t size)
 #endif
 
 /**
+ * The nonstring variable attribute specifies that an object or member
+ * declaration with type array of char, signed char, or unsigned char, or
+ * pointer to such a type is intended to store character arrays that
+ * do not necessarily contain a terminating NUL.
+ *
+ * \example NONSTRING char bytes[6];
+ */
+#if __has_attribute(nonstring) || (defined(__GNUC__) && __GNUC__ >= 8)
+#  define NONSTRING __attribute__((nonstring))
+#else
+#  define NONSTRING
+#endif
+
+/**
  * A diagnostic is generated when a function is marked with NODISCARD and
  * the function call appears as a potentially-evaluated discarded-value
  * expression that is not explicitly cast to void.

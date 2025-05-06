@@ -36,6 +36,7 @@
 #include <string.h>
 #include <stdio.h> /* snprintf */
 #include <lib/bit/bit.h>
+#include <trivia/util.h>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -52,7 +53,7 @@ struct tt_uuid {
 	uint16_t time_hi_and_version;
 	uint8_t clock_seq_hi_and_reserved;
 	uint8_t clock_seq_low;
-	uint8_t node[6];
+	NONSTRING uint8_t node[6];
 };
 
 /**

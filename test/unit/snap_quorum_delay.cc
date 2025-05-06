@@ -60,6 +60,8 @@
 extern int replication_synchro_quorum;
 extern double replication_synchro_timeout;
 
+extern "C" int instance_id;
+
 namespace /* local symbols */ {
 
 int test_result;
@@ -78,7 +80,6 @@ enum process_type {
  * (to push a transaction to the limbo and simulate confirm).
  */
 const int fake_lsn = 1;
-extern "C" int instance_id;
 const int relay_id = 2;
 
 int
