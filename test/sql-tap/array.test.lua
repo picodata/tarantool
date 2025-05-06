@@ -1,4 +1,5 @@
 #!/usr/bin/env tarantool
+require('compat').binary_data_decoding = 'new'
 local test = require("sqltester")
 test:plan(115)
 

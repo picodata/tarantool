@@ -118,9 +118,10 @@ local options = {
         action = tweak_action('c_func_iproto_multireturn', false, true),
     },
     binary_data_decoding = {
-        default = 'new',
+        default = 'old',
         obsolete = nil,
         brief = BINARY_DATA_DECODING_BRIEF,
+        run_action_now = true,
         action = function(is_new)
             tweaks.yaml_decode_binary_as_string = not is_new
             tweaks.msgpack_decode_binary_as_string = not is_new

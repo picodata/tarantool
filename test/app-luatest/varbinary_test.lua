@@ -33,6 +33,7 @@ g.test_new_from_nil = function()
 end
 
 g.test_new_from_str = function()
+    compat.binary_data_decoding = 'new'
     local v = varbinary.new('foo')
     t.assert(varbinary.is(v))
     t.assert_equals(#v, 3)
@@ -122,6 +123,7 @@ local base64_tests = {
 }
 
 g.test_yaml = function()
+    compat.binary_data_decoding = 'new'
     for _, i in ipairs(base64_tests) do
         local v = varbinary.new(i[1])
         local r = '--- !!binary ' .. i[2] .. '\n...\n'
@@ -132,6 +134,10 @@ g.test_yaml = function()
         t.assert(varbinary.is(v2))
     end
 end
+
+g.after_test('test_yaml', function()
+    compat.binary_data_decoding = 'default'
+end)
 
 g.test_tuple_tostring = function()
     for _, i in ipairs(base64_tests) do
@@ -154,6 +160,7 @@ local msgpack_tests = {
 }
 
 g.test_msgpack = function()
+    compat.binary_data_decoding = 'new'
     for _, i in ipairs(msgpack_tests) do
         local v = varbinary.new(i[1])
         local r = i[2]
@@ -165,7 +172,12 @@ g.test_msgpack = function()
     end
 end
 
+g.after_test('test_msgpack', function()
+    compat.binary_data_decoding = 'default'
+end)
+
 g.test_msgpackffi = function()
+    compat.binary_data_decoding = 'new'
     for _, i in ipairs(msgpack_tests) do
         local v = varbinary.new(i[1])
         local r = i[2]
@@ -176,6 +188,10 @@ g.test_msgpackffi = function()
         t.assert(varbinary.is(v2))
     end
 end
+
+g.after_test('test_msgpackffi', function()
+    compat.binary_data_decoding = 'default'
+end)
 
 -- JSON encoder converts binary data to string.
 g.test_json = function()
@@ -200,7 +216,8 @@ end)
 
 g.test_compat = function()
     t.assert_equals(compat.binary_data_decoding.current, 'default')
-    t.assert_equals(compat.binary_data_decoding.default, 'new')
+    t.assert_equals(compat.binary_data_decoding.default, 'old')
+    compat.binary_data_decoding = 'new'
     local v = varbinary.new()
     t.assert(varbinary.is(yaml.decode(yaml.encode(v))))
     t.assert(varbinary.is(msgpack.decode(msgpack.encode(v))))

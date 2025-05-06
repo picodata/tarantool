@@ -16,6 +16,7 @@ end)
 --
 g.test_field_type = function(cg)
     cg.server:exec(function()
+        require('compat').binary_data_decoding = 'new'
         local varbinary = require('varbinary')
         local s = box.schema.space.create('withdata')
         s:format({{"b", "integer"}})
@@ -96,6 +97,7 @@ end
 
 g.after_test('test_field_type', function(cg)
     cg.server:exec(function()
+        require('compat').binary_data_decoding = 'default'
         if box.space.withdata then
             box.space.withdata:drop()
         end
