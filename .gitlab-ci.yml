@@ -304,7 +304,7 @@ run-tntmodule-tests-on-tag:
   variables:
     TARANTOOL_VERSION: $CI_COMMIT_TAG
   trigger:
-    project: picodata/picodata/tarantool-module
+    project: core/tarantool-module
     branch: master
     strategy: depend
   needs:
