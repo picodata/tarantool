@@ -126,7 +126,7 @@ local options = {
         action = tweak_action('c_func_iproto_multireturn', false, true),
     },
     binary_data_decoding = {
-        default = 'new',
+        default = 'old',
         obsolete = nil,
         brief = BINARY_DATA_DECODING_BRIEF,
         action = function(is_new)
