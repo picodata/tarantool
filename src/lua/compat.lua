@@ -129,6 +129,7 @@ local options = {
         default = 'old',
         obsolete = nil,
         brief = BINARY_DATA_DECODING_BRIEF,
+        run_action_now = true,
         action = function(is_new)
             tweaks.yaml_decode_binary_as_string = not is_new
             tweaks.msgpack_decode_binary_as_string = not is_new
