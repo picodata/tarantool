@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(1)
+test:plan(2)
 
 test:execsql( [[
 DROP TABLE IF EXISTS "TMP_3781021201_1136";
@@ -75,5 +75,31 @@ FROM (
   FROM "TMP_3781021201_1136"
 )
     ]], {})
+
+test:execsql( [[
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(x INT PRIMARY KEY, y INT);
+INSERT INTO t1 VALUES (1, 1), (2, 2);
+]])
+
+test:do_execsql_test(
+    "window walker",
+    [[
+SELECT
+    row_number() OVER win1,
+    sum(y) OVER win2,
+    max(x) OVER win3
+FROM t1
+WINDOW
+    win1 AS (ORDER BY x + (SELECT 1)),
+    win2 AS (PARTITION BY x + (SELECT 2)),
+    win3 AS (ORDER BY x + (
+        SELECT count(*) OVER win_nested
+        FROM (SELECT 3)
+        WINDOW win_nested AS (
+            ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+        )
+    ))
+    ]], {1,1,1,2,2,2})
 
 test:finish_test()
