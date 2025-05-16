@@ -98,6 +98,11 @@ if(APPLE)
     set(DEPENDENCY_CXXFLAGS "${DEPENDENCY_CXXFLAGS} ${CMAKE_C_SYSROOT_FLAG} ${CMAKE_OSX_SYSROOT}")
 endif()
 
+# Gcc 15 sets --std=gnu23 by default, breaking many dependencies.
+# For instance, `void foo()` is now equivalent to `void foo(void)` in C23.
+set(DEPENDENCY_CFLAGS "${DEPENDENCY_CFLAGS} -fpermissive -std=gnu99")
+set(DEPENDENCY_CXXFLAGS "${DEPENDENCY_CXXFLAGS} -fpermissive")
+
 set(CMAKE_REQUIRED_DEFINITIONS "-D_GNU_SOURCE")
 
 check_symbol_exists(MAP_ANON sys/mman.h HAVE_MAP_ANON)
