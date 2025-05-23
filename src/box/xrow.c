@@ -34,6 +34,8 @@
 #include <small/region.h>
 #include <small/obuf.h>
 #include <base64.h>
+#include <string.h>
+#include <errno.h>
 
 #include "fiber.h"
 #include "iostream.h"
@@ -44,6 +46,8 @@
 #include "iproto_constants.h"
 #include "iproto_features.h"
 #include "mpstream/mpstream.h"
+#include "mp_uuid.h"
+#include "tt_uuid.h"
 #include "errinj.h"
 
 /**
@@ -1218,6 +1222,7 @@ xrow_decode_id(const struct xrow_header *row, struct id_request *request)
 	iproto_features_create(&request->features);
 	request->auth_type = NULL;
 	request->auth_type_len = 0;
+	request->cluster_uuid = uuid_nil;
 
 	uint32_t map_size = mp_decode_map(&p);
 	for (uint32_t i = 0; i < map_size; i++) {
@@ -1240,6 +1245,10 @@ xrow_decode_id(const struct xrow_header *row, struct id_request *request)
 			request->auth_type = mp_decode_str(
 					&p, &request->auth_type_len);
 			break;
+		case IPROTO_CLUSTER_UUID:
+			if (xrow_decode_uuid(&p, &request->cluster_uuid) != 0)
+				goto error;
+			break;
 		default:
 			/* Ignore unknown keys for forward compatibility. */
 			mp_next(&p);
@@ -1252,22 +1261,37 @@ error:
 }
 
 void
-xrow_encode_id(struct xrow_header *row)
+xrow_encode_id(struct xrow_header *row, const struct tt_uuid *cluster_uuid)
 {
 	memset(row, 0, sizeof(*row));
 	row->type = IPROTO_ID;
-	size_t size = mp_sizeof_map(2);
+
+	int map_elements = 2; /* VERSION and FEATURES */
+	if (!tt_uuid_is_nil(cluster_uuid)) {
+		map_elements++; /* Add CLUSTER_UUID */
+	}
+
+	size_t size = mp_sizeof_map(map_elements);
 	size += mp_sizeof_uint(IPROTO_VERSION) +
 		mp_sizeof_uint(IPROTO_CURRENT_VERSION);
 	size += mp_sizeof_uint(IPROTO_FEATURES) +
 		mp_sizeof_iproto_features(&IPROTO_CURRENT_FEATURES);
+	if (!tt_uuid_is_nil(cluster_uuid)) {
+		size += mp_sizeof_uint(IPROTO_CLUSTER_UUID) +
+			mp_sizeof_str(UUID_STR_LEN);
+	}
+
 	char *buf = xregion_alloc(&fiber()->gc, size);
 	char *p = buf;
-	p = mp_encode_map(p, 2);
+	p = mp_encode_map(p, map_elements);
 	p = mp_encode_uint(p, IPROTO_VERSION);
 	p = mp_encode_uint(p, IPROTO_CURRENT_VERSION);
 	p = mp_encode_uint(p, IPROTO_FEATURES);
 	p = mp_encode_iproto_features(p, &IPROTO_CURRENT_FEATURES);
+	if (!tt_uuid_is_nil(cluster_uuid)) {
+		p = mp_encode_uint(p, IPROTO_CLUSTER_UUID);
+		p = xrow_encode_uuid(p, cluster_uuid);
+	}
 	assert((size_t)(p - buf) == size);
 	(void)p;
 	row->bodycnt = 1;
