@@ -194,6 +194,11 @@ extern const char *iproto_flag_bit_strs[];
 	 * authentication method.
 	 */								\
 	_(AUTH_TYPE, 0x5b, MP_STR)					\
+	/**
+	 * Cluster UUID that is used to verify cluster membership during
+	 * connection establishment. Only used in IPROTO_ID requests/responses.
+	 */								\
+	_(CLUSTER_UUID, 0x5c, MP_STR)					\
 	 /**
 	  * Flag indicating whether checkpoint join should be done.
 	  */								\

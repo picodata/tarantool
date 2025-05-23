@@ -81,6 +81,7 @@ local reference_table = {
         VCLOCK_SYNC = 0x5a,
         AUTH_TYPE = 0x5b,
         IS_CHECKPOINT_JOIN = 0x62,
+        CLUSTER_UUID = 0x5c,
         CHECKPOINT_VCLOCK = 0x63,
         CHECKPOINT_LSN = 0x64,
         PREV_TERM = 0x71,

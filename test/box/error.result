@@ -495,6 +495,7 @@ t;
  |   274: box.error.UNCONFIGURED
  |   278: box.error.IN_ANOTHER_PROMOTE
  |   279: box.error.INVALID_DEC
+ |   280: box.error.PICO_CLUSTER_UUID_MISMATCH
  | ...
 
 test_run:cmd("setopt delimiter ''");

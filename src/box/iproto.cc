@@ -33,11 +33,14 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include <msgpuck.h>
 #include <small/ibuf.h>
 #include <small/obuf.h>
 #include <base64.h>
+#include <string.h>
+#include <errno.h>
 
 #include "version.h"
 #include "fiber.h"
@@ -2407,6 +2410,25 @@ static void
 tx_process_id(struct iproto_connection *con, const struct id_request *id)
 {
 	con->session->meta.features = id->features;
+
+	if (tt_uuid_is_nil(&id->cluster_uuid)) {
+		return;
+	}
+
+	const struct tt_uuid *cluster_uuid = iproto_get_cluster_uuid();
+	if (tt_uuid_is_nil(cluster_uuid)) {
+		return;
+	}
+
+	if (!tt_uuid_is_equal(&id->cluster_uuid, cluster_uuid)) {
+		char expected_uuid_str[UUID_STR_LEN + 1];
+		tt_uuid_to_string(cluster_uuid, expected_uuid_str);
+		char client_uuid_str[UUID_STR_LEN + 1];
+		tt_uuid_to_string(&id->cluster_uuid, client_uuid_str);
+
+		tnt_raise(ClientError, ER_PICO_CLUSTER_UUID_MISMATCH,
+			  expected_uuid_str, client_uuid_str);
+	}
 }
 
 /** Callback passed to session_watch. */
@@ -3781,4 +3803,23 @@ iproto_override(uint32_t req_type, iproto_handler_t cb,
 	}
 	iproto_cfg_override(req_type, true);
 	return 0;
+}
+
+/* Global cluster UUID used for cluster membership verification. */
+static struct tt_uuid global_cluster_uuid;
+
+int
+iproto_set_cluster_uuid(const struct tt_uuid *cluster_uuid)
+{
+	if (!tt_uuid_is_nil(&global_cluster_uuid)) {
+		panic("cluster UUID already set, attempted to set it again");
+	}
+	global_cluster_uuid = *cluster_uuid;
+	return 0;
+}
+
+const struct tt_uuid *
+iproto_get_cluster_uuid(void)
+{
+	return &global_cluster_uuid;
 }

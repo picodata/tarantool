@@ -368,6 +368,14 @@ lbox_info_cluster(struct lua_State *L)
 	lua_pushliteral(L, "uuid");
 	luaT_pushuuidstr(L, &REPLICASET_UUID);
 	lua_settable(L, -3);
+
+	const struct tt_uuid *picodata_uuid = iproto_get_cluster_uuid();
+	if (!tt_uuid_is_nil(picodata_uuid)) {
+		lua_pushliteral(L, "picodata_uuid");
+		luaT_pushuuidstr(L, picodata_uuid);
+		lua_settable(L, -3);
+	}
+
 	return 1;
 }
 

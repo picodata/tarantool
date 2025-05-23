@@ -62,6 +62,7 @@
 #include "tt_static.h"
 #include "memory.h"
 #include "ssl_error.h"
+#include "iproto.h"
 
 STRS(applier_state, applier_STATE);
 
@@ -691,7 +692,7 @@ applier_connect(struct applier *applier)
 	 */
 	const struct auth_method *method_default = NULL;
 	if (applier->version_id >= version_id(2, 10, 0)) {
-		xrow_encode_id(&row);
+		xrow_encode_id(&row, iproto_get_cluster_uuid());
 		coio_write_xrow(io, &row);
 		coio_read_xrow(io, ibuf, &row);
 		if (row.type == IPROTO_OK) {
@@ -704,6 +705,11 @@ applier_connect(struct applier *applier)
 			applier->features = id.features;
 		} else {
 			xrow_decode_error(&row);
+			/* Raise if picodata cluster uuid doesn't match. */
+			int errcode = diag_last_error(diag_get())->code;
+			if (errcode == ER_PICO_CLUSTER_UUID_MISMATCH) {
+				diag_raise();
+			}
 			diag_log();
 			diag_clear(&fiber()->diag);
 			say_error("IPROTO_ID failed");
@@ -2501,6 +2507,15 @@ applier_disconnect(struct applier *applier, enum applier_state state)
 static int
 applier_f(va_list ap)
 {
+#ifndef NDEBUG
+	/* We use this in tests to make sure that no appliers are running. */
+	struct errinj *inj = errinj(ERRINJ_APPLIER_FIBER_COUNT, ERRINJ_INT);
+	inj->iparam++;
+	auto errinj_guard = make_scoped_guard([&] {
+		inj->iparam--;
+	});
+#endif
+
 	struct applier *applier = va_arg(ap, struct applier *);
 	/*
 	 * Set correct session type for use in on_replace()
