@@ -332,7 +332,7 @@ struct errcode_record {
 	/*277 */_(ER_INVALID_DEC,		"Invalid decimal: '%s'") \
 	/*278 */_(ER_IN_ANOTHER_PROMOTE,	"box.ctl.promote() is already running") \
 	/*279 */_(ER_UNUSED10,			"") \
-	/*280 */_(ER_UNUSED11,			"") \
+	/*280 */_(ER_PICO_CLUSTER_UUID_MISMATCH, "Picodata cluster UUID mismatch: expected %s, got %s") \
 	/*281 */_(ER_UNUSED12,			"") \
 	/*282 */_(ER_UNUSED13,			"") \
 	/*283 */_(ER_UNUSED14,			"") \

@@ -262,6 +262,11 @@ struct id_request {
 	const char *auth_type;
 	/** Length of auth_type. */
 	uint32_t auth_type_len;
+	/**
+	 * Cluster UUID used for cluster membership verification.
+	 * Set to nil UUID if not provided.
+	 */
+	struct tt_uuid cluster_uuid;
 };
 
 /**
@@ -279,7 +284,7 @@ xrow_decode_id(const struct xrow_header *xrow, struct id_request *request);
  * @param[out] row request header.
  */
 void
-xrow_encode_id(struct xrow_header *row);
+xrow_encode_id(struct xrow_header *row, const struct tt_uuid *cluster_uuid);
 
 /**
  * Synchronous replication request - confirmation or rollback of
