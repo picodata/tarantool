@@ -670,6 +670,10 @@ lcpipe_new
 lcpipe_push
 lcpipe_push_now
 
+# picodata iproto
+iproto_get_cluster_uuid
+iproto_set_cluster_uuid
+
 # picodata postgres protocol
 plain_iostream_create
 iostream_close

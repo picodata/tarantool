@@ -34,6 +34,7 @@
 #include <stddef.h>
 
 #include "box/box.h"
+#include "lib/core/tt_uuid.h"
 
 struct uri_set;
 struct session;
@@ -131,6 +132,18 @@ iproto_thread_rmean_foreach(int thread_id, void *cb, void *cb_ctx);
 int
 iproto_override(uint32_t req_type, iproto_handler_t cb,
 		iproto_handler_destroy_t destroy, void *ctx);
+
+/**
+ * Set the global cluster UUID for verification during connections.
+ */
+int
+iproto_set_cluster_uuid(const struct tt_uuid *cluster_uuid);
+
+/**
+ * Get the global cluster UUID.
+ */
+const struct tt_uuid *
+iproto_get_cluster_uuid(void);
 
 #if defined(__cplusplus)
 } /* extern "C" */
