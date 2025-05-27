@@ -69,6 +69,26 @@ format_dn(const char *fmt, const char *user, uint32_t user_len, char *buf, size_
 	return 0;
 }
 
+#ifndef LDAP_OPT_DIAGNOSTIC_MESSAGE
+#define LDAP_OPT_DIAGNOSTIC_MESSAGE LDAP_OPT_ERROR_STRING
+#endif
+
+/** Output detailed LDAP error message. */
+static int
+errdetail_for_ldap(LDAP *ldap)
+{
+	char	*message;
+	int	rc;
+
+	rc = ldap_get_option(ldap, LDAP_OPT_DIAGNOSTIC_MESSAGE, &message);
+	if (rc == LDAP_SUCCESS && message != NULL) {
+		say_error("LDAP diagnostics: %s", message);
+		ldap_memfree(message);
+	}
+
+	return 0;
+}
+
 /** Perform synchronous LDAP BIND method call to authenticate as user */
 static ssize_t
 coio_ldap_check_password(va_list ap)
@@ -97,6 +117,8 @@ coio_ldap_check_password(va_list ap)
 	if (format_dn(dn_fmt, user, user_len, dn, sizeof(dn)) != 0)
 		goto cleanup;
 
+	bool tls_enabled = (bool)va_arg(ap, int);
+
 	/**
 	 * Initialize the context, but don't connect just yet.
 	 * According to the documentation, the actual connection open
@@ -120,6 +142,18 @@ coio_ldap_check_password(va_list ap)
 			  ldap_err2string(ret));
 		diag_set(ClientError, ER_SYSTEM, ldap_err2string(ret));
 		goto cleanup;
+	}
+
+	if (tls_enabled) {
+		say_info("attempting to enable StartTLS");
+		ret = ldap_start_tls_s(ldp, NULL, NULL);
+		if (ret != LDAP_SUCCESS) {
+			say_error("failed to set StartTLS: %s",
+				  ldap_err2string(ret));
+			errdetail_for_ldap(ldp);
+			diag_set(ClientError, ER_SYSTEM, ldap_err2string(ret));
+			goto cleanup;
+		}
 	}
 
 	/** Check user's credentials by binding to the server on their behalf */
@@ -293,9 +327,16 @@ auth_ldap_authenticate_request(const struct authenticator *auth,
 		goto fail;
 	}
 
+	char tls_buf[10];
+	const char *envvar =
+		getenv_safe("TT_LDAP_ENABLE_TLS", tls_buf, sizeof(tls_buf));
+	bool tls_enabled = false;
+	if (envvar != NULL && *envvar != '\0' && strcasecmp(envvar, "true") == 0)
+		tls_enabled = true;
+
 	ret = coio_call(coio_ldap_check_password,
 			password, password_len,
-			user, user_len, url, dn_fmt);
+			user, user_len, url, dn_fmt, tls_enabled);
 fail:
 	return ret == 0;
 }
