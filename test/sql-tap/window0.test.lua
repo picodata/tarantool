@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(2)
+test:plan(3)
 
 test:execsql( [[
 DROP TABLE IF EXISTS "TMP_3781021201_1136";
@@ -101,5 +101,18 @@ WINDOW
         )
     ))
     ]], {1,1,1,2,2,2})
+
+test:execsql( [[
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a INT PRIMARY KEY, b TEXT);
+INSERT INTO t VALUES (1, 'kek');
+]])
+
+test:do_execsql_test(
+    "row_number is not deterministic",
+    [[
+SELECT row_number () OVER () + (CAST(1 AS unsigned)) as "col_1"
+FROM (SELECT a, b FROM t);
+    ]], {2})
 
 test:finish_test()

@@ -1929,7 +1929,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"REPLACE", 3, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"ROUND", 1, 2, 0, true, 0, NULL},
 	{"ROW_COUNT", 0, 0, 0, true, 0, NULL},
-	{"ROW_NUMBER", 0, 0, SQL_FUNC_WINDOW, true, 0, NULL},
+	{"ROW_NUMBER", 0, 0, SQL_FUNC_WINDOW, false, 0, NULL},
 	{"SOUNDEX", 1, 1, 0, true, 0, NULL},
 	{"SUBSTR", 2, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"SUM", 1, 1, SQL_FUNC_AGG, false, 0, NULL},
