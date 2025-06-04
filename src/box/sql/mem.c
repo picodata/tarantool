@@ -1953,12 +1953,15 @@ mem_copy_as_ephemeral(struct Mem *to, const struct Mem *from)
 void
 mem_move(struct Mem *to, struct Mem *from)
 {
+	if (to == from)
+		return;
 	mem_destroy(to);
 	memcpy(to, from, sizeof(*to));
-	from->type = MEM_TYPE_NULL;
-	from->flags = 0;
+	mem_clear(from);
 	from->szMalloc = 0;
 	from->zMalloc = NULL;
+	from->n = 0;
+	from->z = NULL;
 }
 
 int

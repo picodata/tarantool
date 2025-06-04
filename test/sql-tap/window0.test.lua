@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(3)
+test:plan(5)
 
 test:execsql( [[
 DROP TABLE IF EXISTS "TMP_3781021201_1136";
@@ -114,5 +114,36 @@ test:do_execsql_test(
 SELECT row_number () OVER () + (CAST(1 AS unsigned)) as "col_1"
 FROM (SELECT a, b FROM t);
     ]], {2})
+
+test:execsql( [[
+DROP TABLE IF EXISTS t3;
+CREATE TABLE t3(a TEXT PRIMARY KEY, b DATETIME, c UUID, d VARBINARY);
+INSERT INTO t3 VALUES
+('hello', CAST('2000-01-30' AS DATETIME), CAST('4268f6ad-5f15-4e15-9118-f81c6e227417' AS UUID), x'FF'),
+('world', CAST('2000-12-01' AS DATETIME), CAST('4268f6ad-5f15-4e15-9118-f81c6e227418' AS UUID), x'AA');
+]])
+
+test:do_execsql_test(
+    "last_value with tarantool types",
+    [[
+SELECT
+last_value(a) OVER w = 'world',
+last_value(b) OVER w = CAST('2000-12-01' AS DATETIME),
+last_value(c) OVER w = CAST('4268f6ad-5f15-4e15-9118-f81c6e227418' AS UUID),
+last_value(d) OVER w = x'AA'
+FROM t3 WINDOW w AS ();
+    ]], { true, true, true, true, true, true, true, true })
+
+test:execsql( [[
+DROP TABLE IF EXISTS t0;
+CREATE TABLE t0(x INTEGER PRIMARY KEY, y TEXT);
+INSERT INTO t0 VALUES (1, 'aaa'), (2, 'aaa'), (3, 'bbb');
+]])
+
+test:do_execsql_test(
+    "last_value with allocation",
+    [[
+SELECT x, y, last_value(y) OVER (ORDER BY y) FROM t0 ORDER BY x;
+    ]], { 1, 'aaa', 'aaa', 2, 'aaa', 'aaa', 3, 'bbb', 'bbb' })
 
 test:finish_test()

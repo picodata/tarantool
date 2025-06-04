@@ -58,6 +58,104 @@
 static struct mh_strnptr_t *built_in_functions = NULL;
 static struct func_sql_builtin **functions;
 
+/** Helper structure that keeps last_value data. **/
+struct last_value {
+	/** Memory cell with the last value. **/
+	struct Mem mem;
+	/** Reference counter used by inverse function. **/
+	uint32_t count;
+};
+
+/** Implementation of the LAST_VALUE() function. */
+static void
+step_last_value(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 1);
+	(void)argc;
+	assert(mem_is_null(ctx->pOut) || mem_is_bin(ctx->pOut));
+	struct last_value *data;
+	if (mem_is_null(ctx->pOut)) {
+		size_t size = sizeof(struct last_value);
+		data = sql_xmalloc(size);
+		data->count = 0;
+		mem_create(&data->mem);
+		mem_set_bin_allocated(ctx->pOut, (char *)data, size);
+	}
+	data = (struct last_value *)ctx->pOut->z;
+	data->count++;
+	mem_copy(&data->mem, &argv[0]);
+}
+
+/** Value for the LAST_VALUE() function. */
+static int
+value_last_value(struct Mem *mem)
+{
+	assert(mem_is_null(mem) || mem_is_bin(mem));
+	if (mem_is_null(mem))
+		return 0;
+	struct last_value *data = (struct last_value *)mem->z;
+	struct Mem tmp;
+	mem_create(&tmp);
+	/*
+	 * In the current implementation of last_value, one memory cell
+	 * is embedded inside the zMalloc buffer of another cell (which
+	 * is opaque to all mem.c routines). That inner cell may itself
+	 * have data in its own zMalloc (for example, strings).
+	 * By the time we reach the window function's value() callback,
+	 * the original cell has already been copied via the OP_Copy
+	 * opcode's mem_copy. However, since mem_copy knows nothing about
+	 * these zMalloc hacks, the copy isn't truly deep.
+	 * As a result, the last_value->mem.zMalloc pointer in both the
+	 * original and the copy refers to the same memory region.
+	 * To avoid radically changing the memory-cell structure, we perform
+	 * a deep copy of last_value->mem.zMalloc in the value() callback
+	 * so that when the VDBE machinery later frees the copied cell, it
+	 * won't accidentally release the original cell's memory.
+	 */
+	mem_copy(&tmp, &data->mem);
+	mem_destroy(mem);
+	memcpy(mem, &tmp, sizeof(tmp));
+	return 0;
+}
+
+/** Finalizer for the LAST_VALUE() function. */
+static int
+fin_last_value(struct Mem *mem)
+{
+	assert(mem_is_null(mem) || mem_is_bin(mem));
+	if (mem_is_null(mem))
+		return 0;
+	struct last_value *data = (struct last_value *)mem->z;
+	struct Mem tmp;
+	/*
+	 * Since no one else refers to last_value->mem.zMalloc,
+	 * it's safe to perform memory move. When the VDBE machinery
+	 * frees the memory cell, there will be no dangling pointers
+	 * to released memory.
+	 */
+	memcpy(&tmp, &data->mem, sizeof(tmp));
+	mem_destroy(mem);
+	memcpy(mem, &tmp, sizeof(tmp));
+	return 0;
+}
+
+/** Inversion for the LAST_VALUE() function. */
+static void
+inverse_last_value(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 1);
+	(void)argc;
+	(void)argv;
+	if (mem_is_null(ctx->pOut))
+		return;
+	struct last_value *data = (struct last_value *)ctx->pOut->z;
+	data->count--;
+	if (data->count == 0) {
+		mem_destroy(&data->mem);
+		mem_destroy(ctx->pOut);
+	}
+}
+
 /*
  * Implementation of built-in window function row_number(). Assumes that the
  * window frame has been coerced to:
@@ -1908,6 +2006,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"GROUP_CONCAT", 1, 2, SQL_FUNC_AGG, false, 0, NULL},
 	{"HEX", 1, 1, 0, true, 0, NULL},
 	{"IFNULL", 2, 2, SQL_FUNC_COALESCE, true, 0, NULL},
+	{"LAST_VALUE", 1, 1, SQL_FUNC_WINDOW, false, 0, NULL},
 	{"LEAST", 2, SQL_MAX_FUNCTION_ARG, SQL_FUNC_NEEDCOLL, true, 0, NULL},
 	{"LENGTH", 1, 1, SQL_FUNC_LENGTH, true, 0, NULL},
 	{"LIKE", 2, 3, SQL_FUNC_LIKE | SQL_FUNC_NEEDCOLL, true, 0, NULL},
@@ -2039,6 +2138,23 @@ static struct sql_func_definition definitions[] = {
 	 NULL, NULL},
 	{"IFNULL", 2, {field_type_MAX, field_type_MAX}, FIELD_TYPE_SCALAR,
 	 sql_builtin_stub, NULL, NULL, NULL},
+
+	{"LAST_VALUE", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_NUMBER}, FIELD_TYPE_NUMBER,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_VARBINARY}, FIELD_TYPE_VARBINARY,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_UUID}, FIELD_TYPE_UUID, step_last_value,
+	 fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_STRING,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
+	{"LAST_VALUE", 1, {FIELD_TYPE_SCALAR}, FIELD_TYPE_SCALAR,
+	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
 
 	{"LEAST", -1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER,
 	 func_greatest_least, NULL, NULL, NULL},
