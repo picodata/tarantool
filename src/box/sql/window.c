@@ -14,6 +14,7 @@
 #include "vdbeInt.h"
 #include "box/sql.h"
 #include "box/field_def.h"
+#include "trivia/util.h"
 
 /*
  * SELECT REWRITING
@@ -1235,6 +1236,9 @@ windowCodeOp(WindowCodeArg *p, int op,
 		reg = p->end.reg;
 		windowAggStep(pParse, pMWin, csr, 0, p->regArg, 0);
 	break;
+
+	default:
+		unreachable();
 	}
 
 	if (jumpOnEof) {
