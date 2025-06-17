@@ -4238,6 +4238,8 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	     pParent = pParent->pPrior, pSub = pSub->pPrior) {
 		int nSubSrc;
 		u8 jointype = 0;
+		if (pSub == NULL)
+			panic("pSub == NULL in %s:%d", __FILE__, __LINE__);
 		pSubSrc = pSub->pSrc;	/* FROM clause of subquery */
 		nSubSrc = pSubSrc->nSrc;	/* Number of terms in subquery FROM clause */
 		pSrc = pParent->pSrc;	/* FROM clause of the outer query */
