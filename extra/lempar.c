@@ -228,6 +228,14 @@ struct yyParser {
 };
 typedef struct yyParser yyParser;
 
+#if defined(NDEBUG) && ((defined(__GNUC__) && \
+(__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5))) || \
+(defined(__has_builtin) && __has_builtin(__builtin_unreachable)))
+	#define UNREACHABLE() __builtin_unreachable()
+#else
+	#define UNREACHABLE() abort()
+#endif
+
 #ifndef NDEBUG
 #include <stdio.h>
 static FILE *yyTraceFILE = 0;
@@ -453,7 +461,8 @@ static unsigned int yy_find_shift_action(
   int stateno = pParser->yytos->stateno;
  
   if( stateno>=YY_MIN_REDUCE ) return stateno;
-  assert( stateno <= YY_SHIFT_COUNT );
+  if (stateno > YY_SHIFT_COUNT)
+	UNREACHABLE();
   do{
     i = yy_shift_ofst[stateno];
     assert( iLookAhead!=YYNOCODE );
