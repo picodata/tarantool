@@ -644,17 +644,14 @@ sqlJoinType(Parse * pParse, Token * pA, Token * pB, Token * pC)
 	}
 	if ((jointype & (JT_INNER | JT_OUTER)) == (JT_INNER | JT_OUTER) ||
 	    (jointype & JT_ERROR) != 0) {
-		assert(pB != 0);
 		const char *err;
-		if (pC == NULL) {
-			err = tt_sprintf("unknown or unsupported join type: "\
-					 "%.*s %.*s", pA->n, pA->z, pB->n,
-					 pB->z);
-		} else {
-			err = tt_sprintf("unknown or unsupported join type: "\
-					 "%.*s %.*s %.*s", pA->n, pA->z, pB->n,
-					 pB->z, pC->n, pC->z);
-		}
+		const char *zSp1 = pB ? " " : "";
+		const char *zSp2 = pC ? " " : "";
+		err = tt_sprintf("unknown or unsupported join type: "\
+				 "%.*s%s%.*s%s%.*s", pA ? pA->n : 0,
+				 pA ? pA->z : "", zSp1, pB ? pB->n : 0,
+				 pB ? pB->z : "", zSp2, pC ? pC->n : 0,
+				 pC ? pC->z : "");
 		diag_set(ClientError, ER_SQL_PARSER_GENERIC, err);
 		pParse->is_aborted = true;
 		jointype = JT_INNER;
