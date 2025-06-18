@@ -542,6 +542,10 @@ sqlWindowRewrite(Parse *pParse, Select *p)
 		struct sql_space_info *info;
 		info = sql_space_info_new_from_expr_list(pParse, pSublist,
 							 true);
+		if (info == NULL) {
+			pParse->is_aborted = true;
+			return -1;
+		}
 		info->part_count = 1;
 		info->sort_orders[0] = SORT_ORDER_ASC;
 		info->parts[0] = pSublist->nExpr;
@@ -837,6 +841,10 @@ sqlWindowCodeInit(Parse *pParse, Window *pMWin)
 			struct sql_space_info *info;
 			info = sql_space_info_new_from_expr_list(pParse,
 								 pList, true);
+			if (info == NULL) {
+				pParse->is_aborted = true;
+				return;
+			}
 			pWin->csrApp = pParse->nTab++;
 			pWin->regAppCsr = pParse->nMem + 1;
 			++pParse->nMem;
