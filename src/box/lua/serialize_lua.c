@@ -872,7 +872,6 @@ dump_node(struct lua_dumper *d, struct node *nd, int indent)
 			snprintf(d->err_msg, sizeof(d->err_msg),
 				 "serializer: Unknown field MP_EXT:%d type",
 				 field->ext_type);
-			len = strlen(d->err_msg);
 			return -1;
 		}
 		break;
@@ -881,7 +880,6 @@ dump_node(struct lua_dumper *d, struct node *nd, int indent)
 		snprintf(d->err_msg, sizeof(d->err_msg),
 			 "serializer: Unknown field %d type",
 			 field->type);
-		len = strlen(d->err_msg);
 		return -1;
 	}
 
