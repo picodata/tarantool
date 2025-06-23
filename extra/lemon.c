@@ -2779,7 +2779,12 @@ void Parse(struct lemon *gp)
     gp->errorcnt++;
     return;
   }
-  fseek(fp,0,2);
+  if (fseek(fp, 0, SEEK_END) != 0) {
+	ErrorMsg(ps.filename, 0, "Can't seek to the end of the input file");
+	gp->errorcnt++;
+	fclose(fp);
+	return;
+  }
   filesize = ftell(fp);
   rewind(fp);
   filebuf = (char *)malloc( filesize+1 );
