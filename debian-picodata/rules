@@ -5,8 +5,8 @@ UVERSION := $(shell echo $(VERSION)|sed 's/-[[:digit:]]\+$$//')
 
 ifneq ($(wildcard /usr/bin/dh_systemd_start),)
 WITH_SYSTEMD:=ON
-export deb_systemdsystemunitdir = $(shell pkgconf --variable=systemdsystemunitdir systemd)
-export deb_systemdsystemgeneratordir = $(shell pkgconf --variable=systemdsystemgeneratordir systemd)
+deb_systemdsystemunitdir := $(shell pkgconf --variable=systemdsystemunitdir systemd)
+deb_systemdsystemgeneratordir := $(shell pkgconf --variable=systemdsystemgeneratordir systemd)
 else
 WITH_SYSTEMD:=OFF
 endif
@@ -46,6 +46,10 @@ include /usr/share/cdbs/1/class/cmake.mk
 
 debian/tarantool-picodata-common.install:
 ifneq ($(wildcard /usr/bin/dh_systemd_start),)
+	echo =====
+	sed "s|deb_systemdsystemunitdir|${deb_systemdsystemunitdir}|g" -i debian/tarantool-picodata-common.install.systemd.in
+	sed "s|deb_systemdsystemgeneratordir|${deb_systemdsystemgeneratordir}|g" -i debian/tarantool-picodata-common.install.systemd.in
+	echo =====
 	cp -p debian/tarantool-picodata-common.install.systemd.in $@
 else
 	cp -p debian/tarantool-picodata-common.install.sysvinit.in $@
