@@ -3811,8 +3811,12 @@ static struct tt_uuid global_cluster_uuid;
 int
 iproto_set_cluster_uuid(const struct tt_uuid *cluster_uuid)
 {
+	if (replicaset.applier.total > 0) {
+		panic("%s called after box.cfg.replication has been set",
+		      __func__);
+	}
 	if (!tt_uuid_is_nil(&global_cluster_uuid)) {
-		panic("cluster UUID already set, attempted to set it again");
+		panic("%s called second time", __func__);
 	}
 	global_cluster_uuid = *cluster_uuid;
 	return 0;
