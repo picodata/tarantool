@@ -84,10 +84,6 @@ template <class ALLOC>
 static inline void
 create_memtx_tuple_format_vtab(struct tuple_format_vtab *vtab);
 
-struct tuple *
-(*memtx_tuple_new_raw)(struct tuple_format *format, const char *data,
-		       const char *end, bool validate);
-
 template <class ALLOC>
 static inline struct tuple *
 memtx_tuple_new_raw_impl(struct tuple_format *format, const char *data,
@@ -99,13 +95,6 @@ memtx_index_extent_alloc(struct matras_allocator *matras_allocator);
 static void
 memtx_index_extent_free(struct matras_allocator *matras_allocator,
 			void *extent);
-
-template<class ALLOC>
-static void
-memtx_alloc_init(void)
-{
-	memtx_tuple_new_raw = memtx_tuple_new_raw_impl<ALLOC>;
-}
 
 static int
 memtx_end_build_primary_key(struct space *space, void *param)
@@ -204,10 +193,17 @@ memtx_build_secondary_keys(struct space *space, void *param)
 }
 
 /** Destroy memtx allocator metadata */
+template<allocator_usage_t allocator_usage>
 static void
 memtx_engine_destroy_allocator(struct memtx_engine *memtx)
 {
-	struct memtx_allocator_meta *meta = &memtx->allocator_meta;
+	struct memtx_allocator_meta *meta;
+	switch (allocator_usage) {
+	case SYSTEM:
+		unreachable();
+	case USER:
+		meta = &memtx->allocator_meta;
+	}
 	mempool_destroy(&meta->iterator_pool);
 	if (mempool_is_initialized(&meta->rtree_iterator_pool))
 		mempool_destroy(&meta->rtree_iterator_pool);
@@ -219,7 +215,7 @@ memtx_engine_destroy_allocator(struct memtx_engine *memtx)
 	 * The order is vital: allocator destroy should take place before
 	 * slab cache destroy!
 	 */
-	memtx_allocators_destroy();
+	memtx_allocators_destroy<allocator_usage>();
 	slab_cache_destroy(&meta->slab_cache);
 	tuple_arena_destroy(&meta->arena);
 }
@@ -234,7 +230,7 @@ memtx_engine_shutdown(struct engine *engine)
 	if (memtx->replica_join_cord != NULL)
 		replica_join_cancel(memtx->replica_join_cord);
 
-	memtx_engine_destroy_allocator(memtx);
+	memtx_engine_destroy_allocator<USER>(memtx);
 
 	xdir_destroy(&memtx->snap_dir);
 	tuple_format_unref(memtx->func_key_format);
@@ -570,14 +566,14 @@ struct memtx_read_view {
 	 * Allocator read view that prevents tuples referenced by index read
 	 * views from being freed.
 	 */
-	memtx_allocators_read_view allocators_rv;
+	memtx_allocators_read_view<USER> allocators_rv;
 };
 
 static void
 memtx_engine_read_view_free(struct engine_read_view *base)
 {
 	struct memtx_read_view *rv = (struct memtx_read_view *)base;
-	memtx_allocators_close_read_view(rv->allocators_rv);
+	memtx_allocators_close_read_view<USER>(rv->allocators_rv);
 	free(rv);
 }
 
@@ -593,7 +589,7 @@ memtx_engine_create_read_view(struct engine *engine,
 	struct memtx_read_view *rv =
 		(struct memtx_read_view *)xmalloc(sizeof(*rv));
 	rv->base.vtab = &vtab;
-	rv->allocators_rv = memtx_allocators_open_read_view(opts);
+	rv->allocators_rv = memtx_allocators_open_read_view<USER>(opts);
 	return (struct engine_read_view *)rv;
 }
 
@@ -1521,7 +1517,7 @@ memtx_engine_memory_stat(struct engine *engine, struct engine_memory_stat *stat)
 	struct mempool_stats index_stats;
 	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
 	memset(&data_stats, 0, sizeof(data_stats));
-	allocators_stats(&data_stats);
+	allocators_stats<USER>(&data_stats);
 	stat->data += data_stats.small.used;
 	stat->data += data_stats.sys.used;
 	stat->index += index_stats.totals.used;
@@ -1600,17 +1596,23 @@ memtx_engine_gc_f(va_list va)
 	return 0;
 }
 
+template<allocator_usage_t allocator_usage>
 void
 memtx_set_tuple_format_vtab(const char *allocator_name)
 {
+	struct tuple_format_vtab *tuple_format_vtab;
+	switch (allocator_usage) {
+	case SYSTEM:
+		unreachable();
+	case USER:
+		tuple_format_vtab = &memtx_tuple_format_vtab;
+	}
 	if (strncmp(allocator_name, "small", strlen("small")) == 0) {
-		memtx_alloc_init<SmallAlloc>();
-		create_memtx_tuple_format_vtab<SmallAlloc>
-			(&memtx_tuple_format_vtab);
+		create_memtx_tuple_format_vtab<SmallAlloc<allocator_usage>>
+			(tuple_format_vtab);
 	} else if (strncmp(allocator_name, "system", strlen("system")) == 0) {
-		memtx_alloc_init<SysAlloc>();
-		create_memtx_tuple_format_vtab<SysAlloc>
-			(&memtx_tuple_format_vtab);
+		create_memtx_tuple_format_vtab<SysAlloc<allocator_usage>>
+			(tuple_format_vtab);
 	} else {
 		unreachable();
 	}
@@ -1629,13 +1631,20 @@ memtx_tuple_validate(struct tuple_format *format, struct tuple *tuple)
 }
 
 /** Init memtx allocator metadata */
+template<allocator_usage_t allocator_usage>
 static void
 memtx_engine_init_allocator(struct memtx_engine *memtx,
 			    uint64_t tuple_arena_max_size, uint32_t objsize_min,
 			    bool dontdump, unsigned granularity,
 			    float alloc_factor, const char *allocator)
 {
-	struct memtx_allocator_meta *meta = &memtx->allocator_meta;
+	struct memtx_allocator_meta *meta;
+	switch (allocator_usage) {
+	case SYSTEM:
+		unreachable();
+	case USER:
+		meta = &memtx->allocator_meta;
+	}
 	/* Initialize tuple allocator. */
 	quota_init(&meta->quota, tuple_arena_max_size);
 	tuple_arena_create(&meta->arena, &meta->quota, tuple_arena_max_size,
@@ -1646,8 +1655,8 @@ memtx_engine_init_allocator(struct memtx_engine *memtx,
 	allocator_settings_init(&alloc_settings, &meta->slab_cache,
 				objsize_min, granularity, alloc_factor,
 				&actual_alloc_factor, &meta->quota);
-	memtx_allocators_init(&alloc_settings);
-	memtx_set_tuple_format_vtab(allocator);
+	memtx_allocators_init<allocator_usage>(&alloc_settings);
+	memtx_set_tuple_format_vtab<allocator_usage>(allocator);
 
 	say_info("Actual slab_alloc_factor calculated on the basis of desired "
 		 "slab_alloc_factor = %f", actual_alloc_factor);
@@ -1772,9 +1781,9 @@ memtx_engine_new(const char *snap_dirname, bool force_recovery,
 		alloc_factor = 1.001;
 	}
 
-	memtx_engine_init_allocator(memtx, tuple_arena_max_size, objsize_min,
-				    dontdump, granularity, alloc_factor,
-				    allocator);
+	memtx_engine_init_allocator<USER>(memtx, tuple_arena_max_size,
+					  objsize_min, dontdump, granularity,
+					  alloc_factor, allocator);
 
 	memtx->state = MEMTX_INITIALIZED;
 	memtx->max_tuple_size = MAX_TUPLE_SIZE;
@@ -2019,6 +2028,7 @@ memtx_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 }
 
 struct tuple_format_vtab memtx_tuple_format_vtab;
+struct tuple_format_vtab memtx_system_tuple_format_vtab;
 
 template <class ALLOC>
 static inline void

@@ -31,7 +31,8 @@ test_tuple_new(struct tuple_format *format, const char *data, const char *end)
 	(void)data;
 	(void)end;
 	size_t size = sizeof(struct tuple);
-	struct tuple *tuple = MemtxAllocator<SmallAlloc>::alloc_tuple(size);
+	struct tuple *tuple =
+		MemtxAllocator<SmallAlloc<USER>>::alloc_tuple(size);
 	tuple_create(tuple, /*local_refs=*/0, tuple_format_id(format),
 		     /*data_offset=*/size, /*bsize=*/0, /*make_compact=*/true);
 	return tuple;
@@ -43,7 +44,7 @@ test_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 	assert(format == test_tuple_format);
 	(void)format;
 	assert(tuple_is_unreferenced(tuple));
-	MemtxAllocator<SmallAlloc>::free_tuple(tuple);
+	MemtxAllocator<SmallAlloc<USER>>::free_tuple(tuple);
 }
 
 static struct tuple_format_vtab test_tuple_format_vtab = {
@@ -91,12 +92,12 @@ alloc_tuple_count_cb(const void *stats_, void *ctx_)
 static int
 alloc_tuple_count()
 {
-	while (MemtxAllocator<SmallAlloc>::collect_garbage()) {
+	while (MemtxAllocator<SmallAlloc<USER>>::collect_garbage()) {
 	}
 	struct alloc_tuple_count_ctx ctx;
 	struct allocator_stats unused;
 	ctx.count = 0;
-	SmallAlloc::stats(&unused, alloc_tuple_count_cb, &ctx);
+	SmallAlloc<USER>::stats(&unused, alloc_tuple_count_cb, &ctx);
 	return ctx.count;
 }
 
@@ -143,10 +144,11 @@ test_free_delayed_if_alloc_before_read_view()
 	is(alloc_tuple_count(), 0, "count before alloc");
 	struct tuple *tuple = alloc_tuple();
 	is(alloc_tuple_count(), 1, "count after alloc");
-	memtx_allocators_read_view rv = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv =
+		memtx_allocators_open_read_view<USER>(&opts);
 	free_tuple(tuple);
 	is(alloc_tuple_count(), 1, "count after free");
-	memtx_allocators_close_read_view(rv);
+	memtx_allocators_close_read_view<USER>(rv);
 	is(alloc_tuple_count(), 0, "count after read view closed");
 
 	footer();
@@ -168,13 +170,15 @@ test_free_delayed_until_all_read_views_closed()
 	is(alloc_tuple_count(), 0, "count before alloc");
 	struct tuple *tuple = alloc_tuple();
 	is(alloc_tuple_count(), 1, "count after alloc");
-	memtx_allocators_read_view rv1 = memtx_allocators_open_read_view(&opts);
-	memtx_allocators_read_view rv2 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv1 =
+		memtx_allocators_open_read_view<USER>(&opts);
+	memtx_allocators_read_view<USER> rv2 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	free_tuple(tuple);
 	is(alloc_tuple_count(), 1, "count after free");
-	memtx_allocators_close_read_view(rv1);
+	memtx_allocators_close_read_view<USER>(rv1);
 	is(alloc_tuple_count(), 1, "count after first read view closed");
-	memtx_allocators_close_read_view(rv2);
+	memtx_allocators_close_read_view<USER>(rv2);
 	is(alloc_tuple_count(), 0, "count after second read view closed");
 
 	footer();
@@ -193,13 +197,14 @@ test_free_not_delayed_if_alloc_after_read_view()
 
 	struct read_view_opts opts;
 	read_view_opts_create(&opts);
-	memtx_allocators_read_view rv = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 0, "count before alloc");
 	struct tuple *tuple = alloc_tuple();
 	is(alloc_tuple_count(), 1, "count after alloc");
 	free_tuple(tuple);
 	is(alloc_tuple_count(), 0, "count after free");
-	memtx_allocators_close_read_view(rv);
+	memtx_allocators_close_read_view<USER>(rv);
 
 	footer();
 	check_plan();
@@ -219,10 +224,11 @@ test_free_not_delayed_if_temporary()
 	is(alloc_tuple_count(), 0, "count before alloc");
 	struct tuple *tuple = alloc_temp_tuple();
 	is(alloc_tuple_count(), 1, "count after alloc");
-	memtx_allocators_read_view rv = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv =
+		memtx_allocators_open_read_view<USER>(&opts);
 	free_tuple(tuple);
 	is(alloc_tuple_count(), 0, "count after free");
-	memtx_allocators_close_read_view(rv);
+	memtx_allocators_close_read_view<USER>(rv);
 
 	footer();
 	check_plan();
@@ -245,19 +251,22 @@ test_tuple_gc()
 	struct tuple *tuple12 = alloc_tuple();
 	struct tuple *tuple13 = alloc_tuple();
 	struct tuple *tuple14 = alloc_tuple();
-	memtx_allocators_read_view rv1 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv1 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 4, "count after rv1 opened");
 	free_tuple(tuple11);
 	struct tuple *tuple22 = alloc_tuple();
 	struct tuple *tuple23 = alloc_tuple();
 	struct tuple *tuple24 = alloc_tuple();
-	memtx_allocators_read_view rv2 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv2 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 7, "count after rv2 opened");
 	free_tuple(tuple12);
 	free_tuple(tuple22);
 	struct tuple *tuple33 = alloc_tuple();
 	struct tuple *tuple34 = alloc_tuple();
-	memtx_allocators_read_view rv3 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv3 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 9, "count after rv3 opened");
 	free_tuple(tuple13);
 	free_tuple(tuple23);
@@ -265,11 +274,12 @@ test_tuple_gc()
 	struct tuple *tuple44 = alloc_tuple();
 
 	is(alloc_tuple_count(), 10, "count before rv2 closed");
-	memtx_allocators_close_read_view(rv2);
+	memtx_allocators_close_read_view<USER>(rv2);
 	/* tuple22 is freed */
 	is(alloc_tuple_count(), 9, "count after rv2 closed");
 
-	memtx_allocators_read_view rv4 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv4 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 9, "count after rv4 opened");
 	free_tuple(tuple14);
 	free_tuple(tuple24);
@@ -277,16 +287,16 @@ test_tuple_gc()
 	free_tuple(tuple44);
 
 	is(alloc_tuple_count(), 9, "count before rv4 closed");
-	memtx_allocators_close_read_view(rv4);
+	memtx_allocators_close_read_view<USER>(rv4);
 	/* tuple44 is freed */
 	is(alloc_tuple_count(), 8, "count after rv4 closed");
 
-	memtx_allocators_close_read_view(rv1);
+	memtx_allocators_close_read_view<USER>(rv1);
 	/* tuple11 and tuple12 are freed */
 	is(alloc_tuple_count(), 6, "count after rv1 closed");
 
 	/* tuple13, tuple14, tuple23, tuple24, tuple33, tuple34 are freed */
-	memtx_allocators_close_read_view(rv3);
+	memtx_allocators_close_read_view<USER>(rv3);
 	is(alloc_tuple_count(), 0, "count after rv3 closed");
 
 	footer();
@@ -317,7 +327,8 @@ test_temp_tuple_gc()
 	struct tuple *tuple13 = alloc_tuple();
 	struct tuple *tuple14 = alloc_tuple();
 	opts.enable_data_temporary_spaces = false;
-	memtx_allocators_read_view rv1 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv1 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 8, "count after rv1 opened");
 	free_tuple(temp_tuple11);
 	free_tuple(tuple11);
@@ -328,7 +339,8 @@ test_temp_tuple_gc()
 	struct tuple *tuple23 = alloc_tuple();
 	struct tuple *tuple24 = alloc_tuple();
 	opts.enable_data_temporary_spaces = true;
-	memtx_allocators_read_view rv2 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv2 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	/* temp_tuple11 is freed */
 	is(alloc_tuple_count(), 13, "count after rv2 opened");
 	free_tuple(temp_tuple12);
@@ -340,7 +352,8 @@ test_temp_tuple_gc()
 	struct tuple *tuple33 = alloc_tuple();
 	struct tuple *tuple34 = alloc_tuple();
 	opts.enable_data_temporary_spaces = false;
-	memtx_allocators_read_view rv3 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv3 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 17, "count after rv3 opened");
 	free_tuple(temp_tuple13);
 	free_tuple(temp_tuple23);
@@ -351,7 +364,8 @@ test_temp_tuple_gc()
 	struct tuple *temp_tuple44 = alloc_temp_tuple();
 	struct tuple *tuple44 = alloc_tuple();
 	opts.enable_data_temporary_spaces = true;
-	memtx_allocators_read_view rv4 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv4 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	/* temp_tuple33 is freed */
 	is(alloc_tuple_count(), 18, "count after rv4 opened");
 	free_tuple(temp_tuple14);
@@ -363,20 +377,20 @@ test_temp_tuple_gc()
 	free_tuple(tuple34);
 	free_tuple(tuple44);
 	is(alloc_tuple_count(), 18, "count before rv4 closed");
-	memtx_allocators_close_read_view(rv4);
+	memtx_allocators_close_read_view<USER>(rv4);
 	/* temp_tuple34, temp_tuple44, tuple44 are freed */
 	is(alloc_tuple_count(), 15, "count after rv4 closed");
-	memtx_allocators_close_read_view(rv3);
+	memtx_allocators_close_read_view<USER>(rv3);
 	/* tuple33 and tuple34 are freed */
 	is(alloc_tuple_count(), 13, "count after rv3 closed");
-	memtx_allocators_close_read_view(rv2);
+	memtx_allocators_close_read_view<USER>(rv2);
 	/*
 	 * temp_tuple12, temp_tuple13, temp_tuple14,
 	 * temp_tuple22, temp_tuple23, temp_tuple24,
 	 * tuple22, tuple23, tuple24 are freed.
 	 */
 	is(alloc_tuple_count(), 4, "count after rv2 closed");
-	memtx_allocators_close_read_view(rv1);
+	memtx_allocators_close_read_view<USER>(rv1);
 	/* tuple11, tuple12, tuple13, tuple14 are freed */
 	is(alloc_tuple_count(), 0, "count after rv1 closed");
 
@@ -393,7 +407,7 @@ test_reuse_read_view()
 	plan(16);
 	header();
 
-	MemtxAllocator<SmallAlloc>::set_read_view_reuse_interval(0.1);
+	MemtxAllocator<SmallAlloc<USER>>::set_read_view_reuse_interval(0.1);
 	struct read_view_opts opts;
 	read_view_opts_create(&opts);
 
@@ -401,14 +415,16 @@ test_reuse_read_view()
 	struct tuple *tuple1 = alloc_tuple();
 	struct tuple *temp_tuple1 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = false;
-	memtx_allocators_read_view rv1 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv1 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 2, "count after rv1 opened");
 	free_tuple(tuple1);
 	free_tuple(temp_tuple1);
 	struct tuple *tuple2 = alloc_tuple();
 	struct tuple *temp_tuple2 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = true;
-	memtx_allocators_read_view rv2 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv2 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	/* temp_tuple1 is freed */
 	is(alloc_tuple_count(), 3, "count after rv2 opened");
 	free_tuple(tuple2);
@@ -416,21 +432,24 @@ test_reuse_read_view()
 	struct tuple *tuple3 = alloc_tuple();
 	struct tuple *temp_tuple3 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = true;
-	memtx_allocators_read_view rv3 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv3 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 5, "count after rv3 opened");
 	free_tuple(tuple3);
 	free_tuple(temp_tuple3);
 	struct tuple *tuple4 = alloc_tuple();
 	struct tuple *temp_tuple4 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = false;
-	memtx_allocators_read_view rv4 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv4 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 7, "count after rv4 opened");
 	free_tuple(tuple4);
 	free_tuple(temp_tuple4);
 	struct tuple *tuple5 = alloc_tuple();
 	struct tuple *temp_tuple5 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = false;
-	memtx_allocators_read_view rv5 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv5 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 9, "count after rv5 opened");
 	free_tuple(tuple5);
 	free_tuple(temp_tuple5);
@@ -438,7 +457,8 @@ test_reuse_read_view()
 	struct tuple *tuple6 = alloc_tuple();
 	struct tuple *temp_tuple6 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = true;
-	memtx_allocators_read_view rv6 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv6 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 11, "count after rv6 opened");
 	free_tuple(tuple6);
 	free_tuple(temp_tuple6);
@@ -446,32 +466,33 @@ test_reuse_read_view()
 	struct tuple *tuple7 = alloc_tuple();
 	struct tuple *temp_tuple7 = alloc_temp_tuple();
 	opts.enable_data_temporary_spaces = false;
-	memtx_allocators_read_view rv7 = memtx_allocators_open_read_view(&opts);
+	memtx_allocators_read_view<USER> rv7 =
+		memtx_allocators_open_read_view<USER>(&opts);
 	is(alloc_tuple_count(), 13, "count after rv7 opened");
 	free_tuple(tuple7);
 	free_tuple(temp_tuple7);
 	/* temp_tuple7 is freed */
 	is(alloc_tuple_count(), 12, "count before rv7 closed");
-	memtx_allocators_close_read_view(rv7);
+	memtx_allocators_close_read_view<USER>(rv7);
 	/* tuple7 is freed */
 	is(alloc_tuple_count(), 11, "count after rv7 closed");
-	memtx_allocators_close_read_view(rv6);
+	memtx_allocators_close_read_view<USER>(rv6);
 	/* tuple6 and temp_tuple6 are freed */
 	is(alloc_tuple_count(), 9, "count after rv6 closed");
-	memtx_allocators_close_read_view(rv2);
+	memtx_allocators_close_read_view<USER>(rv2);
 	is(alloc_tuple_count(), 9, "count after rv2 closed");
-	memtx_allocators_close_read_view(rv1);
+	memtx_allocators_close_read_view<USER>(rv1);
 	is(alloc_tuple_count(), 9, "count after rv1 closed");
-	memtx_allocators_close_read_view(rv3);
+	memtx_allocators_close_read_view<USER>(rv3);
 	/* temp_tuple2, temp_tuple3, temp_tuple4, temp_tuple5 are freed */
 	is(alloc_tuple_count(), 5, "count after rv3 closed");
-	memtx_allocators_close_read_view(rv5);
+	memtx_allocators_close_read_view<USER>(rv5);
 	is(alloc_tuple_count(), 5, "count after rv5 closed");
-	memtx_allocators_close_read_view(rv4);
+	memtx_allocators_close_read_view<USER>(rv4);
 	/* tuple1, tuple2, tuple3, tuple4, tuple5 are freed */
 	is(alloc_tuple_count(), 0, "count after rv4 closed");
 
-	MemtxAllocator<SmallAlloc>::set_read_view_reuse_interval(0);
+	MemtxAllocator<SmallAlloc<USER>>::set_read_view_reuse_interval(0);
 
 	footer();
 	check_plan();
@@ -516,8 +537,8 @@ main()
 	allocator_settings_init(&alloc_settings, &cache, OBJSIZE_MIN,
 				GRANULARITY, ALLOC_FACTOR,
 				&actual_alloc_factor, &quota);
-	memtx_allocators_init(&alloc_settings);
-	MemtxAllocator<SmallAlloc>::set_read_view_reuse_interval(0);
+	memtx_allocators_init<USER>(&alloc_settings);
+	MemtxAllocator<SmallAlloc<USER>>::set_read_view_reuse_interval(0);
 	test_tuple_format = simple_tuple_format_new(
 		&test_tuple_format_vtab, /*engine=*/NULL,
 		/*keys=*/NULL, /*key_count=*/0);
@@ -526,7 +547,7 @@ main()
 	int rc = test_main();
 
 	tuple_format_delete(test_tuple_format);
-	memtx_allocators_destroy();
+	memtx_allocators_destroy<USER>();
 	slab_cache_destroy(&cache);
 	tuple_arena_destroy(&arena);
 	tuple_free();
