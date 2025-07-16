@@ -30,8 +30,11 @@
  */
 #include "allocator.h"
 
-struct small_alloc SmallAlloc::small_alloc;
-struct sys_alloc SysAlloc::sys_alloc;
+template<>
+struct small_alloc SmallAlloc<USER>::small_alloc;
+
+template<>
+struct sys_alloc SysAlloc<USER>::sys_alloc;
 
 int
 stats_noop_cb(const void *stats, void *cb_ctx)
@@ -41,15 +44,19 @@ stats_noop_cb(const void *stats, void *cb_ctx)
 	return 0;
 }
 
+template<allocator_usage_t allocator_usage>
 void
 allocators_stats(struct allocator_stats *stats, allocator_stats_cb cb,
 		 void *cb_ctx) {
-	foreach_allocator<allocator_stat,
+	foreach_allocator<allocator_usage, allocator_stat,
 		struct allocator_stats *&, allocator_stats_cb&, void *&>
 			(stats, cb, cb_ctx);
 }
 
+template<allocator_usage_t allocator_usage>
 void
 allocators_stats(struct allocator_stats *stats) {
-	allocators_stats(stats, stats_noop_cb, nullptr);
+	allocators_stats<allocator_usage>(stats, stats_noop_cb, nullptr);
 }
+
+template void allocators_stats<USER>(struct allocator_stats *stats);

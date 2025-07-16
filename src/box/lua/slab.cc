@@ -123,7 +123,7 @@ lbox_slab_stats(struct lua_State *L)
 	 * List all slabs used for tuples and slabs used for
 	 * indexes, with their stats.
 	 */
-	SmallAlloc::stats(&totals, small_stats_lua_cb, L);
+	SmallAlloc<USER>::stats(&totals, small_stats_lua_cb, L);
 	struct mempool_stats index_stats;
 	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
 	small_stats_lua_cb(&index_stats, L);
@@ -145,7 +145,7 @@ lbox_slab_info(struct lua_State *L)
 	 * indexes, with their stats.
 	 */
 	lua_newtable(L);
-	allocators_stats(&stats);
+	allocators_stats<USER>(&stats);
 	struct mempool_stats index_stats;
 	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
 
@@ -271,7 +271,7 @@ lbox_runtime_info(struct lua_State *L)
 static int
 lbox_slab_check(MAYBE_UNUSED struct lua_State *L)
 {
-	small_alloc_check(SmallAlloc::get_alloc());
+	small_alloc_check(SmallAlloc<USER>::get_alloc());
 	return 0;
 }
 
