@@ -77,6 +77,11 @@ allocator_settings_init(allocator_settings *settings, struct slab_cache *cache,
 	settings->sys.quota = quota;
 }
 
+typedef enum {
+	SYSTEM,
+	USER
+} allocator_usage_t;
+
 /**
  * Each allocator class should feature at least following interfaces:
  *
@@ -86,6 +91,7 @@ allocator_settings_init(allocator_settings *settings, struct slab_cache *cache,
  * void free(void* ptr, size_t size);
  * void stats(struct alloc_stats);
  */
+template<allocator_usage_t allocator_usage>
 class SmallAlloc
 {
 public:
@@ -119,7 +125,7 @@ public:
 	      void *cb_ctx)
 	{
 		struct small_stats data_stats;
-		small_stats(&SmallAlloc::small_alloc, &data_stats,
+		small_stats(&small_alloc, &data_stats,
 			    cb, cb_ctx);
 		alloc_stats->small.used = data_stats.used;
 		alloc_stats->small.total = data_stats.total;
@@ -133,13 +139,15 @@ private:
 	static struct small_alloc small_alloc;
 };
 
+template<allocator_usage_t allocator_usage>
 class SysAlloc
 {
 public:
 	static inline void
 	create(struct allocator_settings *settings)
 	{
-		sys_alloc_create(&sys_alloc, settings->sys.quota);
+		sys_alloc_create(&sys_alloc,
+				 settings->sys.quota);
 	}
 	static inline void
 	destroy(void)
@@ -163,14 +171,17 @@ public:
 		(void) cb;
 		(void) cb_ctx;
 		struct sys_stats data_stats;
-		sys_stats(&sys_alloc, &data_stats);
+		sys_stats(&sys_alloc,
+			  &data_stats);
 		alloc_stats->sys.used = data_stats.used;
 	}
 private:
 	static struct sys_alloc sys_alloc;
 };
 
-using allocators = std::tuple<SmallAlloc, SysAlloc>;
+template<allocator_usage_t allocator_usage>
+using allocators = std::tuple<SmallAlloc<allocator_usage>,
+			      SysAlloc<allocator_usage>>;
 
 template <class F, class... ARGS>
 static void
@@ -187,13 +198,13 @@ foreach_allocator_internal(std::tuple<ALL, MORE...>*, F& f, ARGS && ...args)
 				   f, std::forward<ARGS>(args)...);
 }
 
-template<class F, class... ARGS>
+template<allocator_usage_t allocator_usage, class F, class... ARGS>
 static void
 foreach_allocator(ARGS && ...args)
 {
 	F f;
-	foreach_allocator_internal((allocators *) nullptr, f,
-				   std::forward<ARGS>(args)...);
+	foreach_allocator_internal((allocators<allocator_usage> *) nullptr,
+				   f, std::forward<ARGS>(args)...);
 }
 
 struct allocator_create {
@@ -227,5 +238,12 @@ void
 allocators_stats(struct allocator_stats *stats, allocator_stats_cb cb,
 		 void *cb_ctx);
 
+template<allocator_usage_t allocator_usage>
 void
 allocators_stats(struct allocator_stats *stats);
+
+template<allocator_usage_t allocator_usage>
+struct small_alloc SmallAlloc<allocator_usage>::small_alloc;
+
+template<allocator_usage_t allocator_usage>
+struct sys_alloc SysAlloc<allocator_usage>::sys_alloc;

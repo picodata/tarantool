@@ -154,26 +154,29 @@ memtx_tuple_rv_add(struct memtx_tuple_rv *rv, struct memtx_tuple *tuple)
 	stailq_add_entry(&found->tuples, tuple, in_gc);
 }
 
+template<allocator_usage_t allocator_usage>
 void
 memtx_allocators_init(struct allocator_settings *settings)
 {
-	foreach_allocator<allocator_create,
+	foreach_allocator<allocator_usage, allocator_create,
 		struct allocator_settings *&>(settings);
 
-	foreach_memtx_allocator<allocator_create>();
+	foreach_memtx_allocator<allocator_usage, allocator_create>();
 }
 
+template<allocator_usage_t allocator_usage>
 void
 memtx_allocators_destroy()
 {
-	foreach_memtx_allocator<allocator_destroy>();
-	foreach_allocator<allocator_destroy>();
+	foreach_memtx_allocator<allocator_usage, allocator_destroy>();
+	foreach_allocator<allocator_usage, allocator_destroy>();
 }
 
+template<allocator_usage_t allocator_usage>
 struct memtx_allocator_open_read_view {
 	/** Opens a read view for the specified MemtxAllocator. */
 	template<typename Allocator>
-	void invoke(memtx_allocators_read_view &rv_all,
+	void invoke(memtx_allocators_read_view<allocator_usage> &rv_all,
 		    const struct read_view_opts &opts)
 	{
 		util::get<typename Allocator::ReadView *>(rv_all) =
@@ -181,20 +184,23 @@ struct memtx_allocator_open_read_view {
 	}
 };
 
-memtx_allocators_read_view
+template<allocator_usage_t allocator_usage>
+memtx_allocators_read_view<allocator_usage>
 memtx_allocators_open_read_view(const struct read_view_opts *opts)
 {
-	memtx_allocators_read_view rv;
-	foreach_memtx_allocator<memtx_allocator_open_read_view,
-				memtx_allocators_read_view &,
+	memtx_allocators_read_view<allocator_usage> rv;
+	foreach_memtx_allocator<allocator_usage,
+				memtx_allocator_open_read_view<allocator_usage>,
+				memtx_allocators_read_view<allocator_usage> &,
 				const struct read_view_opts &>(rv, *opts);
 	return rv;
 }
 
+template<allocator_usage_t allocator_usage>
 struct memtx_allocator_close_read_view {
 	/** Closes a read view and sets the read view ptr to null. */
 	template<typename Allocator>
-	void invoke(memtx_allocators_read_view &rv_all)
+	void invoke(memtx_allocators_read_view<allocator_usage> &rv_all)
 	{
 		typename Allocator::ReadView *&rv =
 			util::get<typename Allocator::ReadView *>(rv_all);
@@ -203,9 +209,26 @@ struct memtx_allocator_close_read_view {
 	}
 };
 
+template<allocator_usage_t allocator_usage>
 void
-memtx_allocators_close_read_view(memtx_allocators_read_view rv)
+memtx_allocators_close_read_view(memtx_allocators_read_view<allocator_usage> rv)
 {
-	foreach_memtx_allocator<memtx_allocator_close_read_view,
-				memtx_allocators_read_view &>(rv);
+	foreach_memtx_allocator<allocator_usage,
+		memtx_allocator_close_read_view<allocator_usage>,
+		memtx_allocators_read_view<allocator_usage> &>(rv);
 }
+
+template struct memtx_allocator_open_read_view<USER>;
+template struct memtx_allocator_close_read_view<USER>;
+
+template void
+memtx_allocators_init<USER>(struct allocator_settings *settings);
+
+template void
+memtx_allocators_destroy<USER>();
+
+template memtx_allocators_read_view<USER>
+memtx_allocators_open_read_view<USER>(const struct read_view_opts *opts);
+
+template void
+memtx_allocators_close_read_view<USER>(memtx_allocators_read_view<USER> rv);

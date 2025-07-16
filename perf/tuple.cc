@@ -45,7 +45,7 @@ private:
 		allocator_settings_init(&alloc_settings, &memtx.slab_cache,
 					16, 8, 1.1, &actual_alloc_factor,
 					&memtx.quota);
-		SmallAlloc::create(&alloc_settings);
+		SmallAlloc<USER>::create(&alloc_settings);
 		memtx_set_tuple_format_vtab("small");
 
 		memtx.max_tuple_size = 1024 * 1024;
@@ -63,7 +63,7 @@ private:
 		key_def_delete(kd);
 		tuple_format_unref(fmt);
 		tuple_free();
-		SmallAlloc::destroy();
+		SmallAlloc<USER>::destroy();
 		slab_cache_destroy(&memtx.slab_cache);
 		tuple_arena_destroy(&memtx.arena);
 		fiber_free();

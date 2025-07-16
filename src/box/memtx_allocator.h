@@ -407,32 +407,40 @@ double MemtxAllocator<Allocator>::read_view_timestamp;
 template<class Allocator>
 bool MemtxAllocator<Allocator>::may_reuse_read_view;
 
+template<allocator_usage_t allocator_usage>
 void
 memtx_allocators_init(struct allocator_settings *settings);
 
+template<allocator_usage_t allocator_usage>
 void
 memtx_allocators_destroy();
 
-using memtx_allocators = std::tuple<MemtxAllocator<SmallAlloc>,
-				    MemtxAllocator<SysAlloc>>;
+template<allocator_usage_t allocator_usage>
+using memtx_allocators = std::tuple<MemtxAllocator<SmallAlloc<allocator_usage>>,
+				    MemtxAllocator<SysAlloc<allocator_usage>>>;
 
-using memtx_allocators_read_view =
-		std::tuple<MemtxAllocator<SmallAlloc>::ReadView *,
-			   MemtxAllocator<SysAlloc>::ReadView *>;
+template<allocator_usage_t allocator_usage>
+using memtx_allocators_read_view = std::tuple <
+	typename MemtxAllocator<SmallAlloc<allocator_usage>>::ReadView *,
+	typename MemtxAllocator<SysAlloc<allocator_usage>>::ReadView *>;
 
 /** Opens a read view for each MemtxAllocator. */
-memtx_allocators_read_view
+template<allocator_usage_t allocator_usage>
+memtx_allocators_read_view<allocator_usage>
 memtx_allocators_open_read_view(const struct read_view_opts *opts);
 
 /** Closes a read view for each MemtxAllocator. */
+template<allocator_usage_t allocator_usage>
 void
-memtx_allocators_close_read_view(memtx_allocators_read_view rv);
+memtx_allocators_close_read_view(
+	memtx_allocators_read_view<allocator_usage> rv);
 
-template<class F, class...Arg>
+template<allocator_usage_t allocator_usage, class F, class...Arg>
 static void
 foreach_memtx_allocator(Arg&&...arg)
 {
 	F f;
-	foreach_allocator_internal((memtx_allocators *) nullptr, f,
-				   std::forward<Arg>(arg)...);
+	foreach_allocator_internal(
+		(memtx_allocators<allocator_usage> *) nullptr, f,
+		std::forward<Arg>(arg)...);
 }

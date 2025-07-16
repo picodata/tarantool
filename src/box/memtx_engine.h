@@ -267,18 +267,13 @@ memtx_engine_set_max_tuple_size(struct memtx_engine *memtx, size_t max_size);
 /** Tuple format vtab for memtx engine. */
 extern struct tuple_format_vtab memtx_tuple_format_vtab;
 
+/** System space tuple format vtab for memtx engine. */
+extern struct tuple_format_vtab memtx_system_tuple_format_vtab;
+
 enum {
 	MEMTX_EXTENT_SIZE = 16 * 1024,
 	MEMTX_SLAB_SIZE = 4 * 1024 * 1024
 };
-
-/**
- * Allocate and return new memtx tuple. Data validation depends
- * on @a validate value. On error returns NULL and set diag.
- */
-extern struct tuple *
-(*memtx_tuple_new_raw)(struct tuple_format *format, const char *data,
-		       const char *end, bool validate);
 
 /**
  * Allocate a block of size MEMTX_EXTENT_SIZE for memtx index
