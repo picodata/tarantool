@@ -65,7 +65,7 @@ extern "C" {
 	(b) = tmp;							\
 } while (0)
 
-#define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
+#define DIV_ROUND_UP(n, d) ((n) / (d) + ((n) % (d) != 0))
 
 /* Macros to define enum and corresponding strings. */
 #define ENUM0_MEMBER(s, ...) s,
