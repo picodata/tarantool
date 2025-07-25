@@ -48,6 +48,7 @@
 
 struct memtx_rtree_index {
 	struct index base;
+	struct memtx_allocator_meta *alloc_meta;
 	unsigned dimension;
 	struct rtree tree;
 };
@@ -293,8 +294,9 @@ memtx_rtree_index_reserve(struct index *base, uint32_t size_hint)
 		diag_set(OutOfMemory, MEMTX_EXTENT_SIZE, "mempool", "new slab");
 		return -1;
 	});
-	struct memtx_engine *memtx = (struct memtx_engine *)base->engine;
-	return memtx_index_extent_reserve(memtx, RESERVE_EXTENTS_BEFORE_REPLACE);
+	struct memtx_rtree_index *index = (struct memtx_rtree_index *)base;
+	return memtx_index_extent_reserve(index->alloc_meta,
+					  RESERVE_EXTENTS_BEFORE_REPLACE);
 }
 
 /** Implementation of create_iterator for memtx rtree index. */
@@ -356,14 +358,14 @@ memtx_rtree_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	struct index_rtree_iterator *it = (struct index_rtree_iterator *)
-		mempool_alloc(&memtx->rtree_iterator_pool);
+		mempool_alloc(&memtx->allocator_meta.rtree_iterator_pool);
 	if (it == NULL) {
 		diag_set(OutOfMemory, sizeof(struct index_rtree_iterator),
 			 "memtx_rtree_index", "iterator");
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &memtx->rtree_iterator_pool;
+	it->pool = &memtx->allocator_meta.rtree_iterator_pool;
 	it->base.next_internal = index_rtree_iterator_next;
 	it->base.next = memtx_iterator_next;
 	it->base.position = generic_iterator_position;
@@ -433,8 +435,10 @@ memtx_rtree_index_new(struct memtx_engine *memtx, struct index_def *def)
 	enum rtree_distance_type distance_type =
 		(enum rtree_distance_type)def->opts.distance;
 
-	if (!mempool_is_initialized(&memtx->rtree_iterator_pool)) {
-		mempool_create(&memtx->rtree_iterator_pool, cord_slab_cache(),
+	struct memtx_allocator_meta *alloc_meta = &memtx->allocator_meta;
+	if (!mempool_is_initialized(&alloc_meta->rtree_iterator_pool)) {
+		mempool_create(&alloc_meta->rtree_iterator_pool,
+			       cord_slab_cache(),
 			       sizeof(struct index_rtree_iterator));
 	}
 
@@ -444,8 +448,9 @@ memtx_rtree_index_new(struct memtx_engine *memtx, struct index_def *def)
 		     &memtx_rtree_index_vtab, def);
 
 	index->dimension = def->opts.dimension;
+	index->alloc_meta = &memtx->allocator_meta;
 	rtree_init(&index->tree, index->dimension, MEMTX_EXTENT_SIZE,
-		   memtx_index_extent_alloc, memtx_index_extent_free, memtx,
-		   distance_type);
+		   memtx_index_extent_alloc, memtx_index_extent_free,
+		   &memtx->allocator_meta, distance_type);
 	return &index->base;
 }

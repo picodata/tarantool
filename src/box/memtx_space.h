@@ -41,6 +41,8 @@ struct memtx_engine;
 
 struct memtx_space {
 	struct space base;
+	/** Pointer to memtx allocator meta. */
+	struct memtx_allocator_meta *alloc_meta;
 	/* Number of bytes used in memory by tuples in the space. */
 	size_t bsize;
 	/**

@@ -125,7 +125,7 @@ lbox_slab_stats(struct lua_State *L)
 	 */
 	SmallAlloc::stats(&totals, small_stats_lua_cb, L);
 	struct mempool_stats index_stats;
-	mempool_stats(&memtx->index_extent_pool, &index_stats);
+	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
 	small_stats_lua_cb(&index_stats, L);
 
 	return 1;
@@ -147,7 +147,7 @@ lbox_slab_info(struct lua_State *L)
 	lua_newtable(L);
 	allocators_stats(&stats);
 	struct mempool_stats index_stats;
-	mempool_stats(&memtx->index_extent_pool, &index_stats);
+	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
 
 	double ratio;
 	char ratio_buf[32];
@@ -189,7 +189,7 @@ lbox_slab_info(struct lua_State *L)
 	 * quota_used_ratio > 0.9 work as an indicator
 	 * for reaching Tarantool memory limit.
 	 */
-	size_t arena_size = memtx->arena.used;
+	size_t arena_size = memtx->allocator_meta.arena.used;
 	luaL_pushuint64(L, arena_size);
 	lua_settable(L, -3);
 	/**
@@ -214,7 +214,7 @@ lbox_slab_info(struct lua_State *L)
 	 * box.cfg.slab_alloc_arena, but in bytes
 	 */
 	lua_pushstring(L, "quota_size");
-	luaL_pushuint64(L, quota_total(&memtx->quota));
+	luaL_pushuint64(L, quota_total(&memtx->allocator_meta.quota));
 	lua_settable(L, -3);
 
 	/*
@@ -222,7 +222,7 @@ lbox_slab_info(struct lua_State *L)
 	 * size of slabs in various slab caches.
 	 */
 	lua_pushstring(L, "quota_used");
-	luaL_pushuint64(L, quota_used(&memtx->quota));
+	luaL_pushuint64(L, quota_used(&memtx->allocator_meta.quota));
 	lua_settable(L, -3);
 
 	/**
@@ -231,8 +231,8 @@ lbox_slab_info(struct lua_State *L)
 	 * factor, it's the quota that give you OOM error in the
 	 * end of the day.
 	 */
-	ratio = 100 * ((double) quota_used(&memtx->quota) /
-		 ((double) quota_total(&memtx->quota) + 0.0001));
+	ratio = 100 * ((double)quota_used(&memtx->allocator_meta.quota) /
+		 ((double)quota_total(&memtx->allocator_meta.quota) + 0.0001));
 	snprintf(ratio_buf, sizeof(ratio_buf), "%0.2lf%%", ratio);
 
 	lua_pushstring(L, "quota_used_ratio");

@@ -252,12 +252,13 @@ memtx_space_replace_all_keys(struct space *space, struct tuple *old_tuple,
 			     enum dup_replace_mode mode,
 			     struct tuple **result)
 {
-	struct memtx_engine *memtx = (struct memtx_engine *)space->engine;
+	struct memtx_space *memtx_space = (struct memtx_space *)space;
 	/*
 	 * Ensure we have enough slack memory to guarantee
 	 * successful statement-level rollback.
 	 */
-	if (memtx_index_extent_reserve(memtx, new_tuple != NULL ?
+	if (memtx_index_extent_reserve(memtx_space->alloc_meta,
+				       new_tuple != NULL ?
 				       RESERVE_EXTENTS_BEFORE_REPLACE :
 				       RESERVE_EXTENTS_BEFORE_DELETE) != 0)
 		return -1;
@@ -1512,5 +1513,6 @@ memtx_space_new(struct memtx_engine *memtx,
 	memtx_space->bsize = 0;
 	memtx_space->rowid = 1;
 	memtx_space->replace = memtx_space_replace_no_keys;
+	memtx_space->alloc_meta = &memtx->allocator_meta;
 	return (struct space *)memtx_space;
 }

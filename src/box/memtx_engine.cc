@@ -195,6 +195,33 @@ memtx_build_secondary_keys(struct space *space, void *param)
 	return 0;
 }
 
+/** Destroy memtx allocator metadata */
+static void
+memtx_engine_destroy_allocator(struct memtx_engine *memtx)
+{
+	struct memtx_allocator_meta *meta = &memtx->allocator_meta;
+	mempool_destroy(&meta->iterator_pool);
+	if (mempool_is_initialized(&meta->rtree_iterator_pool))
+		mempool_destroy(&meta->rtree_iterator_pool);
+	void *p = meta->reserved_extents;
+	while (p != NULL) {
+		void *next = *(void **)p;
+		memtx_index_extent_free(meta, p);
+		p = next;
+	}
+	mempool_destroy(&meta->index_extent_pool);
+	slab_cache_destroy(&meta->index_slab_cache);
+	mh_ptr_delete(meta->malloc_extents);
+	/*
+	 * The order is vital: allocator destroy should take place before
+	 * slab cache destroy!
+	 */
+	memtx_allocators_destroy();
+	slab_cache_destroy(&meta->slab_cache);
+	tuple_arena_destroy(&meta->arena);
+}
+
+/** Shutdown memtx engine. */
 static void
 memtx_engine_shutdown(struct engine *engine)
 {
@@ -203,25 +230,8 @@ memtx_engine_shutdown(struct engine *engine)
 		checkpoint_cancel(memtx->checkpoint);
 	if (memtx->replica_join_cord != NULL)
 		replica_join_cancel(memtx->replica_join_cord);
-	mempool_destroy(&memtx->iterator_pool);
-	if (mempool_is_initialized(&memtx->rtree_iterator_pool))
-		mempool_destroy(&memtx->rtree_iterator_pool);
-	void *p = memtx->reserved_extents;
-	while (p != NULL) {
-		void *next = *(void **)p;
-		memtx_index_extent_free(memtx, p);
-		p = next;
-	}
-	mempool_destroy(&memtx->index_extent_pool);
-	slab_cache_destroy(&memtx->index_slab_cache);
-	mh_ptr_delete(memtx->malloc_extents);
-	/*
-	 * The order is vital: allocator destroy should take place before
-	 * slab cache destroy!
-	 */
-	memtx_allocators_destroy();
-	slab_cache_destroy(&memtx->slab_cache);
-	tuple_arena_destroy(&memtx->arena);
+
+	memtx_engine_destroy_allocator(memtx);
 
 	xdir_destroy(&memtx->snap_dir);
 	tuple_format_unref(memtx->func_key_format);
@@ -1520,7 +1530,7 @@ memtx_engine_memory_stat(struct engine *engine, struct engine_memory_stat *stat)
 	struct memtx_engine *memtx = (struct memtx_engine *)engine;
 	struct allocator_stats data_stats;
 	struct mempool_stats index_stats;
-	mempool_stats(&memtx->index_extent_pool, &index_stats);
+	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
 	memset(&data_stats, 0, sizeof(data_stats));
 	allocators_stats(&data_stats);
 	stat->data += data_stats.small.used;
@@ -1629,6 +1639,42 @@ memtx_tuple_validate(struct tuple_format *format, struct tuple *tuple)
 	return rc;
 }
 
+/** Init memtx allocator metadata */
+static void
+memtx_engine_init_allocator(struct memtx_engine *memtx,
+			    uint64_t tuple_arena_max_size, uint32_t objsize_min,
+			    bool dontdump, unsigned granularity,
+			    float alloc_factor, const char *allocator)
+{
+	struct memtx_allocator_meta *meta = &memtx->allocator_meta;
+	/* Initialize tuple allocator. */
+	quota_init(&meta->quota, tuple_arena_max_size);
+	tuple_arena_create(&meta->arena, &meta->quota, tuple_arena_max_size,
+			   SLAB_SIZE, dontdump, "memtx");
+	slab_cache_create(&meta->slab_cache, &meta->arena);
+	float actual_alloc_factor;
+	allocator_settings alloc_settings;
+	allocator_settings_init(&alloc_settings, &meta->slab_cache,
+				objsize_min, granularity, alloc_factor,
+				&actual_alloc_factor, &meta->quota);
+	memtx_allocators_init(&alloc_settings);
+	memtx_set_tuple_format_vtab(allocator);
+
+	say_info("Actual slab_alloc_factor calculated on the basis of desired "
+		 "slab_alloc_factor = %f", actual_alloc_factor);
+
+	/* Initialize index extent allocator. */
+	slab_cache_create(&meta->index_slab_cache, &meta->arena);
+	mempool_create(&meta->index_extent_pool, &meta->index_slab_cache,
+		       MEMTX_EXTENT_SIZE);
+	mempool_create(&meta->iterator_pool, cord_slab_cache(),
+		       MEMTX_ITERATOR_SIZE);
+	meta->num_reserved_extents = 0;
+	meta->reserved_extents = NULL;
+	meta->malloc_extents = mh_ptr_new();
+	meta->memtx = memtx;
+}
+
 struct memtx_engine *
 memtx_engine_new(const char *snap_dirname, bool force_recovery,
 		 uint64_t tuple_arena_max_size, uint32_t objsize_min,
@@ -1686,17 +1732,18 @@ memtx_engine_new(const char *snap_dirname, bool force_recovery,
 
 	/*
 	 * Currently we have two quota consumers: tuple and index allocators.
-	 * The first one uses either SystemAlloc or memtx->slab_cache (in case
-	 * of "system" and "small" allocator respectively), the second one uses
-	 * the memtx->index_slab_cache.
+	 * The first one uses either SystemAlloc or
+	 * memtx->allocator_meta.slab_cache (in case of "system" and "small"
+	 * allocator respectively), the second one uses
+	 * the memtx->allocator_meta.index_slab_cache.
 	 *
 	 * In "small" allocator mode the quota smaller than SLAB_SIZE * 2 will
 	 * be exceeded on the first tuple insertion because both slab_cache and
 	 * index_slab_cache will request a new SLAB_SIZE-sized slab from the
-	 * memtx->arena on the DDL operation. SLAB_SIZE * 2 is also enough for
-	 * bootstrap.snap, but this is a subject to change. All the information
-	 * is given with assumption SLAB_SIZE > MAX_TUPLE_SIZE + `new tuple
-	 * allocation overhead`.
+	 * memtx->allocator_meta.arena on the DDL operation. SLAB_SIZE * 2
+	 * is also enough for bootstrap.snap, but this is a subject to change.
+	 * All the information is given with assumption
+	 * SLAB_SIZE > MAX_TUPLE_SIZE + `new tuple allocation overhead`.
 	 *
 	 * In "system" allocator mode the required amount of memory for
 	 * performing the first insert equals to SLAB_SIZE + `the size required
@@ -1723,31 +1770,9 @@ memtx_engine_new(const char *snap_dirname, bool force_recovery,
 		alloc_factor = 1.001;
 	}
 
-	/* Initialize tuple allocator. */
-	quota_init(&memtx->quota, tuple_arena_max_size);
-	tuple_arena_create(&memtx->arena, &memtx->quota, tuple_arena_max_size,
-			   SLAB_SIZE, dontdump, "memtx");
-	slab_cache_create(&memtx->slab_cache, &memtx->arena);
-	float actual_alloc_factor;
-	allocator_settings alloc_settings;
-	allocator_settings_init(&alloc_settings, &memtx->slab_cache,
-				objsize_min, granularity, alloc_factor,
-				&actual_alloc_factor, &memtx->quota);
-	memtx_allocators_init(&alloc_settings);
-	memtx_set_tuple_format_vtab(allocator);
-
-	say_info("Actual slab_alloc_factor calculated on the basis of desired "
-		 "slab_alloc_factor = %f", actual_alloc_factor);
-
-	/* Initialize index extent allocator. */
-	slab_cache_create(&memtx->index_slab_cache, &memtx->arena);
-	mempool_create(&memtx->index_extent_pool, &memtx->index_slab_cache,
-		       MEMTX_EXTENT_SIZE);
-	mempool_create(&memtx->iterator_pool, cord_slab_cache(),
-		       MEMTX_ITERATOR_SIZE);
-	memtx->num_reserved_extents = 0;
-	memtx->reserved_extents = NULL;
-	memtx->malloc_extents = mh_ptr_new();
+	memtx_engine_init_allocator(memtx, tuple_arena_max_size, objsize_min,
+				    dontdump, granularity, alloc_factor,
+				    allocator);
 
 	memtx->state = MEMTX_INITIALIZED;
 	memtx->max_tuple_size = MAX_TUPLE_SIZE;
@@ -1895,12 +1920,12 @@ memtx_engine_set_memory(struct memtx_engine *memtx, size_t size)
 	if (size < MIN_MEMORY_QUOTA)
 		size = MIN_MEMORY_QUOTA;
 
-	if (size < quota_total(&memtx->quota)) {
+	if (size < quota_total(&memtx->allocator_meta.quota)) {
 		diag_set(ClientError, ER_CFG, "memtx_memory",
 			 "cannot decrease memory size at runtime");
 		return -1;
 	}
-	quota_set(&memtx->quota, size);
+	quota_set(&memtx->allocator_meta.quota, size);
 	return 0;
 }
 
@@ -2007,19 +2032,21 @@ create_memtx_tuple_format_vtab(struct tuple_format_vtab *vtab)
 void *
 memtx_index_extent_alloc(void *ctx)
 {
-	struct memtx_engine *memtx = (struct memtx_engine *)ctx;
-	if (memtx->reserved_extents) {
-		assert(memtx->num_reserved_extents > 0);
-		memtx->num_reserved_extents--;
-		void *result = memtx->reserved_extents;
-		memtx->reserved_extents = *(void **)memtx->reserved_extents;
+	struct memtx_allocator_meta *alloc_meta =
+		(struct memtx_allocator_meta *)ctx;
+	if (alloc_meta->reserved_extents) {
+		assert(alloc_meta->num_reserved_extents > 0);
+		alloc_meta->num_reserved_extents--;
+		void *result = alloc_meta->reserved_extents;
+		alloc_meta->reserved_extents =
+			*(void **)alloc_meta->reserved_extents;
 		return result;
 	}
 	ERROR_INJECT(ERRINJ_INDEX_ALLOC, { goto fail; });
 	void *ret;
-	while ((ret = mempool_alloc(&memtx->index_extent_pool)) == NULL) {
+	while ((ret = mempool_alloc(&alloc_meta->index_extent_pool)) == NULL) {
 		bool stop;
-		memtx_engine_run_gc(memtx, &stop);
+		memtx_engine_run_gc(alloc_meta->memtx, &stop);
 		if (stop)
 			break;
 	}
@@ -2035,7 +2062,7 @@ fail:
 		 * memtx arena quota.
 		 */
 		ret = xmalloc(MEMTX_EXTENT_SIZE);
-		mh_ptr_put(memtx->malloc_extents, (const void **)&ret,
+		mh_ptr_put(alloc_meta->malloc_extents, (const void **)&ret,
 			   NULL, NULL);
 		return ret;
 	}
@@ -2049,14 +2076,15 @@ fail:
 void
 memtx_index_extent_free(void *ctx, void *extent)
 {
-	struct memtx_engine *memtx = (struct memtx_engine *)ctx;
-	mh_int_t p = mh_ptr_find(memtx->malloc_extents, extent, NULL);
-	if (p != mh_end(memtx->malloc_extents)) {
-		mh_ptr_del(memtx->malloc_extents, p, NULL);
+	struct memtx_allocator_meta *alloc_meta =
+		(struct memtx_allocator_meta *)ctx;
+	mh_int_t p = mh_ptr_find(alloc_meta->malloc_extents, extent, NULL);
+	if (p != mh_end(alloc_meta->malloc_extents)) {
+		mh_ptr_del(alloc_meta->malloc_extents, p, NULL);
 		free(extent);
 		return;
 	}
-	mempool_free(&memtx->index_extent_pool, extent);
+	mempool_free(&alloc_meta->index_extent_pool, extent);
 }
 
 /**
@@ -2064,7 +2092,7 @@ memtx_index_extent_free(void *ctx, void *extent)
  * Ensure that next num extent_alloc will succeed w/o an error
  */
 int
-memtx_index_extent_reserve(struct memtx_engine *memtx, int num)
+memtx_index_extent_reserve(struct memtx_allocator_meta *alloc_meta, int num)
 {
 	ERROR_INJECT(ERRINJ_INDEX_ALLOC, {
 		/* same error as in mempool_alloc */
@@ -2072,12 +2100,12 @@ memtx_index_extent_reserve(struct memtx_engine *memtx, int num)
 			 "mempool", "new slab");
 		return -1;
 	});
-	struct mempool *pool = &memtx->index_extent_pool;
-	while (memtx->num_reserved_extents < num) {
+	struct mempool *pool = &alloc_meta->index_extent_pool;
+	while (alloc_meta->num_reserved_extents < num) {
 		void *ext;
 		while ((ext = mempool_alloc(pool)) == NULL) {
 			bool stop;
-			memtx_engine_run_gc(memtx, &stop);
+			memtx_engine_run_gc(alloc_meta->memtx, &stop);
 			if (stop)
 				break;
 		}
@@ -2086,9 +2114,9 @@ memtx_index_extent_reserve(struct memtx_engine *memtx, int num)
 				 "mempool", "new slab");
 			return -1;
 		}
-		*(void **)ext = memtx->reserved_extents;
-		memtx->reserved_extents = ext;
-		memtx->num_reserved_extents++;
+		*(void **)ext = alloc_meta->reserved_extents;
+		alloc_meta->reserved_extents = ext;
+		alloc_meta->num_reserved_extents++;
 	}
 	return 0;
 }
