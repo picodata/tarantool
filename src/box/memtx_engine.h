@@ -57,6 +57,40 @@ struct tuple;
 struct tuple_format;
 struct memtx_tx_snapshot_cleaner;
 
+/** Meta info for allocator used by memtx for tuples and indexes. */
+struct memtx_allocator_meta {
+	/** Pointer to memtx_engine. */
+	struct memtx_engine *memtx;
+	/** Common quota for tuples and indexes. */
+	struct quota quota;
+	/**
+	 * Common slab arena for tuples and indexes.
+	 * If you decide to use it for anything other than
+	 * tuple_alloc or index_extent_pool, make sure this
+	 * is reflected in box.slab.info(), @sa lua/slab.c.
+	 */
+	struct slab_arena arena;
+	/** Slab cache for allocating tuples. */
+	struct slab_cache slab_cache;
+	/** Slab cache for allocating index extents. */
+	struct slab_cache index_slab_cache;
+	/** Index extent allocator. */
+	struct mempool index_extent_pool;
+	/** Index extent allocator. */
+	struct matras_allocator index_extent_allocator;
+	/** Memory pool for rtree index iterator. */
+	struct mempool rtree_iterator_pool;
+	/**
+	 * Memory pool for all index iterators except rtree.
+	 * The latter is significantly larger so it has its
+	 * own memory pool.
+	 */
+	struct mempool iterator_pool;
+
+	/** Set of extents allocated using malloc. */
+	struct mh_ptr_t *malloc_extents;
+};
+
 /**
  * Recovery state of memtx engine.
  *
@@ -139,33 +173,13 @@ struct memtx_engine {
 	 * data.
 	 */
 	memtx_on_indexes_built_cb on_indexes_built_cb;
-	/** Common quota for tuples and indexes. */
-	struct quota quota;
-	/**
-	 * Common slab arena for tuples and indexes.
-	 * If you decide to use it for anything other than
-	 * tuple_alloc or index_extent_pool, make sure this
-	 * is reflected in box.slab.info(), @sa lua/slab.c.
-	 */
-	struct slab_arena arena;
-	/** Slab cache for allocating tuples. */
-	struct slab_cache slab_cache;
-	/** Slab cache for allocating index extents. */
-	struct slab_cache index_slab_cache;
-	/** Index extent source. */
-	struct mempool index_extent_pool;
-	/** Index extent allocator. */
-	struct matras_allocator index_extent_allocator;
+
+	/** Metainfo for allocator. */
+	struct memtx_allocator_meta allocator_meta;
+
 	/** Maximal allowed tuple size, box.cfg.memtx_max_tuple_size. */
 	size_t max_tuple_size;
-	/** Memory pool for rtree index iterator. */
-	struct mempool rtree_iterator_pool;
-	/**
-	 * Memory pool for all index iterators except rtree.
-	 * The latter is significantly larger so it has its
-	 * own memory pool.
-	 */
-	struct mempool iterator_pool;
+
 	/**
 	 * Garbage collection fiber. Used for asynchronous
 	 * destruction of dropped indexes.
@@ -180,8 +194,7 @@ struct memtx_engine {
 	 * Format used for allocating functional index keys.
 	 */
 	struct tuple_format *func_key_format;
-	/** Set of extents allocated using malloc. */
-	struct mh_ptr_t *malloc_extents;
+
 	/**
 	 * Number of threads used to sort keys of secondary indexes on engine
 	 * start.
@@ -265,7 +278,7 @@ extern struct tuple *
  * Ensure that next num extent_alloc will succeed w/o an error
  */
 int
-memtx_index_extent_reserve(struct memtx_engine *memtx, int num);
+memtx_index_extent_reserve(struct memtx_allocator_meta *alloc_meta, int num);
 
 /**
  * Generic implementation of index_vtab::def_change_requires_rebuild,
