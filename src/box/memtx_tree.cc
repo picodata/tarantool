@@ -1617,15 +1617,19 @@ memtx_tree_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	});
 
+	struct memtx_allocator_meta *alloc_meta =
+		space_id_is_system(base->def->space_id) ?
+		&memtx->system_allocator_meta :
+		&memtx->allocator_meta;
 	struct tree_iterator<USE_HINT> *it = (struct tree_iterator<USE_HINT> *)
-		mempool_alloc(&memtx->allocator_meta.iterator_pool);
+		mempool_alloc(&alloc_meta->iterator_pool);
 	if (it == NULL) {
 		diag_set(OutOfMemory, sizeof(struct tree_iterator<USE_HINT>),
 			 "memtx_tree_index", "iterator");
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &memtx->allocator_meta.iterator_pool;
+	it->pool = &alloc_meta->iterator_pool;
 	it->base.next_internal = tree_iterator_start<USE_HINT>;
 	it->base.next = memtx_iterator_next;
 	it->base.free = tree_iterator_free<USE_HINT>;
@@ -2162,6 +2166,8 @@ memtx_tree_index_new_tpl(struct memtx_engine *memtx, struct index_def *def,
 			index->base.def->key_def : index->base.def->cmp_def;
 
 	memtx_tree_create(&index->tree, cmp_def,
+			  space_id_is_system(def->space_id) ?
+			  &memtx->system_allocator_meta.index_extent_allocator :
 			  &memtx->allocator_meta.index_extent_allocator);
 	index->is_func = def->key_def->func_index_func != NULL;
 	return &index->base;
