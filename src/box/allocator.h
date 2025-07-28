@@ -125,8 +125,7 @@ public:
 	      void *cb_ctx)
 	{
 		struct small_stats data_stats;
-		small_stats(&small_alloc, &data_stats,
-			    cb, cb_ctx);
+		small_stats(&small_alloc, &data_stats, cb, cb_ctx);
 		alloc_stats->small.used = data_stats.used;
 		alloc_stats->small.total = data_stats.total;
 	}
@@ -146,8 +145,7 @@ public:
 	static inline void
 	create(struct allocator_settings *settings)
 	{
-		sys_alloc_create(&sys_alloc,
-				 settings->sys.quota);
+		sys_alloc_create(&sys_alloc, settings->sys.quota);
 	}
 	static inline void
 	destroy(void)
@@ -171,8 +169,7 @@ public:
 		(void) cb;
 		(void) cb_ctx;
 		struct sys_stats data_stats;
-		sys_stats(&sys_alloc,
-			  &data_stats);
+		sys_stats(&sys_alloc, &data_stats);
 		alloc_stats->sys.used = data_stats.used;
 	}
 private:

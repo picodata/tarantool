@@ -1848,6 +1848,8 @@ box_check_config(void)
 		diag_raise();
 	if (box_check_memory_quota("memtx_memory") < 0)
 		diag_raise();
+	if (box_check_memory_quota("memtx_system_memory") < 0)
+		diag_raise();
 	box_check_memtx_min_tuple_size(cfg_geti64("memtx_min_tuple_size"));
 	if (box_check_allocator() != 0)
 		diag_raise();
@@ -2908,6 +2910,18 @@ box_set_memtx_memory(void)
 	if (size < 0)
 		diag_raise();
 	memtx_engine_set_memory_xc(memtx, size);
+}
+
+void
+box_set_memtx_system_memory(void)
+{
+	struct memtx_engine *memtx;
+	memtx = (struct memtx_engine *)engine_by_name("memtx");
+	assert(memtx != NULL);
+	ssize_t size = box_check_memory_quota("memtx_system_memory");
+	if (size < 0)
+		diag_raise();
+	memtx_engine_set_system_memory_xc(memtx, size);
 }
 
 void
@@ -4621,6 +4635,7 @@ engine_init()
 	memtx = memtx_engine_new_xc(cfg_gets("memtx_dir"),
 				    box_is_force_recovery,
 				    cfg_getd("memtx_memory"),
+				    cfg_getd("memtx_system_memory"),
 				    cfg_geti("memtx_min_tuple_size"),
 				    cfg_geti("strip_core"),
 				    cfg_geti("slab_alloc_granularity"),

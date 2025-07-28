@@ -357,15 +357,19 @@ memtx_rtree_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 
+	struct memtx_allocator_meta *alloc_meta =
+		space_id_is_system(base->def->space_id) ?
+		&memtx->system_allocator_meta :
+		&memtx->allocator_meta;
 	struct index_rtree_iterator *it = (struct index_rtree_iterator *)
-		mempool_alloc(&memtx->allocator_meta.rtree_iterator_pool);
+		mempool_alloc(&alloc_meta->rtree_iterator_pool);
 	if (it == NULL) {
 		diag_set(OutOfMemory, sizeof(struct index_rtree_iterator),
 			 "memtx_rtree_index", "iterator");
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &memtx->allocator_meta.rtree_iterator_pool;
+	it->pool = &alloc_meta->rtree_iterator_pool;
 	it->base.next_internal = index_rtree_iterator_next;
 	it->base.next = memtx_iterator_next;
 	it->base.position = generic_iterator_position;
@@ -435,7 +439,11 @@ memtx_rtree_index_new(struct memtx_engine *memtx, struct index_def *def)
 	enum rtree_distance_type distance_type =
 		(enum rtree_distance_type)def->opts.distance;
 
-	struct memtx_allocator_meta *alloc_meta = &memtx->allocator_meta;
+	struct memtx_allocator_meta *alloc_meta =
+		space_id_is_system(def->space_id) ?
+			&memtx->system_allocator_meta :
+			&memtx->allocator_meta;
+
 	if (!mempool_is_initialized(&alloc_meta->rtree_iterator_pool)) {
 		mempool_create(&alloc_meta->rtree_iterator_pool,
 			       cord_slab_cache(),
@@ -448,9 +456,9 @@ memtx_rtree_index_new(struct memtx_engine *memtx, struct index_def *def)
 		     &memtx_rtree_index_vtab, def);
 
 	index->dimension = def->opts.dimension;
-	index->alloc_meta = &memtx->allocator_meta;
+	index->alloc_meta = alloc_meta;
 	rtree_init(&index->tree, index->dimension, MEMTX_EXTENT_SIZE,
 		   memtx_index_extent_alloc, memtx_index_extent_free,
-		   &memtx->allocator_meta, distance_type);
+		   alloc_meta, distance_type);
 	return &index->base;
 }

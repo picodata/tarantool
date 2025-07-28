@@ -1491,7 +1491,9 @@ memtx_space_new(struct memtx_engine *memtx,
 	size_t region_svp = region_used(&fiber()->gc);
 	struct key_def **keys = index_def_to_key_def(key_list, &key_count);
 	struct tuple_format *format =
-		space_tuple_format_new(&memtx_tuple_format_vtab,
+		space_tuple_format_new(space_id_is_system(def->id) ?
+				       &memtx_system_tuple_format_vtab :
+				       &memtx_tuple_format_vtab,
 				       memtx, keys, key_count, def);
 	region_truncate(&fiber()->gc, region_svp);
 	if (format == NULL) {
@@ -1513,6 +1515,8 @@ memtx_space_new(struct memtx_engine *memtx,
 	memtx_space->bsize = 0;
 	memtx_space->rowid = 1;
 	memtx_space->replace = memtx_space_replace_no_keys;
-	memtx_space->alloc_meta = &memtx->allocator_meta;
+	memtx_space->alloc_meta = space_id_is_system(def->id) ?
+		&memtx->system_allocator_meta :
+		&memtx->allocator_meta;
 	return (struct space *)memtx_space;
 }

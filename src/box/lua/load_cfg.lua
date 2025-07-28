@@ -91,6 +91,7 @@ end
 local default_cfg = {
     listen              = nil,
     memtx_memory        = 256 * 1024 *1024,
+    memtx_system_memory = 64 * 1024 *1024,
     strip_core          = true,
     memtx_min_tuple_size = 16,
     memtx_max_tuple_size = 1024 * 1024,
@@ -286,6 +287,7 @@ end
 local template_cfg = {
     listen              = 'string, number, table',
     memtx_memory        = 'number',
+    memtx_system_memory = 'number',
     strip_core          = 'boolean',
     memtx_min_tuple_size  = 'number',
     memtx_max_tuple_size  = 'number',
@@ -467,6 +469,7 @@ local dynamic_cfg = {
     snap_io_rate_limit      = private.cfg_set_snap_io_rate_limit,
     read_only               = private.cfg_set_read_only,
     memtx_memory            = private.cfg_set_memtx_memory,
+    memtx_system_memory     = private.cfg_set_memtx_system_memory,
     memtx_max_tuple_size    = private.cfg_set_memtx_max_tuple_size,
     vinyl_memory            = private.cfg_set_vinyl_memory,
     vinyl_max_tuple_size    = private.cfg_set_vinyl_max_tuple_size,
@@ -636,6 +639,7 @@ end
 
 local dynamic_cfg_skip_at_load = {
     memtx_memory            = true,
+    memtx_system_memory     = true,
     memtx_max_tuple_size    = true,
     vinyl_memory            = true,
     vinyl_max_tuple_size    = true,
@@ -706,6 +710,9 @@ local translate_cfg = {
     snapshot_enabled = {'checkpoint_enabled'},
     snapshot_period = {'checkpoint_interval'},
     slab_alloc_arena = {'memtx_memory', function(old)
+        return nil, convert_gb(old)
+    end},
+    slab_alloc_system_arena = {'memtx_system_memory', function(old)
         return nil, convert_gb(old)
     end},
     slab_alloc_minimal = {'memtx_min_tuple_size'},

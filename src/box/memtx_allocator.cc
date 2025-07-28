@@ -232,3 +232,18 @@ memtx_allocators_open_read_view<USER>(const struct read_view_opts *opts);
 
 template void
 memtx_allocators_close_read_view<USER>(memtx_allocators_read_view<USER> rv);
+
+template struct memtx_allocator_open_read_view<SYSTEM>;
+template struct memtx_allocator_close_read_view<SYSTEM>;
+
+template void
+memtx_allocators_init<SYSTEM>(struct allocator_settings *settings);
+
+template void
+memtx_allocators_destroy<SYSTEM>();
+
+template memtx_allocators_read_view<SYSTEM>
+memtx_allocators_open_read_view<SYSTEM>(const struct read_view_opts *opts);
+
+template void
+memtx_allocators_close_read_view<SYSTEM>(memtx_allocators_read_view<SYSTEM> rv);

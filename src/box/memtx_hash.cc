@@ -436,15 +436,19 @@ memtx_hash_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 
+	struct memtx_allocator_meta *alloc_meta =
+		space_id_is_system(base->def->space_id) ?
+			&memtx->system_allocator_meta :
+			&memtx->allocator_meta;
 	struct hash_iterator *it = (struct hash_iterator *)
-		mempool_alloc(&memtx->allocator_meta.iterator_pool);
+		mempool_alloc(&alloc_meta->iterator_pool);
 	if (it == NULL) {
 		diag_set(OutOfMemory, sizeof(struct hash_iterator),
 			 "memtx_hash_index", "iterator");
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &memtx->allocator_meta.iterator_pool;
+	it->pool = &alloc_meta->iterator_pool;
 	it->base.free = hash_iterator_free;
 	light_index_iterator_begin(&index->hash_table, &it->iterator);
 
@@ -499,7 +503,7 @@ memtx_hash_index_create_iterator(struct index *base, enum iterator_type type,
 	default:
 		diag_set(UnsupportedIndexFeature, base->def,
 			 "requested iterator type");
-		mempool_free(&memtx->allocator_meta.iterator_pool, it);
+		mempool_free(&alloc_meta->iterator_pool, it);
 		return NULL;
 	}
 	it->base.next = memtx_iterator_next;
@@ -690,7 +694,10 @@ memtx_hash_index_new(struct memtx_engine *memtx, struct index_def *def)
 
 	light_index_create(&index->hash_table, MEMTX_EXTENT_SIZE,
 			   memtx_index_extent_alloc, memtx_index_extent_free,
-			   &memtx->allocator_meta, index->base.def->key_def);
+			   space_id_is_system(def->space_id) ?
+			   &memtx->system_allocator_meta :
+			   &memtx->allocator_meta,
+			   index->base.def->key_def);
 	return &index->base;
 }
 

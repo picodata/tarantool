@@ -218,6 +218,18 @@ lbox_cfg_set_memtx_memory(struct lua_State *L)
 	return 0;
 }
 
+/** Set memtx_system_memory */
+static int
+lbox_cfg_set_memtx_system_memory(struct lua_State *L)
+{
+	try {
+		box_set_memtx_system_memory();
+	} catch (Exception *) {
+		luaT_error(L);
+	}
+	return 0;
+}
+
 static int
 lbox_cfg_set_memtx_max_tuple_size(struct lua_State *L)
 {
@@ -477,6 +489,7 @@ box_lua_cfg_init(struct lua_State *L)
 		{"cfg_set_wal_cleanup_delay", lbox_cfg_set_wal_cleanup_delay},
 		{"cfg_set_read_only", lbox_cfg_set_read_only},
 		{"cfg_set_memtx_memory", lbox_cfg_set_memtx_memory},
+		{"cfg_set_memtx_system_memory", lbox_cfg_set_memtx_system_memory},
 		{"cfg_set_memtx_max_tuple_size", lbox_cfg_set_memtx_max_tuple_size},
 		{"cfg_set_vinyl_memory", lbox_cfg_set_vinyl_memory},
 		{"cfg_set_vinyl_max_tuple_size", lbox_cfg_set_vinyl_max_tuple_size},

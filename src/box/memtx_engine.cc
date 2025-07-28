@@ -76,6 +76,7 @@ enum {
 	OBJSIZE_MIN = 16,
 	SLAB_SIZE = 16 * 1024 * 1024,
 	MIN_MEMORY_QUOTA = SLAB_SIZE * 4,
+	MIN_SYSTEM_MEMORY_QUOTA = SLAB_SIZE * 2,
 	MAX_TUPLE_SIZE = 1 * 1024 * 1024,
 };
 
@@ -192,7 +193,8 @@ memtx_engine_destroy_allocator(struct memtx_engine *memtx)
 	struct memtx_allocator_meta *meta;
 	switch (allocator_usage) {
 	case SYSTEM:
-		unreachable();
+		meta = &memtx->system_allocator_meta;
+		break;
 	case USER:
 		meta = &memtx->allocator_meta;
 	}
@@ -228,6 +230,7 @@ memtx_engine_shutdown(struct engine *engine)
 		replica_join_cancel(memtx->replica_join_cord);
 
 	memtx_engine_destroy_allocator<USER>(memtx);
+	memtx_engine_destroy_allocator<SYSTEM>(memtx);
 
 	xdir_destroy(&memtx->snap_dir);
 	tuple_format_unref(memtx->func_key_format);
@@ -564,6 +567,8 @@ struct memtx_read_view {
 	 * views from being freed.
 	 */
 	memtx_allocators_read_view<USER> allocators_rv;
+	/** Analogue to allocators_rv for system spaces. */
+	memtx_allocators_read_view<SYSTEM> system_allocators_rv;
 };
 
 static void
@@ -571,6 +576,7 @@ memtx_engine_read_view_free(struct engine_read_view *base)
 {
 	struct memtx_read_view *rv = (struct memtx_read_view *)base;
 	memtx_allocators_close_read_view<USER>(rv->allocators_rv);
+	memtx_allocators_close_read_view<SYSTEM>(rv->system_allocators_rv);
 	free(rv);
 }
 
@@ -586,6 +592,8 @@ memtx_engine_create_read_view(struct engine *engine,
 	struct memtx_read_view *rv =
 		(struct memtx_read_view *)xmalloc(sizeof(*rv));
 	rv->base.vtab = &vtab;
+	rv->system_allocators_rv =
+		memtx_allocators_open_read_view<SYSTEM>(opts);
 	rv->allocators_rv = memtx_allocators_open_read_view<USER>(opts);
 	return (struct engine_read_view *)rv;
 }
@@ -1614,10 +1622,12 @@ memtx_set_tuple_format_vtab(const char *allocator_name)
 	struct tuple_format_vtab *tuple_format_vtab;
 	switch (allocator_usage) {
 	case SYSTEM:
-		unreachable();
+		tuple_format_vtab = &memtx_system_tuple_format_vtab;
+		break;
 	case USER:
 		tuple_format_vtab = &memtx_tuple_format_vtab;
 	}
+
 	if (strncmp(allocator_name, "small", strlen("small")) == 0) {
 		create_memtx_tuple_format_vtab<SmallAlloc<allocator_usage>>
 			(tuple_format_vtab);
@@ -1652,7 +1662,8 @@ memtx_engine_init_allocator(struct memtx_engine *memtx,
 	struct memtx_allocator_meta *meta;
 	switch (allocator_usage) {
 	case SYSTEM:
-		unreachable();
+		meta = &memtx->system_allocator_meta;
+		break;
 	case USER:
 		meta = &memtx->allocator_meta;
 	}
@@ -1686,7 +1697,8 @@ memtx_engine_init_allocator(struct memtx_engine *memtx,
 
 struct memtx_engine *
 memtx_engine_new(const char *snap_dirname, bool force_recovery,
-		 uint64_t tuple_arena_max_size, uint32_t objsize_min,
+		 uint64_t tuple_arena_max_size,
+		 uint64_t tuple_system_arena_max_size, uint32_t objsize_min,
 		 bool dontdump, unsigned granularity,
 		 const char *allocator, float alloc_factor, int sort_threads,
 		 memtx_on_indexes_built_cb on_indexes_built)
@@ -1765,6 +1777,9 @@ memtx_engine_new(const char *snap_dirname, bool force_recovery,
 	if (tuple_arena_max_size < MIN_MEMORY_QUOTA)
 		tuple_arena_max_size = MIN_MEMORY_QUOTA;
 
+	if (tuple_system_arena_max_size < MIN_SYSTEM_MEMORY_QUOTA)
+		tuple_system_arena_max_size = MIN_SYSTEM_MEMORY_QUOTA;
+
 	/* Apply lowest allowed objsize bound. */
 	if (objsize_min < OBJSIZE_MIN)
 		objsize_min = OBJSIZE_MIN;
@@ -1778,6 +1793,10 @@ memtx_engine_new(const char *snap_dirname, bool force_recovery,
 			  "increased to 1.001");
 		alloc_factor = 1.001;
 	}
+
+	memtx_engine_init_allocator<SYSTEM>(memtx, tuple_system_arena_max_size,
+					    objsize_min, dontdump, granularity,
+					    2.0, allocator);
 
 	memtx_engine_init_allocator<USER>(memtx, tuple_arena_max_size,
 					  objsize_min, dontdump, granularity,
@@ -1938,6 +1957,21 @@ memtx_engine_set_memory(struct memtx_engine *memtx, size_t size)
 	return 0;
 }
 
+int
+memtx_engine_set_system_memory(struct memtx_engine *memtx, size_t size)
+{
+	if (size < MIN_SYSTEM_MEMORY_QUOTA)
+		size = MIN_SYSTEM_MEMORY_QUOTA;
+
+	if (size < quota_total(&memtx->system_allocator_meta.quota)) {
+		diag_set(ClientError, ER_CFG, "memtx_system_memory",
+			 "cannot decrease memory size at runtime");
+		return -1;
+	}
+	quota_set(&memtx->system_allocator_meta.quota, size);
+	return 0;
+}
+
 void
 memtx_engine_set_max_tuple_size(struct memtx_engine *memtx, size_t max_size)
 {
@@ -2034,6 +2068,12 @@ create_memtx_tuple_format_vtab(struct tuple_format_vtab *vtab)
 {
 	vtab->tuple_delete = memtx_tuple_delete<ALLOC>;
 	vtab->tuple_new = memtx_tuple_new<ALLOC>;
+}
+
+void
+memtx_set_tuple_format_vtab(const char *allocator_name)
+{
+	memtx_set_tuple_format_vtab<USER>(allocator_name);
 }
 
 /**

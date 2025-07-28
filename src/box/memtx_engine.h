@@ -184,6 +184,9 @@ struct memtx_engine {
 	/** Metainfo for allocator. */
 	struct memtx_allocator_meta allocator_meta;
 
+	/** Metainfo for system space allocator. */
+	struct memtx_allocator_meta system_allocator_meta;
+
 	/** Maximal allowed tuple size, box.cfg.memtx_max_tuple_size. */
 	size_t max_tuple_size;
 
@@ -240,7 +243,8 @@ memtx_engine_schedule_gc(struct memtx_engine *memtx,
 
 struct memtx_engine *
 memtx_engine_new(const char *snap_dirname, bool force_recovery,
-		 uint64_t tuple_arena_max_size, uint32_t objsize_min,
+		 uint64_t tuple_arena_max_size,
+		 uint64_t tuple_system_arena_max_size, uint32_t objsize_min,
 		 bool dontdump, unsigned granularity,
 		 const char *allocator, float alloc_factor, int threads_num,
 		 memtx_on_indexes_built_cb on_indexes_built);
@@ -261,6 +265,10 @@ memtx_engine_set_snap_io_rate_limit(struct memtx_engine *memtx, double limit);
 int
 memtx_engine_set_memory(struct memtx_engine *memtx, size_t size);
 
+/** Set memtx_system_memory */
+int
+memtx_engine_set_system_memory(struct memtx_engine *memtx, size_t size);
+
 void
 memtx_engine_set_max_tuple_size(struct memtx_engine *memtx, size_t max_size);
 
@@ -274,6 +282,13 @@ enum {
 	MEMTX_EXTENT_SIZE = 16 * 1024,
 	MEMTX_SLAB_SIZE = 4 * 1024 * 1024
 };
+
+/*
+ * Set memtx_system_tuple_format_vtab or memtx_tuple_format_vtab
+ * for creation and deletion of tuples.
+ */
+void
+memtx_set_tuple_format_vtab(const char *allocator_name);
 
 /**
  * Allocate a block of size MEMTX_EXTENT_SIZE for memtx index
@@ -304,8 +319,6 @@ bool
 memtx_index_def_change_requires_rebuild(struct index *index,
 					const struct index_def *new_def);
 
-void
-memtx_set_tuple_format_vtab(const char *allocator_name);
 
 /**
  * Converts a tuple from format in which it is stored in space
@@ -375,7 +388,8 @@ memtx_tuple_validate(struct tuple_format *format, struct tuple *tuple);
 
 static inline struct memtx_engine *
 memtx_engine_new_xc(const char *snap_dirname, bool force_recovery,
-		    uint64_t tuple_arena_max_size, uint32_t objsize_min,
+		    uint64_t tuple_arena_max_size,
+		    uint64_t tuple_systrem_arena_max_size, uint32_t objsize_min,
 		    bool dontdump, unsigned granularity,
 		    const char *allocator, float alloc_factor,
 		    int sort_threads,
@@ -383,8 +397,9 @@ memtx_engine_new_xc(const char *snap_dirname, bool force_recovery,
 {
 	struct memtx_engine *memtx;
 	memtx = memtx_engine_new(snap_dirname, force_recovery,
-				 tuple_arena_max_size, objsize_min, dontdump,
-				 granularity, allocator, alloc_factor,
+				 tuple_arena_max_size,
+				 tuple_systrem_arena_max_size, objsize_min,
+				 dontdump, granularity, allocator, alloc_factor,
 				 sort_threads, on_indexes_built);
 	if (memtx == NULL)
 		diag_raise();
@@ -395,6 +410,13 @@ static inline void
 memtx_engine_set_memory_xc(struct memtx_engine *memtx, size_t size)
 {
 	if (memtx_engine_set_memory(memtx, size) != 0)
+		diag_raise();
+}
+
+static inline void
+memtx_engine_set_system_memory_xc(struct memtx_engine *memtx, size_t size)
+{
+	if (memtx_engine_set_system_memory(memtx, size) != 0)
 		diag_raise();
 }
 

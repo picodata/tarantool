@@ -353,8 +353,12 @@ memtx_bitset_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 
+	struct memtx_allocator_meta *alloc_meta =
+		space_id_is_system(base->def->space_id) ?
+			&memtx->system_allocator_meta :
+			&memtx->allocator_meta;
 	struct bitset_index_iterator *it = (struct bitset_index_iterator *)
-		mempool_alloc(&memtx->allocator_meta.iterator_pool);
+		mempool_alloc(&alloc_meta->iterator_pool);
 	if (!it) {
 		diag_set(OutOfMemory, sizeof(*it),
 			 "memtx_bitset_index", "iterator");
@@ -362,7 +366,7 @@ memtx_bitset_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	iterator_create(&it->base, base);
-	it->pool = &memtx->allocator_meta.iterator_pool;
+	it->pool = &alloc_meta->iterator_pool;
 	it->base.next_internal = bitset_index_iterator_next;
 	it->base.next = memtx_iterator_next;
 	it->base.position = generic_iterator_position;
@@ -424,7 +428,7 @@ memtx_bitset_index_create_iterator(struct index *base, enum iterator_type type,
 	return (struct iterator *)it;
 fail:
 	tt_bitset_expr_destroy(&expr);
-	mempool_free(&memtx->allocator_meta.iterator_pool, it);
+	mempool_free(&alloc_meta->iterator_pool, it);
 	return NULL;
 }
 
@@ -540,7 +544,9 @@ memtx_bitset_index_new(struct memtx_engine *memtx, struct index_def *def)
 		panic("failed to allocate memtx bitset index");
 	matras_create(index->id_to_tuple, MEMTX_EXTENT_SIZE, sizeof(struct tuple *),
 		      memtx_index_extent_alloc, memtx_index_extent_free,
-		      &memtx->allocator_meta, NULL);
+		      space_id_is_system(def->space_id) ?
+		      &memtx->system_allocator_meta : &memtx->allocator_meta,
+		      NULL);
 
 	index->tuple_to_id = mh_bitset_index_new();
 #endif /* #ifndef OLD_GOOD_BITSET */
