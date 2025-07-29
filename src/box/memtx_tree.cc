@@ -1618,7 +1618,7 @@ memtx_tree_index_create_iterator(struct index *base, enum iterator_type type,
 	});
 
 	struct memtx_allocator_meta *alloc_meta =
-		space_id_is_system(base->def->space_id) ?
+		use_system_alloc(base->def->space_id) ?
 		&memtx->system_allocator_meta :
 		&memtx->allocator_meta;
 	struct tree_iterator<USE_HINT> *it = (struct tree_iterator<USE_HINT> *)
@@ -2166,7 +2166,7 @@ memtx_tree_index_new_tpl(struct memtx_engine *memtx, struct index_def *def,
 			index->base.def->key_def : index->base.def->cmp_def;
 
 	memtx_tree_create(&index->tree, cmp_def,
-			  space_id_is_system(def->space_id) ?
+			  use_system_alloc(def->space_id) ?
 			  &memtx->system_allocator_meta.index_extent_allocator :
 			  &memtx->allocator_meta.index_extent_allocator);
 	index->is_func = def->key_def->func_index_func != NULL;
