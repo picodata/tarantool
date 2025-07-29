@@ -41,6 +41,8 @@ box.cfg{log="new logger"}
 -- bad1
 box.cfg{memtx_memory=53687091}
 box.cfg.memtx_memory
+box.cfg{memtx_system_memory=268435456}
+box.cfg.memtx_system_memory
 
 space:drop()
 box.cfg{snap_io_rate_limit=0}
@@ -58,6 +60,7 @@ test_run:cmd(string.format("start server test with args='%d'", 48 * 1024 * 1024)
 test_run:cmd("switch test")
 
 box.slab.info().quota_size
+box.slab.system_info().quota_size
 
 s = box.schema.space.create('test')
 _ = s:create_index('pk')
@@ -68,6 +71,8 @@ s:count() < count
 
 box.cfg{memtx_memory = 80 * 1024 * 1024}
 box.slab.info().quota_size
+box.cfg{memtx_system_memory = 257 * 1024 * 1024}
+box.slab.system_info().quota_size
 
 count = s:count() + 100
 for i = s:count() + 1, count do s:replace{i + 1000, pad} end -- ok
@@ -76,6 +81,8 @@ s:drop()
 
 box.cfg{memtx_memory = 48 * 1024 * 1024} -- error: decreasing memtx_memory is not allowed
 box.slab.info().quota_size
+box.cfg{memtx_system_memory = 257 * 1024 * 1024 - 1} -- error: decreasing memtx_system_memory is not allowed
+box.slab.system_info().quota_size
 
 test_run:cmd("switch default")
 test_run:cmd("stop server test")
