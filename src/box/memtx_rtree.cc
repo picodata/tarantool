@@ -358,7 +358,7 @@ memtx_rtree_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	struct memtx_allocator_meta *alloc_meta =
-		space_id_is_system(base->def->space_id) ?
+		use_system_alloc(base->def->space_id) ?
 		&memtx->system_allocator_meta :
 		&memtx->allocator_meta;
 	struct index_rtree_iterator *it = (struct index_rtree_iterator *)
@@ -440,7 +440,7 @@ memtx_rtree_index_new(struct memtx_engine *memtx, struct index_def *def)
 		(enum rtree_distance_type)def->opts.distance;
 
 	struct memtx_allocator_meta *alloc_meta =
-		space_id_is_system(def->space_id) ?
+		use_system_alloc(def->space_id) ?
 			&memtx->system_allocator_meta :
 			&memtx->allocator_meta;
 

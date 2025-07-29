@@ -66,6 +66,8 @@
 /* sync snapshot every 16MB */
 #define SNAP_SYNC_INTERVAL	(1 << 24)
 
+use_system_alloc_f use_system_alloc = space_id_is_system;
+
 static void
 checkpoint_cancel(struct checkpoint *ckpt);
 

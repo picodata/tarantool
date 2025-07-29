@@ -98,6 +98,11 @@ struct memtx_allocator_meta {
 	struct mh_ptr_t *malloc_extents;
 };
 
+typedef bool
+(*use_system_alloc_f)(uint32_t space_id);
+
+extern use_system_alloc_f use_system_alloc;
+
 /**
  * Recovery state of memtx engine.
  *

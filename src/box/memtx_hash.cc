@@ -437,7 +437,7 @@ memtx_hash_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	struct memtx_allocator_meta *alloc_meta =
-		space_id_is_system(base->def->space_id) ?
+		use_system_alloc(base->def->space_id) ?
 			&memtx->system_allocator_meta :
 			&memtx->allocator_meta;
 	struct hash_iterator *it = (struct hash_iterator *)
@@ -694,7 +694,7 @@ memtx_hash_index_new(struct memtx_engine *memtx, struct index_def *def)
 
 	light_index_create(&index->hash_table, MEMTX_EXTENT_SIZE,
 			   memtx_index_extent_alloc, memtx_index_extent_free,
-			   space_id_is_system(def->space_id) ?
+			   use_system_alloc(def->space_id) ?
 			   &memtx->system_allocator_meta :
 			   &memtx->allocator_meta,
 			   index->base.def->key_def);

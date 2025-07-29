@@ -354,7 +354,7 @@ memtx_bitset_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	struct memtx_allocator_meta *alloc_meta =
-		space_id_is_system(base->def->space_id) ?
+		use_system_alloc(base->def->space_id) ?
 			&memtx->system_allocator_meta :
 			&memtx->allocator_meta;
 	struct bitset_index_iterator *it = (struct bitset_index_iterator *)
@@ -544,7 +544,7 @@ memtx_bitset_index_new(struct memtx_engine *memtx, struct index_def *def)
 		panic("failed to allocate memtx bitset index");
 	matras_create(index->id_to_tuple, MEMTX_EXTENT_SIZE, sizeof(struct tuple *),
 		      memtx_index_extent_alloc, memtx_index_extent_free,
-		      space_id_is_system(def->space_id) ?
+		      use_system_alloc(def->space_id) ?
 		      &memtx->system_allocator_meta : &memtx->allocator_meta,
 		      NULL);
 
