@@ -131,41 +131,54 @@ lbox_slab_stats(struct lua_State *L)
 	return 1;
 }
 
+/** Slab stats for system allocator. */
 static int
-lbox_slab_info(struct lua_State *L)
+lbox_slab_system_stats(struct lua_State *L)
 {
 	struct memtx_engine *memtx;
 	memtx = (struct memtx_engine *)engine_by_name("memtx");
 
-	struct allocator_stats stats;
-	memset(&stats, 0, sizeof(stats));
-
+	struct allocator_stats totals;
+	memset(&totals, 0, sizeof(totals));
+	lua_newtable(L);
 	/*
 	 * List all slabs used for tuples and slabs used for
 	 * indexes, with their stats.
 	 */
-	lua_newtable(L);
-	allocators_stats<USER>(&stats);
+	SmallAlloc<SYSTEM>::stats(&totals, small_stats_lua_cb, L);
 	struct mempool_stats index_stats;
-	mempool_stats(&memtx->allocator_meta.index_extent_pool, &index_stats);
+	mempool_stats(&memtx->system_allocator_meta.index_extent_pool,
+		      &index_stats);
+	small_stats_lua_cb(&index_stats, L);
+
+	return 1;
+}
+
+/** Common part of lbox_slab_info and lbox_slab_system_info. */
+static int
+lbox_slab_info_sub(struct lua_State *L, struct memtx_allocator_meta *alloc_meta,
+		   struct allocator_stats *stats)
+{
+	struct mempool_stats index_stats;
+	mempool_stats(&alloc_meta->index_extent_pool, &index_stats);
 
 	double ratio;
 	char ratio_buf[32];
 
-	ratio = 100 * ((double) (stats.small.used + stats.sys.used)
-		/ ((double) (stats.small.total + stats.sys.total) + 0.0001));
+	ratio = 100 * ((double)(stats->small.used + stats->sys.used)
+		/ ((double)(stats->small.total + stats->sys.total) + 0.0001));
 	snprintf(ratio_buf, sizeof(ratio_buf), "%0.2lf%%", ratio);
 
 	/** How much address space has been already touched */
 	lua_pushstring(L, "items_size");
-	luaL_pushuint64(L, stats.small.total + stats.sys.total);
+	luaL_pushuint64(L, stats->small.total + stats->sys.total);
 	lua_settable(L, -3);
 	/**
 	 * How much of this formatted address space is used for
 	 * actual data.
 	 */
 	lua_pushstring(L, "items_used");
-	luaL_pushuint64(L, stats.small.used + stats.sys.used);
+	luaL_pushuint64(L, stats->small.used + stats->sys.used);
 	lua_settable(L, -3);
 
 	/*
@@ -189,7 +202,7 @@ lbox_slab_info(struct lua_State *L)
 	 * quota_used_ratio > 0.9 work as an indicator
 	 * for reaching Tarantool memory limit.
 	 */
-	size_t arena_size = memtx->allocator_meta.arena.used;
+	size_t arena_size = alloc_meta->arena.used;
 	luaL_pushuint64(L, arena_size);
 	lua_settable(L, -3);
 	/**
@@ -198,10 +211,10 @@ lbox_slab_info(struct lua_State *L)
 	 */
 	lua_pushstring(L, "arena_used");
 	/** System allocator does not use arena. */
-	luaL_pushuint64(L, stats.small.used + index_stats.totals.used);
+	luaL_pushuint64(L, stats->small.used + index_stats.totals.used);
 	lua_settable(L, -3);
 
-	ratio = 100 * ((double) (stats.small.used + index_stats.totals.used)
+	ratio = 100 * ((double)(stats->small.used + index_stats.totals.used)
 		       / (double)(arena_size + 1));
 	snprintf(ratio_buf, sizeof(ratio_buf), "%0.1lf%%", ratio);
 
@@ -214,7 +227,7 @@ lbox_slab_info(struct lua_State *L)
 	 * box.cfg.slab_alloc_arena, but in bytes
 	 */
 	lua_pushstring(L, "quota_size");
-	luaL_pushuint64(L, quota_total(&memtx->allocator_meta.quota));
+	luaL_pushuint64(L, quota_total(&alloc_meta->quota));
 	lua_settable(L, -3);
 
 	/*
@@ -222,7 +235,7 @@ lbox_slab_info(struct lua_State *L)
 	 * size of slabs in various slab caches.
 	 */
 	lua_pushstring(L, "quota_used");
-	luaL_pushuint64(L, quota_used(&memtx->allocator_meta.quota));
+	luaL_pushuint64(L, quota_used(&alloc_meta->quota));
 	lua_settable(L, -3);
 
 	/**
@@ -231,8 +244,8 @@ lbox_slab_info(struct lua_State *L)
 	 * factor, it's the quota that give you OOM error in the
 	 * end of the day.
 	 */
-	ratio = 100 * ((double)quota_used(&memtx->allocator_meta.quota) /
-		 ((double)quota_total(&memtx->allocator_meta.quota) + 0.0001));
+	ratio = 100 * ((double)quota_used(&alloc_meta->quota) /
+		 ((double)quota_total(&alloc_meta->quota) + 0.0001));
 	snprintf(ratio_buf, sizeof(ratio_buf), "%0.2lf%%", ratio);
 
 	lua_pushstring(L, "quota_used_ratio");
@@ -240,6 +253,44 @@ lbox_slab_info(struct lua_State *L)
 	lua_settable(L, -3);
 
 	return 1;
+}
+
+/** Retrieve slab info. */
+static int
+lbox_slab_info(struct lua_State *L)
+{
+	struct memtx_engine *memtx;
+	memtx = (struct memtx_engine *)engine_by_name("memtx");
+
+	struct allocator_stats stats;
+	memset(&stats, 0, sizeof(stats));
+
+	/*
+	 * List all slabs used for tuples and slabs used for
+	 * indexes, with their stats.
+	 */
+	lua_newtable(L);
+	allocators_stats<USER>(&stats);
+	return lbox_slab_info_sub(L, &memtx->allocator_meta, &stats);
+}
+
+/** Analogue to lbox_slab_info for system allocator. */
+static int
+lbox_slab_system_info(struct lua_State *L)
+{
+	struct memtx_engine *memtx;
+	memtx = (struct memtx_engine *)engine_by_name("memtx");
+
+	struct allocator_stats stats;
+	memset(&stats, 0, sizeof(stats));
+
+	/*
+	 * List all slabs used for tuples and slabs used for
+	 * indexes, with their stats.
+	 */
+	lua_newtable(L);
+	allocators_stats<SYSTEM>(&stats);
+	return lbox_slab_info_sub(L, &memtx->system_allocator_meta, &stats);
 }
 
 static int
@@ -272,6 +323,13 @@ static int
 lbox_slab_check(MAYBE_UNUSED struct lua_State *L)
 {
 	small_alloc_check(SmallAlloc<USER>::get_alloc());
+	return 0;
+}
+
+static int
+lbox_slab_system_check(MAYBE_UNUSED struct lua_State *L)
+{
+	small_alloc_check(SmallAlloc<SYSTEM>::get_alloc());
 	return 0;
 }
 
@@ -425,12 +483,24 @@ box_lua_slab_init(struct lua_State *L)
 	lua_pushcfunction(L, lbox_slab_info);
 	lua_settable(L, -3);
 
+	lua_pushstring(L, "system_info");
+	lua_pushcfunction(L, lbox_slab_system_info);
+	lua_settable(L, -3);
+
 	lua_pushstring(L, "stats");
 	lua_pushcfunction(L, lbox_slab_stats);
 	lua_settable(L, -3);
 
+	lua_pushstring(L, "system_stats");
+	lua_pushcfunction(L, lbox_slab_system_stats);
+	lua_settable(L, -3);
+
 	lua_pushstring(L, "check");
 	lua_pushcfunction(L, lbox_slab_check);
+	lua_settable(L, -3);
+
+	lua_pushstring(L, "system_check");
+	lua_pushcfunction(L, lbox_slab_system_check);
 	lua_settable(L, -3);
 
 	lua_settable(L, -3); /* box.slab */
