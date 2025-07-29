@@ -5,7 +5,7 @@ local g = t.group('memtx_memory setting test')
 g.before_all(function(g)
     g.server = server:new{
         alias = 'default',
-        box_cfg = {memtx_memory = 0}
+        box_cfg = {memtx_memory = 0, memtx_system_memory=0}
     }
     g.server:start()
 end)
@@ -59,5 +59,26 @@ g.test_memtx_memory_setting = function(g)
 
         t.assert_error_msg_equals(err, box.cfg, {memtx_memory = 100 * MB})
         t.assert_equals(box.slab.info().quota_size, 200 * MB)
+
+        local sys_err = "Incorrect value for option 'memtx_system_memory':"
+                    .." cannot decrease memory size at runtime"
+
+        -- See the box_cfg parameter of server:new.
+        t.assert_equals(box.slab.system_info().quota_size, 32 * MB)
+
+        -- Setting memtx_system_memory to 0 should succeed.
+        box.cfg({memtx_system_memory = 0})
+        t.assert_equals(box.slab.system_info().quota_size, 32 * MB)
+
+        box.cfg({memtx_system_memory = 33 * MB})
+        t.assert_equals(box.slab.system_info().quota_size, 33 * MB)
+
+        t.assert_error_msg_equals(sys_err, box.cfg,
+            {memtx_system_memory = 10 * MB})
+        t.assert_equals(box.slab.system_info().quota_size, 33 * MB)
+
+        t.assert_error_msg_equals(sys_err, box.cfg,
+            {memtx_system_memory = 32 * MB + 1})
+        t.assert_equals(box.slab.system_info().quota_size, 33 * MB)
     end)
 end

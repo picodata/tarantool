@@ -62,7 +62,7 @@ cfg_filter(box.cfg)
  |   - - memtx_min_tuple_size
  |     - <hidden>
  |   - - memtx_system_memory
- |     - 67108864
+ |     - 261095424
  |   - - memtx_use_mvcc_engine
  |     - false
  |   - - metrics
@@ -206,7 +206,7 @@ cfg_filter(box.cfg)
  |   - - memtx_min_tuple_size
  |     - <hidden>
  |   - - memtx_system_memory
- |     - 67108864
+ |     - 261095424
  |   - - memtx_use_mvcc_engine
  |     - false
  |   - - metrics

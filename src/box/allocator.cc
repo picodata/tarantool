@@ -60,3 +60,4 @@ allocators_stats(struct allocator_stats *stats) {
 }
 
 template void allocators_stats<USER>(struct allocator_stats *stats);
+template void allocators_stats<SYSTEM>(struct allocator_stats *stats);

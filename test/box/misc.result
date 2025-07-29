@@ -201,7 +201,7 @@ box.slab.info().arena_used >= 0;
 ---
 - true
 ...
-is_asan or box.slab.info().arena_size >= 0;
+is_asan or box.slab.info().arena_size + box.slab.system_info().arena_size > 0;
 ---
 - true
 ...

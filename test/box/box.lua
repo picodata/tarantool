@@ -7,6 +7,7 @@ local msgpack = require('msgpack')
 box.cfg{
     listen              = os.getenv("LISTEN"),
     memtx_memory        = 107374182,
+    memtx_system_memory = 261095424,
     pid_file            = "tarantool.pid",
     memtx_allocator     = os.getenv("MEMTX_ALLOCATOR")
 }

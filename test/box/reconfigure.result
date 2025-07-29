@@ -105,6 +105,13 @@ box.cfg.memtx_memory
 ---
 - 107374182
 ...
+box.cfg{memtx_system_memory=268435456}
+---
+...
+box.cfg.memtx_system_memory
+---
+- 268435456
+...
 space:drop()
 ---
 ...
@@ -142,6 +149,10 @@ box.slab.info().quota_size
 ---
 - 67108864
 ...
+box.slab.system_info().quota_size
+---
+- 67108864
+...
 s = box.schema.space.create('test')
 ---
 ...
@@ -169,6 +180,13 @@ box.slab.info().quota_size
 ---
 - 83886080
 ...
+box.cfg{memtx_system_memory = 257 * 1024 * 1024}
+---
+...
+box.slab.system_info().quota_size
+---
+- 269484032
+...
 count = s:count() + 100
 ---
 ...
@@ -190,6 +208,15 @@ box.cfg{memtx_memory = 48 * 1024 * 1024} -- error: decreasing memtx_memory is no
 box.slab.info().quota_size
 ---
 - 83886080
+...
+box.cfg{memtx_system_memory = 257 * 1024 * 1024 - 1} -- error: decreasing memtx_system_memory is not allowed
+---
+- error: 'Incorrect value for option ''memtx_system_memory'': cannot decrease memory
+    size at runtime'
+...
+box.slab.system_info().quota_size
+---
+- 269484032
 ...
 test_run:cmd("switch default")
 ---
