@@ -69,7 +69,7 @@ t;
 ----------------
 string.match(tostring(box.slab.info()), '^table:') ~= nil;
 box.slab.info().arena_used >= 0;
-is_asan or box.slab.info().arena_size >= 0;
+is_asan or box.slab.info().arena_size + box.slab.system_info().arena_size > 0;
 string.match(tostring(box.slab.stats()), '^table:') ~= nil;
 t = {};
 for k, v in pairs(box.slab.info()) do

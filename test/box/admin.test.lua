@@ -100,6 +100,59 @@ function test_box_slab_info()
     end
 end;
 
+function test_system_slab(tbl)
+    local num = {'item_size', 'item_count', 'slab_size', 'slab_count', 'mem_used', 'mem_free'}
+    local failed = {}
+    for k, v in ipairs(num) do
+        if check_type(tbl[v], 'number') == false then
+            table.insert(failed, 'box.slab.system_info().<slab_size>.'..v)
+        else
+            tbl[v] = nil
+        end
+    end
+    if #tbl > 0 or #failed > 0 then
+        return false, failed
+    else
+        return true, {}
+    end
+end;
+
+function test_box_slab_system_info()
+    local tmp = box.slab.system_info()
+    local tmp_slabs = box.slab.system_stats()
+    local cdata = {'arena_size', 'arena_used'}
+    local failed = {}
+    if type(tmp_slabs) == 'table' then
+        for name, tbl in ipairs(tmp_slabs) do
+            local bl, fld = test_system_slab(tbl)
+            if bl == true then
+                tmp[name] = nil
+            else
+                for k, v in ipairs(fld) do
+                    table.insert(failed, v)
+                end
+            end
+        end
+    else
+        table.insert(failed, 'box.slab.system_info().slabs is not ok')
+    end
+    if #tmp_slabs == 0 then
+        tmp_slabs = nil
+    end
+    for k, v in ipairs(cdata) do
+        if check_type(tmp[v], 'number') == false then
+            table.insert(failed, 'box.slab.system_info().'..v)
+        else
+            tmp[v] = nil
+        end
+    end
+    if #tmp > 0 or #failed > 0 then
+        return "box.slab.system_info() is not ok", tmp, failed
+    else
+        return "box.slab.system_info() is ok"
+    end
+end;
+
 function test_fiber(tbl)
     local num = {'fid', 'csw'}
     for k, v in ipairs(num) do
@@ -143,6 +196,7 @@ end;
 
 test_box_info();
 test_box_slab_info();
+test_box_slab_system_info();
 test_box_fiber_info();
 space:drop();
 test_run:cmd("setopt delimiter ''");
