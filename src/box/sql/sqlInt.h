@@ -359,10 +359,6 @@ sql_set_vdbe_max_steps(sql_stmt *, uint64_t);
 int
 sql_column_bytes16(sql_stmt *, int iCol);
 
-char *
-sql_stmt_result_to_msgpack(struct sql_stmt *stmt, uint32_t *tuple_size,
-			   struct region *region);
-
 /**
  * Encode SQL function result in msgpack. The result is not packed into
  * MP_ARRAY.
