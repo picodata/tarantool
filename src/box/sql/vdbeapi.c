@@ -202,15 +202,6 @@ sql_data_count(sql_stmt * pStmt)
 }
 
 char *
-sql_stmt_result_to_msgpack(struct sql_stmt *stmt, uint32_t *tuple_size,
-			   struct region *region)
-{
-	struct Vdbe *vdbe = (struct Vdbe *)stmt;
-	return mem_encode_array(vdbe->pResultSet, vdbe->nResColumn, tuple_size,
-				region);
-}
-
-char *
 sql_stmt_func_result_to_msgpack(struct sql_stmt *stmt, uint32_t *size,
 				struct region *region)
 {

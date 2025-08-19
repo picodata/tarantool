@@ -434,3 +434,22 @@ g.test_double_prepared_stmt = function()
 
     end)
 end
+
+g.test_dml_stmt_execute_into_port = function()
+    g.server:exec(function()
+        local res, buf, sql
+
+        local ffi = require('ffi')
+        local port_alloc = ffi.new("struct port[1]")
+        local port = ffi.cast("struct port *", port_alloc)
+        ffi.C.port_c_create(port)
+
+        buf = ffi.cast('char *', '\x91\xd9\x01A')
+        sql = 'DELETE FROM t'
+
+        res = ffi.C.sql_execute_into_port(sql, #sql, buf, 1024, port)
+        t.assert_equals(res, 0)
+        local port_c = ffi.cast('struct port_c *', port)
+        t.assert_equals(port_c.size, 1)
+    end)
+end

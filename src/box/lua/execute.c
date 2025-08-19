@@ -190,7 +190,6 @@ port_sql_dump_lua(struct port *port, struct lua_State *L, bool is_flat)
 		break;
 	}
 	case DML_EXECUTE: {
-		assert(((struct port_c *) port)->size == 0);
 		struct stailq *autoinc_id_list =
 			vdbe_autoinc_id_list((struct Vdbe *) stmt);
 		lua_createtable(L, 0, stailq_empty(autoinc_id_list) ? 1 : 2);
