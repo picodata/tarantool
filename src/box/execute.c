@@ -48,11 +48,45 @@
 #include "session.h"
 #include "rmean.h"
 #include "box/sql/port.h"
+#include "box/sql/mem.h"
+#include "box/sql/vdbeInt.h"
 
 const char *sql_info_key_strs[] = {
 	"row_count",
 	"autoincrement_ids",
 };
+
+/**
+ * Convert sql row count into a tuple and append to a port.
+ * @param stmt Started prepared statement. At least one
+ *        sql_step must be done.
+ * @param region Runtime allocator for temporary objects.
+ * @param port Port to store tuples.
+ *
+ * @retval  0 Success.
+ * @retval -1 Memory error.
+ */
+static inline int
+sql_changed_to_port(struct region *region, struct port *port)
+{
+	uint32_t size;
+	size_t svp = region_used(region);
+
+	struct Mem mem;
+	mem_set_int64(&mem, sql_get()->nChange);
+	char *pos = mem_encode_array(&mem, 1, &size, region);
+
+	struct tuple *tuple =
+		tuple_new(box_tuple_format_default(), pos, pos + size);
+	if (tuple == NULL)
+		goto error;
+	region_truncate(region, svp);
+	return port_c_add_tuple(port, tuple);
+
+error:
+	region_truncate(region, svp);
+	return -1;
+}
 
 /**
  * Convert sql row into a tuple and append to a port.
@@ -69,7 +103,10 @@ sql_row_to_port(struct sql_stmt *stmt, struct region *region, struct port *port)
 {
 	uint32_t size;
 	size_t svp = region_used(region);
-	char *pos = sql_stmt_result_to_msgpack(stmt, &size, region);
+
+	struct Vdbe *vdbe = (struct Vdbe *)stmt;
+	char *pos = mem_encode_array(vdbe->pResultSet, vdbe->nResColumn, &size,
+				     region);
 	struct tuple *tuple =
 		tuple_new(box_tuple_format_default(), pos, pos + size);
 	if (tuple == NULL)
@@ -98,7 +135,7 @@ sql_reprepare(struct sql_stmt **stmt)
 	const char *sql_str = sql_stmt_query_str(*stmt);
 	struct sql_stmt *new_stmt;
 	if (sql_stmt_compile(sql_str, strlen(sql_str), NULL,
-			     &new_stmt, NULL) != 0)
+			&new_stmt, NULL) != 0)
 		return -1;
 	if (sql_stmt_cache_update(*stmt, new_stmt) != 0)
 		return -1;
@@ -266,6 +303,9 @@ sql_stmt_run_vdbe(struct sql_stmt *stmt, uint64_t vdbe_max_steps,
 	} else {
 		/* No rows. Either DONE or ERROR. */
 		rc = sql_step(stmt);
+		if (sql_changed_to_port(region, port) != 0)
+			return -1;
+
 		assert(rc != SQL_ROW && rc != 0);
 	}
 	if (rc != SQL_DONE)

@@ -276,7 +276,6 @@ port_sql_dump_msgpack(struct port *port, struct obuf *out)
 	}
 	case DML_EXECUTE: {
 		int keys = 1;
-		assert(((struct port_c *)port)->size == 0);
 		struct stailq *autoinc_id_list =
 			vdbe_autoinc_id_list((struct Vdbe *)stmt);
 		uint32_t map_size = stailq_empty(autoinc_id_list) ? 1 : 2;
