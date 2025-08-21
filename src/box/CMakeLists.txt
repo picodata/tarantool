@@ -201,6 +201,7 @@ set(box_sources
     schema_def.c
     session.c
     port.c
+    obuf_extra.c
     txn.c
     txn_limbo.c
     raft.c

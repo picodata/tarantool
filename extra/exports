@@ -600,6 +600,9 @@ port_c_add_mp
 port_c_create
 port_c_destroy
 cord_slab_cache
+obuf_new
+obuf_iovec_list
+obuf_used
 obuf_create
 obuf_destroy
 obuf_dup
