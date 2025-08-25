@@ -346,6 +346,18 @@ int
 sql_stmt_compile(const char *sql, int bytes_count, struct Vdbe *re_prepared,
 		 sql_stmt **stmt, const char **sql_tail);
 
+/**
+ * Compile the UTF-8 encoded SQL statement into
+ * a statement handle (struct Vdbe). (exported version)
+ * This is a simple wrapper over `sql_stmt_compile()`
+ *
+ * @param sql UTF-8 encoded SQL statement.
+ * @param sql_len Length of @sql in bytes.
+ * @param[out] stmt A pointer to the compiled statement.
+ */
+int
+sql_stmt_compile_wrapper(const char *sql, int bytes_count, sql_stmt **stmt);
+
 int
 sql_step(sql_stmt *);
 

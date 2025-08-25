@@ -119,7 +119,7 @@ error:
 	return -1;
 }
 
-static bool
+bool
 sql_stmt_schema_version_is_valid(struct sql_stmt *stmt)
 {
 	return sql_stmt_schema_version(stmt) == stmt_cache_schema_version();
@@ -419,11 +419,64 @@ sql_execute_prepared(uint32_t stmt_id, const struct sql_bind *bind,
 }
 
 int
-stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
-		       uint64_t vdbe_max_steps, struct port *port)
+sql_stmt_execute_into_port_ext(struct sql_stmt *stmt, const char *mp_params,
+			       uint64_t vdbe_max_steps, struct port *port)
+{
+	struct sql_bind *bind = NULL;
+	int rc = -1;
+
+	assert(port->vtab != NULL);
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+	/*
+	 * We cannot use the statement while it's being executed by another
+	 * fiber. In such cases, in contrast to sql_stmt_execute_into_port, we
+	 * return an error, as the caller is supposed to check statement
+	 * busyness and create a new one that is not busy before calling
+	 * this function.
+	 */
+	if (sql_stmt_busy(stmt)) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "statement is busy");
+		goto finally;
+	}
+	/*
+	 * In contrast to sql_stmt_execute_into_port, we don't reprepare
+	 * statement and return an error, because the caller is supposed
+	 * to check the version and update it if needed before calling
+	 * this function.
+	 */
+	if (!sql_stmt_schema_version_is_valid(stmt)) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "statement version is not valid");
+		goto finally;
+	}
+	int bind_count = sql_bind_list_decode(mp_params, &bind);
+	if (bind_count < 0)
+		goto finally;
+	/*
+	 * Clear all set from previous execution cycle values to be bound and
+	 * remove autoincrement IDs generated in that cycle.
+	 */
+	sql_unbind(stmt);
+	if (sql_bind(stmt, bind, bind_count) != 0)
+		goto finally;
+	sql_reset_autoinc_id_list(stmt);
+	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0)
+		goto statement;
+	rc = 0;
+statement:
+	sql_stmt_reset(stmt);
+	sql_unbind(stmt);
+finally:
+	region_truncate(region, region_svp);
+	return rc;
+}
+
+int
+sql_stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
+			   uint64_t vdbe_max_steps, struct port *port)
 {
 	struct sql_stmt *stmt = NULL;
-	struct sql_bind *bind = NULL;
 	bool stmt_is_borrowed = false;
 	int rc = -1;
 
@@ -451,23 +504,11 @@ stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
 			 "statement reprepare failed");
 		goto finally;
 	}
-	int bind_count = sql_bind_list_decode(mp_params, &bind);
-	if (bind_count < 0)
+	if (sql_stmt_execute_into_port_ext(stmt, mp_params,
+					   vdbe_max_steps, port) != 0) {
 		goto finally;
-	/*
-	 * Clear all set from previous execution cycle values to be bound and
-	 * remove autoincrement IDs generated in that cycle.
-	 */
-	sql_unbind(stmt);
-	if (sql_bind(stmt, bind, bind_count) != 0)
-		goto finally;
-	sql_reset_autoinc_id_list(stmt);
-	if (sql_stmt_run_vdbe(stmt, vdbe_max_steps, region, port) != 0)
-		goto statement;
+	}
 	rc = 0;
-statement:
-	sql_stmt_reset(stmt);
-	sql_unbind(stmt);
 finally:
 	if (stmt_is_borrowed)
 		cache_put_stmt(stmt_id);
