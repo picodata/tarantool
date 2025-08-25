@@ -82,8 +82,8 @@ sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
  * @retval -1 Error.
  */
 int
-stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
-		       uint64_t vdbe_max_steps, struct port *port);
+sql_stmt_execute_into_port(uint32_t stmt_id, const char *mp_params,
+			   uint64_t vdbe_max_steps, struct port *port);
 
 int
 sql_execute_prepared(uint32_t query_id, const struct sql_bind *bind,
@@ -115,6 +115,23 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
 int
 sql_execute_into_port(const char *sql, int len, const char *mp_params,
 		      uint64_t vdbe_max_steps, struct port *port);
+
+/**
+ * Execute a prepared SQL statement directly into a port (exported version).
+ *
+ * Similar to sql_stmt_execute_into_port(), except:
+ * - Executes the given statement directly (not a cached one).
+ * - Returns an error if the statement is busy or its schema version is
+ *   invalid, instead of handling these cases internally.
+ *
+ * The caller is supposed to check that the statement is not busy and
+ * has a valid schema version and take appropriate measures
+ * (e.g. recreate or reprepare it) before calling this function
+ * to avoid "statement is busy" or "invalid schema verions" errors.
+ */
+int
+sql_stmt_execute_into_port_ext(struct sql_stmt *stmt, const char *mp_params,
+			       uint64_t vdbe_max_steps, struct port *port);
 
 /**
  * Prepare and execute an SQL statement.
@@ -155,6 +172,10 @@ sql_stmt_query_str(const struct sql_stmt *stmt);
 /** Return true if statement executes right now. */
 int
 sql_stmt_busy(const struct sql_stmt *stmt);
+
+/** Check if statement schema version is valid. */
+bool
+sql_stmt_schema_version_is_valid(struct sql_stmt *stmt);
 
 /**
  * Prepare (compile into VDBE byte-code) statement.
