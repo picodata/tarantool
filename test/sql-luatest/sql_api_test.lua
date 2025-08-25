@@ -42,7 +42,7 @@ g.before_all(function()
             uint32_t stmt_id, const char *mp_params,
             uint64_t vdbe_max_steps, struct obuf *out_buf);
 
-        int stmt_execute_into_port(
+        int sql_stmt_execute_into_port(
             uint32_t stmt_id, const char *mp_params,
             uint64_t vdbe_max_steps, struct port *port);
 
@@ -169,7 +169,7 @@ g.test_stmt_execute_into_port = function()
 
         -- Prepare and execute the statement with C API.
         params = ffi.cast('char *', '\x91\xd9\x01B')
-        res = ffi.C.stmt_execute_into_port(s.stmt_id, params, 1024, port)
+        res = ffi.C.sql_stmt_execute_into_port(s.stmt_id, params, 1024, port)
         t.assert_equals(res, 0)
 
         -- Check the result.
