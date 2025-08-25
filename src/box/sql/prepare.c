@@ -163,6 +163,12 @@ sql_stmt_compile(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 	return rc;
 }
 
+int
+sql_stmt_compile_wrapper(const char *sql, int bytes_count, sql_stmt **stmt)
+{
+	return sql_stmt_compile(sql, bytes_count, NULL, stmt, NULL);
+}
+
 /*
  * Rerun the compilation of a statement after a schema change.
  */
