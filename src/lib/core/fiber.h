@@ -568,6 +568,24 @@ API_EXPORT void *
 box_region_aligned_alloc(size_t size, size_t alignment);
 
 /**
+ * Return a contiguous allocation of the most recently allocated @a size
+ * bytes.
+ *
+ * If the @a size worth of most recent allocations are already contiguous,
+ * then the pointer into that allocation is returned. Otherwise a new allocation
+ * is made and data from previous allocations is copied into it.
+ * @sa <box_region_alloc>().
+ *
+ * @a size must be non zero.
+ * @a size must be less then or equal to value returned by <box_region_used>().
+ *
+ * In case of a memory error set a diag and return NULL.
+ * @sa <box_error_last>().
+ */
+API_EXPORT void *
+box_region_join(size_t size);
+
+/**
  * Truncate the box region to the given size.
  */
 API_EXPORT void

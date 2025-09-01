@@ -108,6 +108,7 @@ box_read_view_iterator_next_raw
 box_read_view_open_for_given_spaces
 box_region_aligned_alloc
 box_region_alloc
+box_region_join
 box_region_truncate
 box_region_used
 box_replace
