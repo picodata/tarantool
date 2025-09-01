@@ -1801,6 +1801,15 @@ box_region_aligned_alloc(size_t size, size_t alignment)
 	return res;
 }
 
+void *
+box_region_join(size_t size)
+{
+	void *res = region_join(&fiber()->gc, size);
+	if (res == NULL)
+		diag_set(OutOfMemory, size, "region_alloc", "joined data");
+	return res;
+}
+
 void
 box_region_truncate(size_t size)
 {
