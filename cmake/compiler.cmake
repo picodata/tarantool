@@ -158,7 +158,7 @@ option(ENABLE_BUNDLED_LIBUNWIND "Bundled libunwind will be built"
 # In Clang there is no '-static-libstdc++' flag and its use will raise
 # the following error:
 #     clang: error: argument unused during compilation: '-static-libstdc++'
-if(BUILD_STATIC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+if(BUILD_STATIC AND NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
     # Static linking for c++ routines
     add_compile_flags("C;CXX" "-static-libstdc++")
 endif()
