@@ -2626,7 +2626,7 @@ static int
 mem_cmp_uuid(const struct Mem *a, const struct Mem *b)
 {
 	assert((a->type & b->type & MEM_TYPE_UUID) != 0);
-	return memcmp(&a->u.uuid, &b->u.uuid, UUID_LEN);
+	return tt_uuid_compare(&a->u.uuid, &b->u.uuid);
 }
 
 /** Compare two MEMs with DATETIME. */
