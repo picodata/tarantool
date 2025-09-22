@@ -145,6 +145,19 @@ iproto_set_cluster_uuid(const struct tt_uuid *cluster_uuid);
 const struct tt_uuid *
 iproto_get_cluster_uuid(void);
 
+/**
+ * Checks that iproto connection is ssl-encrypted and ready.
+ */
+bool
+iproto_is_ready_and_secure();
+
+/**
+ * Returns username from ssl certificate.
+ * This is used in certification-based authentication.
+ */
+char *
+iproto_ssl_cert_get_user();
+
 #if defined(__cplusplus)
 } /* extern "C" */
 
