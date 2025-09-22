@@ -508,3 +508,52 @@ g.test_client_use_wrong_key = function()
         certs_file('self-sign-cert.pem'),
     })
 end
+
+g.test_certificate_auth = function()
+    local srv_uri = g.server:exec(function(key, cert, ca)
+        box.cfg {
+            listen = {
+                uri = 'localhost:0',
+                params = {
+                    transport = 'ssl',
+                    ssl_key_file = key,
+                    ssl_cert_file = cert,
+                    ssl_ca_file = ca,
+                }
+            }
+        }
+        box.schema.user.create('testuser', {password = 'secret'})
+        box.session.su('admin', box.schema.user.grant, 'testuser', 'super')
+        t.assert_not_equals(box.cfg.listen, nil)
+        return box.info.listen
+    end, {
+        certs_file('cert_auth/server.key'),
+        certs_file('cert_auth/server.crt'),
+        certs_file('cert_auth/ca.pem'),
+    })
+
+    local client_connection = g.client:exec(function(srv_uri, key, cert, ca)
+        local connection = require('net.box').connect({
+            uri = srv_uri,
+            params = {
+                transport = 'ssl',
+                ssl_key_file = key,
+                ssl_cert_file = cert,
+                ssl_ca_file = ca,
+            }
+        }, {
+            user = 'testuser',
+            password = '',
+            auth_type = 'md5',
+        })
+        return connection
+    end, {
+        srv_uri,
+        certs_file('cert_auth/client.key'),
+        -- CN=testuser
+        certs_file('cert_auth/client.crt'),
+        certs_file('cert_auth/ca.pem'),
+    })
+
+    t.assert_equals(client_connection.error, nil)
+end

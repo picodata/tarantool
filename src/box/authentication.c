@@ -21,6 +21,7 @@
 #include "error.h"
 #include "fiber.h"
 #include "iostream.h"
+#include "iproto.h"
 #include "msgpuck.h"
 #include "security.h"
 #include "session.h"
@@ -33,6 +34,25 @@ const struct auth_method *AUTH_METHOD_DEFAULT;
 
 /** Map of all registered authentication methods: name -> auth_method. */
 static struct mh_strnptr_t *auth_methods = NULL;
+
+bool
+authenticate_request(const struct authenticator *auth,
+		     const char *user, uint32_t user_len, const char *salt,
+		     const char *auth_request, const char *auth_request_end)
+{
+	assert(auth->method->auth_request_check(auth->method, auth_request,
+						auth_request_end) == 0);
+	if (iproto_is_ready_and_secure()) {
+		char *cert_user = iproto_ssl_cert_get_user();
+		bool res = cert_user && strcmp(cert_user, user) == 0;
+		free(cert_user);
+		if (res)
+			return true;
+	}
+	return auth->method->authenticate_request(auth, user, user_len, salt,
+						  auth_request,
+						  auth_request_end);
+}
 
 bool
 authenticate_password(const struct authenticator *auth,

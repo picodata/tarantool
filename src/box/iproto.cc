@@ -41,6 +41,9 @@
 #include <base64.h>
 #include <string.h>
 #include <errno.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "version.h"
 #include "fiber.h"
@@ -3826,4 +3829,99 @@ const struct tt_uuid *
 iproto_get_cluster_uuid(void)
 {
 	return &global_cluster_uuid;
+}
+
+bool
+iproto_is_ready_and_secure()
+{
+	struct session *session = current_session();
+	if (session->type != SESSION_TYPE_BINARY)
+		return false;
+	struct iproto_connection *con =
+		(struct iproto_connection *)session->meta.connection;
+	if (!con)
+		return false;
+	struct iostream *io = &con->io;
+	if (!iostream_is_initialized(io))
+		return false;
+	return (io->flags & IOSTREAM_IS_ENCRYPTED) != 0 &&
+		   (io->flags & SSL_IOSTREAM_SESSION_READY) != 0;
+}
+
+char *
+iproto_ssl_cert_get_user()
+{
+	struct iproto_connection *con =
+		(struct iproto_connection *)current_session()->meta.connection;
+	assert(con != NULL);
+	struct iostream *io = &con->io;
+	assert(iostream_is_initialized(io));
+	SSL *ssl = (SSL *)io->data;
+	if (!ssl)
+		return NULL;
+	X509 *cert = SSL_get_peer_certificate(ssl);
+	if (!cert) {
+		say_warn_ratelimited("cannot get ssl peer certificate");
+		return NULL;
+	}
+
+	X509_NAME *subject = X509_get_subject_name(cert);
+	if (!subject) {
+		say_warn_ratelimited("cannot get subject from ssl certificate");
+		X509_free(cert);
+		return NULL;
+	}
+
+	int idx = X509_NAME_get_index_by_NID(subject, NID_commonName, -1);
+	if (idx < 0) {
+		say_warn_ratelimited("cannot get CN from ssl certificate: X509_NAME_get_index_by_NID failed");
+		X509_free(cert);
+		return NULL;
+	}
+	X509_NAME_ENTRY *entry = X509_NAME_get_entry(subject, idx);
+	if (!entry) {
+		say_warn_ratelimited("cannot get CN from ssl certificate: X509_NAME_get_entry failed");
+		X509_free(cert);
+		return NULL;
+	}
+	ASN1_STRING *cn_asn1 = X509_NAME_ENTRY_get_data(entry);
+	if (!cn_asn1) {
+		say_warn_ratelimited("cannot get CN from ssl certificate: X509_NAME_ENTRY_get_data failed");
+		X509_free(cert);
+		return NULL;
+	}
+
+	unsigned char *utf8 = NULL;
+	int utf8_len = ASN1_STRING_to_UTF8(&utf8, cn_asn1);
+	if (utf8_len < 0) {
+		say_warn_ratelimited("cannot get CN from ssl certificate: ASN1_STRING_to_UTF8 failed");
+		X509_free(cert);
+		return NULL;
+	}
+
+	char *common_name = (char *)utf8;
+	char *at_position = strchr(common_name, '@');
+	char *username = NULL;
+	int username_length;
+
+	if (at_position != NULL) {
+		username_length = at_position - common_name;
+	} else {
+		username_length = utf8_len;
+	}
+
+	username = (char *)xmalloc(username_length + 1);
+	if (!username) {
+		OPENSSL_free(utf8);
+		X509_free(cert);
+		return NULL;
+	}
+
+	strlcpy(username, common_name, username_length);
+	username[username_length] = '\0';
+
+	OPENSSL_free(utf8);
+	X509_free(cert);
+
+	return username;
 }
