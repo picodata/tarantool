@@ -154,9 +154,12 @@ iproto_is_ready_and_secure();
 /**
  * Returns username from ssl certificate.
  * This is used in certification-based authentication.
+ *
+ * The returned string is allocated on the fiber gc region.
+ * @a user_len is set to the length of the returned string.
  */
 char *
-iproto_ssl_cert_get_user();
+iproto_ssl_cert_get_user(uint32_t *user_len);
 
 #if defined(__cplusplus)
 } /* extern "C" */

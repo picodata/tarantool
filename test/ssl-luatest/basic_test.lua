@@ -512,6 +512,8 @@ end
 g.test_certificate_auth = function()
     local srv_uri = g.server:exec(function(key, cert, ca)
         box.cfg {
+            -- intentionally set conflicting auth_type
+            auth_type = 'chap-sha1',
             listen = {
                 uri = 'localhost:0',
                 params = {
@@ -544,6 +546,8 @@ g.test_certificate_auth = function()
         }, {
             user = 'testuser',
             password = '',
+            -- even though user's auth_type is 'chap-sha1' and ours is 'md5'
+            -- the authentication still succeeds
             auth_type = 'md5',
         })
         return connection

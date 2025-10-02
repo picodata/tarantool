@@ -3849,7 +3849,7 @@ iproto_is_ready_and_secure()
 }
 
 char *
-iproto_ssl_cert_get_user()
+iproto_ssl_cert_get_user(uint32_t *user_len)
 {
 	struct iproto_connection *con =
 		(struct iproto_connection *)current_session()->meta.connection;
@@ -3902,7 +3902,7 @@ iproto_ssl_cert_get_user()
 	char *common_name = (char *)utf8;
 	char *at_position = strchr(common_name, '@');
 	char *username = NULL;
-	int username_length;
+	uint32_t username_length;
 
 	if (at_position != NULL) {
 		username_length = at_position - common_name;
@@ -3910,15 +3910,16 @@ iproto_ssl_cert_get_user()
 		username_length = utf8_len;
 	}
 
-	username = (char *)xmalloc(username_length + 1);
+	username = (char *)region_alloc(&fiber()->gc, username_length + 1);
 	if (!username) {
 		OPENSSL_free(utf8);
 		X509_free(cert);
 		return NULL;
 	}
+	if (user_len != NULL)
+		*user_len = username_length;
 
-	strlcpy(username, common_name, username_length);
-	username[username_length] = '\0';
+	strlcpy(username, common_name, username_length + 1);
 
 	OPENSSL_free(utf8);
 	X509_free(cert);

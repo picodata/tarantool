@@ -36,22 +36,23 @@ const struct auth_method *AUTH_METHOD_DEFAULT;
 static struct mh_strnptr_t *auth_methods = NULL;
 
 bool
-authenticate_request(const struct authenticator *auth,
-		     const char *user, uint32_t user_len, const char *salt,
-		     const char *auth_request, const char *auth_request_end)
+try_authenticate_via_certificate(const char *user, uint32_t user_len)
 {
-	assert(auth->method->auth_request_check(auth->method, auth_request,
-						auth_request_end) == 0);
-	if (iproto_is_ready_and_secure()) {
-		char *cert_user = iproto_ssl_cert_get_user();
-		bool res = cert_user && strcmp(cert_user, user) == 0;
-		free(cert_user);
-		if (res)
-			return true;
-	}
-	return auth->method->authenticate_request(auth, user, user_len, salt,
-						  auth_request,
-						  auth_request_end);
+	if (!iproto_is_ready_and_secure())
+		return false;
+
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+
+	uint32_t cert_user_len = 0;
+	char *cert_user = iproto_ssl_cert_get_user(&cert_user_len);
+	bool res = cert_user &&
+		cert_user_len == user_len &&
+		strncmp(cert_user, user, user_len) == 0;
+
+	region_truncate(region, region_svp);
+
+	return res;
 }
 
 bool
@@ -130,11 +131,13 @@ authenticate(const char *user_name, uint32_t user_name_len,
 		return -1;
 	if (security_check_auth_pre(user_name, user_name_len) != 0)
 		return -1;
-	if (user == NULL || user->def->auth == NULL ||
-	    user->def->auth->method != method ||
-	    !authenticate_request(user->def->auth, user->def->name,
-				  strnlen(user->def->name, UINT32_MAX), salt,
-				  auth_request, auth_request_end)) {
+	if (user == NULL ||
+	    (!try_authenticate_via_certificate(user_name, user_name_len) &&
+	     (user->def->auth == NULL ||
+	      user->def->auth->method != method ||
+	      !authenticate_request(user->def->auth, user->def->name,
+				    strnlen(user->def->name, UINT32_MAX), salt,
+				    auth_request, auth_request_end)))) {
 		auth_res.is_authenticated = false;
 		if (session_run_on_auth_triggers(&auth_res) != 0)
 			return -1;
