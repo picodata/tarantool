@@ -65,6 +65,12 @@ box_latch_trylock(box_latch_t* bl)
 	return latch_trylock(&bl->l);
 }
 
+int
+box_latch_lock_timeout(box_latch_t* bl, ev_tstamp timeout)
+{
+	return latch_lock_timeout(&bl->l, timeout);
+}
+
 void
 box_latch_unlock(box_latch_t* bl)
 {

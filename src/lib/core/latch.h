@@ -245,6 +245,17 @@ int
 box_latch_trylock(box_latch_t *latch);
 
 /**
+ * Try to lock a latch. Waits timeout until the current fiber can gain access to
+ * the latch.
+ * \param latch a latch
+ * \param timeout - maximal time to wait
+ * \retval 0 - success
+ * \retval 1 - timeout
+ */
+int
+box_latch_lock_timeout(box_latch_t *latch, ev_tstamp timeout);
+
+/**
  * Unlock a latch. The fiber calling this function must
  * own the latch.
  *
