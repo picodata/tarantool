@@ -105,3 +105,10 @@ box.execute([[UPDATE j INDEXED BY i3 SET s3 = NULL;]])
 s:select{}
 
 s:drop()
+
+-- test the correct processing of empty strings in selects
+box.execute('DROP TABLE IF EXISTS t2;')
+box.execute('CREATE TABLE t2 (c1 TEXT, c2 INT PRIMARY KEY);')
+box.execute([[INSERT INTO t2 VALUES ('p', 1);]])
+box.execute([[INSERT INTO t2 VALUES ('', 4);]])
+box.execute([[select * from t2 where c1 like '';]])
