@@ -3167,10 +3167,12 @@ mem_from_mp(struct Mem *mem, const char *buf, uint32_t *len)
 {
 	if (mem_from_mp_ephemeral(mem, buf, len) != 0)
 		return -1;
+
 	if (mem_is_bytes(mem)) {
 		assert((mem->flags & MEM_Ephem) != 0);
-		if (sqlVdbeMemGrow(mem, mem->n, 1) != 0)
+		if (sqlVdbeMemGrow(mem, mem->n + 1, 1) != 0)
 			return -1;
+		mem->z[mem->n] = 0;
 	}
 	return 0;
 }
