@@ -379,3 +379,30 @@ s:select{}
 s:drop()
 ---
 ...
+-- test the correct processing of empty strings in selects
+box.execute('DROP TABLE IF EXISTS t2;')
+---
+- row_count: 1
+...
+box.execute('CREATE TABLE t2 (c1 TEXT, c2 INT PRIMARY KEY);')
+---
+- row_count: 1
+...
+box.execute([[INSERT INTO t2 VALUES ('p', 1);]])
+---
+- row_count: 1
+...
+box.execute([[INSERT INTO t2 VALUES ('', 4);]])
+---
+- row_count: 1
+...
+box.execute([[select * from t2 where c1 like '';]])
+---
+- metadata:
+  - name: C1
+    type: string
+  - name: C2
+    type: integer
+  rows:
+  - ['', 4]
+...
