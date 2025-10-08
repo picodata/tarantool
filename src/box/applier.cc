@@ -520,10 +520,11 @@ applier_ballot_watcher_f(va_list ap)
 			diag_clear(diag_get());
 		} catch (FiberIsCancelled *) {
 			diag_clear(diag_get());
-			return 0;
+			break;
 		} catch (Exception *) {
 			diag_log();
-			applier_run_ballot_triggers(applier, false);
+			if (!fiber_is_cancelled())
+				applier_run_ballot_triggers(applier, false);
 			diag_clear(diag_get());
 			break;
 		}
@@ -2714,6 +2715,8 @@ applier_stop(struct applier *applier)
 	struct fiber *f = applier->fiber;
 	if (f == NULL)
 		return;
+	if (applier->ballot_watcher)
+		fiber_cancel(applier->ballot_watcher);
 	fiber_cancel(f);
 	fiber_join(f);
 	ERROR_INJECT_YIELD(ERRINJ_APPLIER_STOP_DELAY);
