@@ -1,12 +1,7 @@
 %global _lto_cflags %{_lto_cflags} -Wno-lto-type-mismatch
 
-
-# Enable systemd for on RHEL >= 7 and Fedora >= 15
-%if (0%{?fedora} >= 15 || 0%{?rhel} >= 7 || 0%{?sle_version} >= 1500 || "%{?_build_vendor}" == "alt" || "%{?mandriva_os}" == "linux")
+# Enable systemd
 %bcond_without systemd
-%else
-%bcond_with systemd
-%endif
 
 # XXX: There is an old CMake (2.8.12) provided by cmake package in
 # main CentOS 7 repositories. At the same time, there is a newer
