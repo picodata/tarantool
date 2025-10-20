@@ -411,11 +411,32 @@ ssl_iostream_destroy(struct iostream *io)
 				continue;
 
 			int ssl_error = SSL_get_error(ssl, ret);
+			/*
+			 * The fiber may have already been cancelled when
+			 * we attempt to shutdown the SSL connection.
+			 * For example, `applier_disconnect` might be
+			 * called after the `applier` fiber has been
+			 * cancelled.
+			 * In this case, perform a unidirectional
+			 * SSL_shutdown only.
+			 */
 			switch (ssl_error) {
 			case SSL_ERROR_WANT_READ:
+				if (fiber_is_cancelled()) {
+					say_warn_ratelimited(
+						"SSL_shutdown: fiber is cancelled, "
+						"cannot perform bidirectional SSL_shutdown");
+					goto free;
+				}
 				coio_wait(io->fd, COIO_READ, 1);
 				break;
 			case SSL_ERROR_WANT_WRITE:
+				if (fiber_is_cancelled()) {
+					say_warn_ratelimited(
+						"SSL_shutdown: fiber is cancelled, "
+						"cannot perform bidirectional SSL_shutdown");
+					goto free;
+				}
 				coio_wait(io->fd, COIO_WRITE, 1);
 				break;
 			default:
