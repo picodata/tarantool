@@ -36,26 +36,6 @@ const struct auth_method *AUTH_METHOD_DEFAULT;
 static struct mh_strnptr_t *auth_methods = NULL;
 
 bool
-try_authenticate_via_certificate(const char *user, uint32_t user_len)
-{
-	if (!iproto_is_ready_and_secure())
-		return false;
-
-	struct region *region = &fiber()->gc;
-	size_t region_svp = region_used(region);
-
-	uint32_t cert_user_len = 0;
-	char *cert_user = iproto_ssl_cert_get_user(&cert_user_len);
-	bool res = cert_user &&
-		cert_user_len == user_len &&
-		strncmp(cert_user, user, user_len) == 0;
-
-	region_truncate(region, region_svp);
-
-	return res;
-}
-
-bool
 authenticate_password(const struct authenticator *auth,
 		      const char *password, uint32_t password_len,
 		      const char *user, uint32_t user_len)
@@ -80,22 +60,98 @@ authenticate_password(const struct authenticator *auth,
 }
 
 int
-authenticate(const char *user_name, uint32_t user_name_len,
-	     const char *salt, const char *tuple)
+authenticate_ext(const char *user_name, uint32_t user_name_len,
+		 bool (*auth_check)(const struct user *, void *),
+		 void *ctx)
 {
 	struct on_auth_trigger_ctx auth_res = {
 		.user_name = user_name,
 		.user_name_len = user_name_len,
 		.is_authenticated = true,
 	};
+
 	struct user *user = user_find_by_name(user_name, user_name_len);
 	if (user == NULL && diag_get()->last->code != ER_NO_SUCH_USER)
 		return -1;
+
 	/*
 	 * Check the request body as usual even if the user doesn't exist
 	 * to prevent user enumeration by analyzing error codes.
 	 */
 	diag_clear(diag_get());
+
+	if (security_check_auth_pre(user_name, user_name_len) != 0)
+		return -1;
+
+	/*
+	 * It's important to first call auth_check() here, and
+	 * only then fail if `user` is NULL. Otherwise, we won't
+	 * run msgpack validators in try_authenticate_iproto()
+	 * and (possibly) other callbacks.
+	 *
+	 * We still check if `user` is NULL in case the callback
+	 * forgot to do that.
+	 */
+	if (!auth_check(user, ctx) || user == NULL) {
+		auth_res.is_authenticated = false;
+		if (session_run_on_auth_triggers(&auth_res) != 0)
+			return -1;
+		if (diag_is_empty(diag_get()))
+			diag_set(ClientError, ER_CREDS_MISMATCH);
+		return -1;
+	}
+
+	if (security_check_auth_post(user) != 0)
+		return -1;
+
+	if (access_check_session(user) != 0)
+		return -1;
+
+	if (session_run_on_auth_triggers(&auth_res) != 0)
+		return -1;
+
+	credentials_reset(&current_session()->credentials, user);
+	return 0;
+}
+
+/* Context for try_authenticate_iproto(). */
+struct try_authenticate_iproto_ctx {
+	/* Tuple data as passed to authenticate(). */
+	const char *tuple;
+	/* Salt as passed to authenticate(). */
+	const char *salt;
+};
+
+/* Quick path for TLS certificate authentication for iproto. */
+static bool
+try_authenticate_via_certificate(const char *user, uint32_t user_len)
+{
+	if (!iproto_is_ready_and_secure())
+		return false;
+
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+
+	uint32_t cert_user_len = 0;
+	char *cert_user = iproto_ssl_cert_get_user(&cert_user_len);
+	bool res = cert_user &&
+		cert_user_len == user_len &&
+		strncmp(cert_user, user, user_len) == 0;
+
+	region_truncate(region, region_svp);
+
+	return res;
+}
+
+/* Default authentication flow for iproto. */
+static bool
+try_authenticate_iproto(const struct user *user, void *_ctx)
+{
+	assert(_ctx != NULL);
+	struct try_authenticate_iproto_ctx *ctx = (typeof(ctx))_ctx;
+	const char *tuple = ctx->tuple;
+	const char *salt = ctx->salt;
+
 	/*
 	 * Allow authenticating back to the guest user without a password,
 	 * because the guest user isn't allowed to have a password, anyway.
@@ -103,17 +159,18 @@ authenticate(const char *user_name, uint32_t user_name_len,
 	 */
 	uint32_t part_count = mp_decode_array(&tuple);
 	if (part_count == 0 && user != NULL && user->def->uid == GUEST)
-		goto ok;
+		return true;
+
 	/* Expected: authentication method name and data. */
 	if (part_count < 2) {
 		diag_set(ClientError, ER_INVALID_MSGPACK,
 			 "authentication request body");
-		return -1;
+		return false;
 	}
 	if (mp_typeof(*tuple) != MP_STR) {
 		diag_set(ClientError, ER_INVALID_MSGPACK,
 			 "authentication request body");
-		return -1;
+		return false;
 	}
 	uint32_t method_name_len;
 	const char *method_name = mp_decode_str(&tuple, &method_name_len);
@@ -122,40 +179,46 @@ authenticate(const char *user_name, uint32_t user_name_len,
 	if (method == NULL) {
 		diag_set(ClientError, ER_UNKNOWN_AUTH_METHOD,
 			 tt_cstr(method_name, method_name_len));
-		return -1;
+		return false;
 	}
 	const char *auth_request = tuple;
 	const char *auth_request_end = tuple;
 	mp_next(&auth_request_end);
 	if (auth_request_check(method, auth_request, auth_request_end) != 0)
-		return -1;
-	if (security_check_auth_pre(user_name, user_name_len) != 0)
-		return -1;
-	if (user == NULL ||
-	    (!try_authenticate_via_certificate(user_name, user_name_len) &&
-	     (user->def->auth == NULL ||
-	      user->def->auth->method != method ||
-	      !authenticate_request(user->def->auth, user->def->name,
-				    strnlen(user->def->name, UINT32_MAX), salt,
-				    auth_request, auth_request_end)))) {
-		auth_res.is_authenticated = false;
-		if (session_run_on_auth_triggers(&auth_res) != 0)
-			return -1;
-		if (diag_is_empty(diag_get()))
-			diag_set(ClientError, ER_CREDS_MISMATCH);
-		return -1;
-	}
-	if (security_check_auth_post(user) != 0)
-		return -1;
-	if (access_check_session(user) != 0)
-		return -1;
-ok:
-	/* check and run auth triggers on success */
-	if (! rlist_empty(&session_on_auth) &&
-	    session_run_on_auth_triggers(&auth_res) != 0)
-		return -1;
-	credentials_reset(&current_session()->credentials, user);
-	return 0;
+		return false;
+
+	/* XXX: The msgpack validation above should happen regardless! */
+	if (user == NULL)
+		return false;
+
+	const char *user_name = user->def->name;
+	uint32_t user_name_len = strnlen(user->def->name, UINT32_MAX);
+
+	/* This flow also should be subject to all of the checks above. */
+	if (try_authenticate_via_certificate(user_name, user_name_len))
+		return true;
+
+	if (user->def->auth == NULL ||
+	    user->def->auth->method != method ||
+	    !authenticate_request(user->def->auth,
+				  user_name, user_name_len, salt,
+				  auth_request, auth_request_end))
+		return false;
+
+	return true;
+}
+
+int
+authenticate(const char *user_name, uint32_t user_name_len,
+	     const char *salt, const char *tuple)
+{
+	struct try_authenticate_iproto_ctx ctx = {
+		.tuple = tuple,
+		.salt = salt,
+	};
+	return authenticate_ext(user_name, user_name_len,
+				try_authenticate_iproto,
+				(void *)&ctx);
 }
 
 int
