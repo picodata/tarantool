@@ -298,16 +298,3 @@ build-docker-on-tag:
     DOCKERFILE: docker/Dockerfile.release
     DESTINATION: $DOCKER_REGISTRY_PUB/tarantool:latest --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG
 
-run-tntmodule-tests-on-tag:
-  stage: docker
-  rules:
-    - if: $CI_COMMIT_TAG
-  variables:
-    TARANTOOL_VERSION: $CI_COMMIT_TAG
-  trigger:
-    project: core/tarantool-module
-    branch: master
-    strategy: depend
-  needs:
-    - job: build-docker-on-tag
-      artifacts: true
