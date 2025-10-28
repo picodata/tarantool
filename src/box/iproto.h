@@ -149,7 +149,7 @@ iproto_get_cluster_uuid(void);
  * Checks that iproto connection is ssl-encrypted and ready.
  */
 bool
-iproto_is_ready_and_secure();
+iproto_is_ready_and_secure(void);
 
 /**
  * Returns username from ssl certificate.
