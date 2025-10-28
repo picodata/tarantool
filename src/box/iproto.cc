@@ -3832,7 +3832,7 @@ iproto_get_cluster_uuid(void)
 }
 
 bool
-iproto_is_ready_and_secure()
+iproto_is_ready_and_secure(void)
 {
 	struct session *session = current_session();
 	if (session->type != SESSION_TYPE_BINARY)

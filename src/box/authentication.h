@@ -232,6 +232,30 @@ authenticate_password(const struct authenticator *auth,
 
 /** \cond public */
 
+struct user;
+
+/**
+ * Authenticates a user using a customizable authentication logic
+ * (`auth_check` callback). Important: keep in mind that if the user
+ * does not exist, we'll run the callback with `user == NULL`!
+ *
+ * Takes the following arguments:
+ * user_name: user name string, not necessarily null-terminated.
+ * user_name_len: length of the user name string.
+ * auth_check: custom authentication logic.
+ * ctx: custom context for auth_check.
+ *
+ * Returns 0 on success. On error, sets diag and returns -1.
+ *
+ * Errors:
+ *   ER_CREDS_MISMATCH: authentication denied
+ *   ... anything else auth_impl has to offer
+ */
+int
+authenticate_ext(const char *user_name, uint32_t user_name_len,
+		 bool (*auth_check)(const struct user *, void *),
+		 void *ctx);
+
 /**
  * Authenticates a user.
  *
