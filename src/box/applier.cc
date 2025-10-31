@@ -2480,6 +2480,12 @@ applier_subscribe(struct applier *applier)
 		trigger_clear(&on_rollback);
 	});
 
+	struct errinj *inj = errinj(
+		ERRINJ_APPLIER_FAIL_SUBSCRIBE_LOOP,
+		ERRINJ_BOOL);
+	if (inj != NULL && inj->bparam)
+		tnt_raise(ClientError, ER_SYSTEM, "fail before loop");
+
 	/*
 	 * Process a stream of rows from the binary log.
 	 */
