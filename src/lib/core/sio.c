@@ -50,8 +50,19 @@
 static_assert(SMALL_STATIC_SIZE > NI_MAXHOST + NI_MAXSERV,
 	      "static buffer should fit host name");
 
+/**
+ * Determines if an SSL read error is non-critical
+ * (a non-blocking I/O condition or SSL_ERROR_ZERO_RETURN).
+ *
+ * Special handling for SSL_ERROR_ZERO_RETURN
+ * (the remote server sent a close_notify alert,
+ * signaling the end of the secure communication):
+ * This indicates the SSL connection was closed cleanly,
+ * analogous to EOF in standard read operations.
+ * We treat this code as a successful.
+ */
 static inline bool
-ssl_is_want_error(SSL *ssl, int err)
+ssl_read_is_want_error(SSL *ssl, int err)
 {
 	int ssl_err = SSL_get_error(ssl, err);
 	return ssl_err == SSL_ERROR_WANT_READ ||
@@ -59,6 +70,28 @@ ssl_is_want_error(SSL *ssl, int err)
 	       ssl_err == SSL_ERROR_WANT_ACCEPT ||
 	       ssl_err == SSL_ERROR_WANT_CONNECT ||
 	       ssl_err == SSL_ERROR_ZERO_RETURN;
+}
+
+/**
+ * Determines if an SSL write error is non-critical
+ * (a non-blocking I/O condition).
+ *
+ * Special handling for SSL_ERROR_ZERO_RETURN:
+ * SSL_ERROR_ZERO_RETURN is explicitly excluded here.
+ * While our iostream write operations do not expect
+ * EOF conditions, SSL_write can encounter
+ * SSL_ERROR_ZERO_RETURN when the underlying read operation
+ * detects connection closure.
+ * Therefore, we treat this as an error case.
+ */
+static inline bool
+ssl_write_is_want_error(SSL *ssl, int err)
+{
+	int ssl_err = SSL_get_error(ssl, err);
+	return ssl_err == SSL_ERROR_WANT_READ ||
+	       ssl_err == SSL_ERROR_WANT_WRITE ||
+	       ssl_err == SSL_ERROR_WANT_ACCEPT ||
+	       ssl_err == SSL_ERROR_WANT_CONNECT;
 }
 
 /**
@@ -345,7 +378,7 @@ int
 ssl_sio_read(SSL *ssl, int fd, void *buf, size_t count)
 {
 	int n = SSL_read(ssl, buf, (int)count);
-	if (n <= 0 && !ssl_is_want_error(ssl, n))
+	if (n <= 0 && !ssl_read_is_want_error(ssl, n))
 		diag_set(SocketError, sio_socketname(fd), "ssl_read(%zd)",
 			 count);
 
@@ -367,7 +400,7 @@ ssl_sio_write(SSL *ssl, int fd, const void *buf, size_t count)
 {
 	assert(count);
 	int n = SSL_write(ssl, buf, (int)count);
-	if (n <= 0 && !ssl_is_want_error(ssl, n))
+	if (n <= 0 && !ssl_write_is_want_error(ssl, n))
 		diag_set(SocketError, sio_socketname(fd), "ssl_write(%zd)",
 			 count);
 
@@ -394,7 +427,7 @@ ssl_sio_writev(SSL *ssl, int fd, const struct iovec *iov, int iovcnt)
 		const void *buffer = iov[i].iov_base;
 		int r = ssl_sio_write(ssl, fd, buffer, iov[i].iov_len);
 		if (r < 0) {
-			if (ssl_is_want_error(ssl, r) || written > 0)
+			if (ssl_write_is_want_error(ssl, r) || written > 0)
 				return written;
 			else
 				return r;

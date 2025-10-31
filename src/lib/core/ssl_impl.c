@@ -504,8 +504,18 @@ ssl_iostream_io_prolog(struct iostream *io)
 	return ssl_iostream_init_session(io);
 }
 
+/**
+ * Maps SSL read error to iostream error.
+ *
+ * Special handling for SSL_ERROR_ZERO_RETURN:
+ * This indicates the SSL connection was closed cleanly,
+ * analogous to EOF in standard read operations.
+ * Since CoIO read operations expect and handle EOF correctly,
+ * we treat this case as a successful end-of-file condition
+ * (returning 0).
+ */
 static inline ssize_t
-ssl_err_to_iostream_err(int ssl_error)
+ssl_read_err_to_iostream_err(int ssl_error)
 {
 	switch (ssl_error) {
 	case SSL_ERROR_WANT_READ:
@@ -514,6 +524,29 @@ ssl_err_to_iostream_err(int ssl_error)
 		return IOSTREAM_WANT_WRITE;
 	case SSL_ERROR_ZERO_RETURN:
 		return 0;
+	default:
+		return IOSTREAM_ERROR;
+	}
+}
+
+/**
+ * Maps SSL write error to iostream error.
+ *
+ * Special handling for SSL_ERROR_ZERO_RETURN:
+ * While this indicates a clean SSL connection closure
+ * (similar to EOF in read operations),
+ * CoIO-based write operations do not expect EOF conditions.
+ * Therefore, we treat this as an error case (returning -1)
+ * rather than a normal completion.
+ */
+static inline ssize_t
+ssl_write_err_to_iostream_err(int ssl_error)
+{
+	switch (ssl_error) {
+	case SSL_ERROR_WANT_READ:
+		return IOSTREAM_WANT_READ;
+	case SSL_ERROR_WANT_WRITE:
+		return IOSTREAM_WANT_WRITE;
 	default:
 		return IOSTREAM_ERROR;
 	}
@@ -536,7 +569,7 @@ ssl_iostream_read(struct iostream *io, void *buf, size_t count)
 	if (ssl_is_fatal_error(ssl_error)) {
 		io->flags |= SSL_SHUTDOWN_MUST_NOT_BE_CALLED;
 	}
-	return ssl_err_to_iostream_err(ssl_error);
+	return ssl_read_err_to_iostream_err(ssl_error);
 }
 
 static ssize_t
@@ -556,7 +589,7 @@ ssl_iostream_write(struct iostream *io, const void *buf, size_t count)
 	if (ssl_is_fatal_error(ssl_error)) {
 		io->flags |= SSL_SHUTDOWN_MUST_NOT_BE_CALLED;
 	}
-	return ssl_err_to_iostream_err(ssl_error);
+	return ssl_write_err_to_iostream_err(ssl_error);
 }
 
 static ssize_t
@@ -576,7 +609,7 @@ ssl_iostream_writev(struct iostream *io, const struct iovec *iov, int iovcnt)
 	if (ssl_is_fatal_error(ssl_error)) {
 		io->flags |= SSL_SHUTDOWN_MUST_NOT_BE_CALLED;
 	}
-	return ssl_err_to_iostream_err(ssl_error);
+	return ssl_write_err_to_iostream_err(ssl_error);
 }
 
 static const struct iostream_vtab ssl_iostream_vtab = {
