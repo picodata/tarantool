@@ -74,6 +74,7 @@ struct errinj {
  */
 #define ERRINJ_LIST(_) \
 	_(ERRINJ_APPLIER_DESTROY_DELAY, ERRINJ_BOOL, {.bparam = false}) \
+	_(ERRINJ_APPLIER_FAIL_SUBSCRIBE_LOOP, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_APPLIER_READ_TX_ROW_DELAY, ERRINJ_BOOL, {.bparam = false})\
 	_(ERRINJ_APPLIER_SLOW_ACK, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_APPLIER_STOP_DELAY, ERRINJ_BOOL, {.bparam = false}) \
