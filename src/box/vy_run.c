@@ -702,8 +702,6 @@ vy_run_info_decode(struct vy_run_info *run_info,
 		case VY_RUN_INFO_BLOOM_FILTER:
 			run_info->bloom = tuple_bloom_decode(
 				&pos, iproto_to_tuple_bloom_version(key));
-			if (run_info->bloom == NULL)
-				return -1;
 			break;
 		case VY_RUN_INFO_STMT_STAT:
 			vy_stmt_stat_decode(&run_info->stmt_stat, &pos);
@@ -2382,12 +2380,9 @@ vy_run_writer_commit(struct vy_run_writer *writer)
 	    xlog_rename(&writer->data_xlog) < 0)
 		goto out;
 
-	if (writer->bloom != NULL) {
+	if (writer->bloom != NULL)
 		run->info.bloom = tuple_bloom_new(writer->bloom,
 						  writer->index_opts.bloom_fpr);
-		if (run->info.bloom == NULL)
-			goto out;
-	}
 
 	/* Shrink to fit actual size. */
 	uint32_t page_count = run->info.page_count;
@@ -2532,8 +2527,6 @@ vy_run_rebuild_index(struct vy_run *run, const char *dir,
 	if (bloom_builder != NULL) {
 		run->info.bloom = tuple_bloom_new(bloom_builder,
 						  opts->bloom_fpr);
-		if (run->info.bloom == NULL)
-			goto close_err;
 		tuple_bloom_builder_delete(bloom_builder);
 		bloom_builder = NULL;
 	}
