@@ -485,7 +485,7 @@ test:do_test(
                UNION ALL
                SELECT x, y FROM t52;
             EXPLAIN QUERY PLAN
-               SELECT * FROM v5 WHERE x='12345' ORDER BY y;
+               SELECT * FROM v5 WHERE x=12345 ORDER BY y;
         ]]
     end, {
         -- <select9-5.1>
@@ -499,7 +499,7 @@ test:do_test(
     function()
         return test:execsql [[
             EXPLAIN QUERY PLAN
-               SELECT x, y FROM v5 WHERE x='12345' ORDER BY y;
+               SELECT x, y FROM v5 WHERE x=12345 ORDER BY y;
         ]]
     end, {
         -- <select9-5.2>
@@ -513,7 +513,7 @@ test:do_test(
     function()
         return test:execsql [[
             EXPLAIN QUERY PLAN
-               SELECT x, y FROM v5 WHERE +x='12345' ORDER BY y;
+               SELECT x, y FROM v5 WHERE +x=12345 ORDER BY y;
         ]]
     end, {
         -- <select9-5.3>

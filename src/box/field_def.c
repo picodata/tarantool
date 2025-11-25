@@ -169,6 +169,54 @@ field_type1_contains_type2(enum field_type type1, enum field_type type2)
 }
 
 /**
+ * Table of field type index lookup compatibility.
+ * For an i row and j column:
+ *  - COL means that value of type j is compatible with index of type i;
+ *  - ROW means that value of type i is compatible with index of type j;
+ *  - 0 means i and j are incompatible.
+ *
+ * Note the asymmetry: for instance, decimal is preferred to integer;
+ * We use this to infer the "biggest" type in WHERE predicates.
+ * Otherwise we won't be able to tell if we should pick lhs or rhs
+ * type in a binary expression.
+ *
+ * The number type hierarchy is:
+ *	UNSIGNED < INTEGER < DECIMAL < DOUBLE < NUMBER;
+ *
+ * DECIMAL < DOUBLE is consistent with vdbe's autocasts.
+ */
+#define COL (-1)  /* pick the type of a column (1st or left arg) */
+#define ROW (+1)  /* pick the type of a row (2nd or right arg)   */
+static const uint8_t field_type_lookup_compatible[] = {
+/*              ANY   UNSIGNED  STRING   NUMBER  DOUBLE  INTEGER  BOOLEAN VARBINARY SCALAR  DECIMAL   UUID   DATETIME INTERVAL  ARRAY    MAP   */
+/*   ANY    */  COL,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,    ROW,    ROW,    ROW,     ROW,     ROW,     ROW,    ROW,
+/* UNSIGNED */  COL,     COL,       0,     COL,     COL,     COL,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,
+/*  STRING  */  COL,       0,     COL,       0,       0,       0,       0,       0,    COL,      0,      0,       0,       0,       0,      0,
+/*  NUMBER  */  COL,     ROW,       0,     COL,     ROW,     ROW,       0,       0,    COL,    ROW,      0,       0,       0,       0,      0,
+/*  DOUBLE  */  COL,     ROW,       0,     COL,     COL,     ROW,       0,       0,    COL,    ROW,      0,       0,       0,       0,      0,
+/*  INTEGER */  COL,     ROW,       0,     COL,     COL,     COL,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,
+/*  BOOLEAN */  COL,       0,       0,       0,       0,       0,     COL,       0,    COL,      0,      0,       0,       0,       0,      0,
+/* VARBINARY*/  COL,       0,       0,       0,       0,       0,       0,     COL,    COL,      0,      0,       0,       0,       0,      0,
+/*  SCALAR  */  COL,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,    COL,    ROW,    ROW,     ROW,       0,       0,      0,
+/*  DECIMAL */  COL,     ROW,       0,     COL,     COL,     ROW,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,
+/*   UUID   */  COL,       0,       0,       0,       0,       0,       0,       0,    COL,      0,    COL,       0,       0,       0,      0,
+/* DATETIME */  COL,       0,       0,       0,       0,       0,       0,       0,    COL,      0,      0,     COL,       0,       0,      0,
+/* INTERVAL */  COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,     COL,       0,      0,
+/*   ARRAY  */  COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,     COL,      0,
+/*    MAP   */  COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,       0,    COL,
+};
+#undef COL
+#undef ROW
+
+int8_t
+field_type1_lookup_compatible_with_type2(enum field_type type1,
+					 enum field_type type2)
+{
+	int idx = type2 * field_type_MAX + type1;
+	return field_type_lookup_compatible[idx];
+}
+
+/**
  * Callback to parse a value with 'default' key in msgpack field definition.
  * See function definition below.
  */
