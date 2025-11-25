@@ -1034,7 +1034,7 @@ test:do_catchsql_test(
         SELECT * FROM t1 NATURAL JOIN t2
     ]], {
         -- <join-11.9>
-        1, "Type mismatch: can not convert string('1') to integer"
+        1, "Type mismatch: can not convert integer(1) to string"
         -- </join-11.9>
     })
 

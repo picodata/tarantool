@@ -70,6 +70,7 @@ enum field_type {
 	FIELD_TYPE_INTERVAL,
 	FIELD_TYPE_ARRAY,
 	FIELD_TYPE_MAP,
+	/* Currently, this may be used as "failed to infer type". */
 	field_type_MAX
 };
 
@@ -109,6 +110,23 @@ extern const char *on_conflict_action_strs[];
 /** Check if @a type1 can store values of @a type2. */
 bool
 field_type1_contains_type2(enum field_type type1, enum field_type type2);
+
+/**
+ * Check if type1 is index-lookup-compatible with type2, meaning that
+ * we may find value of type1 in an index of values of type2.
+ *
+ * Returns:
+ *  -  `0` if the types are incompatible;
+ *  - `-1` if they're compatible and type1 is "bigger";
+ *  - `+1` if they're compatible and type2 is "bigger".
+ *
+ * Note that this relation is asymmetric to help us infer
+ * the "biggest" type when dealing with lhs & rhs of exprs.
+ * See the definition for more details.
+ */
+int8_t
+field_type1_lookup_compatible_with_type2(enum field_type type1,
+					 enum field_type type2);
 
 /**
  * Get field type by name

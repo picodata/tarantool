@@ -299,9 +299,12 @@ whereScanNext(WhereScan * pScan)
 						/* Verify the type and collating sequence match */
 						if ((pTerm->eOperator & WO_ISNULL) == 0) {
 							pX = pTerm->pExpr;
-							enum field_type expr_type =
-								expr_cmp_mutual_type(pX);
-							if (!field_type1_contains_type2(expr_type, pScan->idx_type))
+							enum field_type expr_type = expr_cmp_mutual_type(pX);
+							if (expr_type == field_type_MAX)
+								continue;
+							if (pScan->idx_type == field_type_MAX)
+								pScan->idx_type = expr_type;
+							if (field_type1_lookup_compatible_with_type2(expr_type, pScan->idx_type) == 0)
 								continue;
 							if (pScan->is_column_seen) {
 								Parse *pParse =
@@ -374,7 +377,7 @@ whereScanInit(WhereScan * pScan,	/* The WhereScan object being initialized */
 	pScan->pOrigWC = pWC;
 	pScan->pWC = pWC;
 	pScan->pIdxExpr = 0;
-	pScan->idx_type = FIELD_TYPE_SCALAR;
+	pScan->idx_type = field_type_MAX;
 	pScan->coll = NULL;
 	pScan->is_column_seen = false;
 	if (idx_def != NULL) {
@@ -429,7 +432,7 @@ where_scan_init(struct WhereScan *scan, struct WhereClause *clause,
 	scan->pOrigWC = clause;
 	scan->pWC = clause;
 	scan->pIdxExpr = NULL;
-	scan->idx_type = FIELD_TYPE_SCALAR;
+	scan->idx_type = field_type_MAX;
 	scan->coll = NULL;
 	scan->is_column_seen = false;
 	if (key_def != NULL) {
@@ -707,7 +710,9 @@ termCanDriveIndex(WhereTerm * pTerm,	/* WHERE clause term to check */
 		return 0;
 	enum field_type type = pSrc->space->def->fields[pTerm->u.leftColumn].type;
 	enum field_type expr_type = expr_cmp_mutual_type(pTerm->pExpr);
-	if (!field_type1_contains_type2(expr_type, type))
+	if (expr_type == field_type_MAX)
+		return 0;
+	if (field_type1_lookup_compatible_with_type2(expr_type, type) == 0)
 		return 0;
 	return 1;
 }

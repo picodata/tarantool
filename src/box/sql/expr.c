@@ -440,6 +440,26 @@ sql_type_result(enum field_type lhs, enum field_type rhs)
 	return FIELD_TYPE_SCALAR;
 }
 
+/*
+ * If lhs can be looked up in an index of rhs or vice versa,
+ * take the "bigger" type. Return an error value otherwise.
+ * This is used in comparison operators, e.g. = or >=.
+ */
+static enum field_type
+expr_unify_type_for_cmp(enum field_type lhs, enum field_type rhs)
+{
+	int cmp = field_type1_lookup_compatible_with_type2(lhs, rhs);
+	switch (cmp) {
+	case -1:
+		return lhs;
+	case +1:
+		return rhs;
+	default:
+		/* This value means we failed to unify. */
+		return field_type_MAX;
+	}
+}
+
 enum field_type
 expr_cmp_mutual_type(struct Expr *pExpr)
 {
@@ -450,11 +470,11 @@ expr_cmp_mutual_type(struct Expr *pExpr)
 	enum field_type type = sql_expr_type(pExpr->pLeft);
 	if (pExpr->pRight) {
 		enum field_type rhs_type = sql_expr_type(pExpr->pRight);
-		type = sql_type_result(rhs_type, type);
+		type = expr_unify_type_for_cmp(type, rhs_type);
 	} else if (ExprHasProperty(pExpr, EP_xIsSelect)) {
 		enum field_type rhs_type =
 			sql_expr_type(pExpr->x.pSelect->pEList->a[0].pExpr);
-		type = sql_type_result(rhs_type, type);
+		type = expr_unify_type_for_cmp(type, rhs_type);
 	} else {
 		type = FIELD_TYPE_SCALAR;
 	}
@@ -5539,4 +5559,3 @@ sqlClearTempRegCache(Parse * pParse)
 	pParse->nTempReg = 0;
 	pParse->nRangeReg = 0;
 }
-
