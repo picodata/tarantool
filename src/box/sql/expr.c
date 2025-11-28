@@ -63,17 +63,10 @@ sql_highest_type(enum field_type a, struct Expr *expr)
 	    a == FIELD_TYPE_ARRAY || b == FIELD_TYPE_ARRAY ||
 	    a == FIELD_TYPE_INTERVAL || b == FIELD_TYPE_INTERVAL)
 		return FIELD_TYPE_ANY;
+	/* Special condition for `CASE 1 WHEN 1 THEN 1 ELSE 'asd' END`. */
 	if (!sql_type_is_numeric(a) || !sql_type_is_numeric(b))
 		return FIELD_TYPE_SCALAR;
-	if (a == FIELD_TYPE_NUMBER || b == FIELD_TYPE_NUMBER)
-		return FIELD_TYPE_NUMBER;
-	if (a == FIELD_TYPE_DECIMAL || b == FIELD_TYPE_DECIMAL)
-		return FIELD_TYPE_DECIMAL;
-	if (a == FIELD_TYPE_DOUBLE || b == FIELD_TYPE_DOUBLE)
-		return FIELD_TYPE_DOUBLE;
-	assert((a == FIELD_TYPE_INTEGER || a == FIELD_TYPE_UNSIGNED));
-	assert((b == FIELD_TYPE_INTEGER || b == FIELD_TYPE_UNSIGNED));
-	return FIELD_TYPE_INTEGER;
+	return sql_type_result(a, b);
 }
 
 enum field_type
@@ -420,6 +413,10 @@ enum field_type
 sql_type_result(enum field_type lhs, enum field_type rhs)
 {
 	if (sql_type_is_numeric(lhs) || sql_type_is_numeric(rhs)) {
+		/*
+		 * Double should have priority over decimal so as
+		 * not to break with1.test.lua : 8.1-mandelbrot.
+		 */
 		if (lhs == FIELD_TYPE_NUMBER || rhs == FIELD_TYPE_NUMBER)
 			return FIELD_TYPE_NUMBER;
 		if (lhs == FIELD_TYPE_DOUBLE || rhs == FIELD_TYPE_DOUBLE)
