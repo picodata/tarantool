@@ -51,7 +51,7 @@ g.test_case_operation_type = function()
         t.assert_equals(box.execute(sql).metadata[1].type, res)
 
         sql = [[SELECT CASE 1 WHEN 1 THEN -1 WHEN 2 THEN 1.5 ELSE 2e0 END;]]
-        res = "decimal"
+        res = "double"
         t.assert_equals(box.execute(sql).metadata[1].type, res)
 
         sql = [[SELECT typeof(CASE 1 WHEN 1 THEN 1 ELSE {1 : 1} END);]]
