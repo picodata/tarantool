@@ -102,16 +102,16 @@ struct vy_run_info {
 struct vy_page_info {
 	/** Offset of page data in the run file. */
 	uint64_t offset;
+	/** Minimal key stored in the page. */
+	char *min_key;
+	/** Comparison hint of the min key. */
+	hint_t min_key_hint;
 	/** Size of page data in the run file. */
 	uint32_t size;
 	/** Size of page data in memory, i.e. unpacked. */
 	uint32_t unpacked_size;
 	/** Number of statements in the page. */
 	uint32_t row_count;
-	/** Minimal key stored in the page. */
-	char *min_key;
-	/** Comparison hint of the min key. */
-	hint_t min_key_hint;
 	/** Offset of the row index in the page. */
 	uint32_t row_index_offset;
 };
