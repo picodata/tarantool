@@ -161,6 +161,14 @@ struct index_opts {
 	/* Bloom filter false positive rate. */
 	double bloom_fpr;
 	/**
+	 * zstd compression level. Valid values are from -7 to
+	 * 22, -7 means speed-optimized, and 22 being "ultra"
+	 * compression. The default is 3. Special value 0 means
+	 * "use the default", which is 3. It's not possible to
+	 * turn off the compression, it's applied automatically
+	 */
+	int64_t compression_level;
+	/**
 	 * LSN from the time of index creation.
 	 */
 	int64_t lsn;

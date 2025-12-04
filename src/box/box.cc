@@ -1604,6 +1604,7 @@ box_check_vinyl_options(void)
 	int run_count_per_level = cfg_geti("vinyl_run_count_per_level");
 	double run_size_ratio = cfg_getd("vinyl_run_size_ratio");
 	double bloom_fpr = cfg_getd("vinyl_bloom_fpr");
+	int compression_level = cfg_geti("vinyl_compression_level");
 
 	if (box_check_memory_quota("vinyl_memory") < 0)
 		diag_raise();
@@ -1632,6 +1633,10 @@ box_check_vinyl_options(void)
 	if (bloom_fpr <= 0 || bloom_fpr > 1) {
 		tnt_raise(ClientError, ER_CFG, "vinyl_bloom_fpr",
 			  "must be greater than 0 and less than or equal to 1");
+	}
+	if (compression_level < -7 || compression_level > 22) {
+		tnt_raise(ClientError, ER_CFG, "vinyl_compression_level",
+			  "must be within range [-7..22]");
 	}
 }
 

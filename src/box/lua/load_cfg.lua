@@ -116,6 +116,7 @@ local default_cfg = {
     vinyl_range_size          = nil, -- set automatically
     vinyl_page_size           = 8 * 1024,
     vinyl_bloom_fpr           = 0.05,
+    vinyl_compression_level   = 3,
 
     log                 = log.cfg.log,
     log_nonblock        = log.cfg.nonblock,
