@@ -336,6 +336,10 @@ stat_diff(istat(), st)
     bloom_size: 70
   bytes: 26049
 ...
+gstat().memory.page_index == 294
+---
+- true
+...
 -- put + dump + compaction
 st = istat()
 ---

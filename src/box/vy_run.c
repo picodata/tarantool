@@ -2362,6 +2362,16 @@ vy_run_writer_commit(struct vy_run_writer *writer)
 		if (run->info.bloom == NULL)
 			goto out;
 	}
+
+	/* Shrink to fit actual size. */
+	uint32_t page_count = run->info.page_count;
+	struct vy_page_info *new_pi = realloc(run->page_info,
+					      page_count * sizeof(*new_pi));
+	if (new_pi != NULL) {
+		run->page_info = new_pi;
+		writer->page_info_capacity = page_count;
+	}
+
 	if (vy_run_write_index(run, writer->dirpath,
 			       writer->space_id, writer->iid) != 0)
 		goto out;

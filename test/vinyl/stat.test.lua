@@ -125,6 +125,7 @@ for i = 1, 100, 4 do put(i) end
 box.snapshot()
 wait(istat, st, 'disk.dump.count', 1)
 stat_diff(istat(), st)
+gstat().memory.page_index == 294
 
 -- put + dump + compaction
 st = istat()
