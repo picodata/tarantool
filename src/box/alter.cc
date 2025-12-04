@@ -242,6 +242,11 @@ index_opts_decode(struct index_opts *opts, const char *map,
 			 "less than or equal to 1");
 		return -1;
 	}
+	if (opts->compression_level < -7 || opts->compression_level > 22) {
+		diag_set(ClientError, ER_WRONG_INDEX_OPTIONS,
+			 "compression_level must within range [-7..22]");
+		return -1;
+	}
 	return 0;
 }
 
