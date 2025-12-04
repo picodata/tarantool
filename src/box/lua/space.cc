@@ -515,6 +515,8 @@ lbox_fillspace(struct lua_State *L, struct space *space, int i)
 			lua_pushnumber(L, index_opts->bloom_fpr);
 			lua_setfield(L, -2, "bloom_fpr");
 
+			lua_pushnumber(L, index_opts->compression_level);
+			lua_setfield(L, -2, "compression_level");
 			lua_settable(L, -3);
 		}
 		lua_setfield(L, -2, index_def->name);
