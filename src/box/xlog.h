@@ -82,6 +82,10 @@ struct xlog_opts {
 	 * to be read frequently, e.g. L1 run files in Vinyl.
 	 */
 	bool no_compression;
+	/**
+	 * Set the compression level. If not set, the default is 3.
+	 */
+	int compression_level;
 };
 
 extern const struct xlog_opts xlog_opts_default;

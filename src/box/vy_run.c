@@ -2107,7 +2107,7 @@ int
 vy_run_writer_create(struct vy_run_writer *writer, struct vy_run *run,
 		     const char *dirpath, uint32_t space_id, uint32_t iid,
 		     struct key_def *cmp_def, struct key_def *key_def,
-		     uint64_t page_size, double bloom_fpr, bool no_compression)
+		     struct index_opts *index_opts, bool no_compression)
 {
 	memset(writer, 0, sizeof(*writer));
 	writer->run = run;
@@ -2116,10 +2116,9 @@ vy_run_writer_create(struct vy_run_writer *writer, struct vy_run *run,
 	writer->iid = iid;
 	writer->cmp_def = cmp_def;
 	writer->key_def = key_def;
-	writer->page_size = page_size;
-	writer->bloom_fpr = bloom_fpr;
+	writer->index_opts = *index_opts;
 	writer->no_compression = no_compression;
-	if (bloom_fpr < 1) {
+	if (writer->index_opts.bloom_fpr < 1) {
 		writer->bloom = tuple_bloom_builder_new(key_def->part_count);
 		if (writer->bloom == NULL)
 			return -1;
@@ -2154,6 +2153,7 @@ vy_run_writer_create_xlog(struct vy_run_writer *writer)
 	struct xlog_opts opts = xlog_opts_default;
 	opts.rate_limit = writer->run->env->snap_io_rate_limit;
 	opts.sync_interval = VY_RUN_SYNC_INTERVAL;
+	opts.compression_level = writer->index_opts.compression_level;
 	opts.no_compression = writer->no_compression;
 	if (xlog_create(&writer->data_xlog, path, 0, &meta, &opts) != 0)
 		return -1;
@@ -2287,7 +2287,8 @@ vy_run_writer_append_stmt(struct vy_run_writer *writer, struct vy_entry entry)
 		goto out;
 	if (vy_run_writer_write_to_page(writer, entry) != 0)
 		goto out;
-	if (obuf_size(&writer->data_xlog.obuf) >= writer->page_size &&
+	size_t page_size = (size_t)writer->index_opts.page_size;
+	if (obuf_size(&writer->data_xlog.obuf) >= page_size &&
 	    vy_run_writer_end_page(writer) != 0)
 		goto out;
 	rc = 0;
@@ -2358,7 +2359,7 @@ vy_run_writer_commit(struct vy_run_writer *writer)
 
 	if (writer->bloom != NULL) {
 		run->info.bloom = tuple_bloom_new(writer->bloom,
-						  writer->bloom_fpr);
+						  writer->index_opts.bloom_fpr);
 		if (run->info.bloom == NULL)
 			goto out;
 	}

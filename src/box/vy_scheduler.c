@@ -203,8 +203,7 @@ struct vy_task {
 	 * progress so we save them here to safely access them
 	 * from another thread.
 	 */
-	double bloom_fpr;
-	int64_t page_size;
+	struct index_opts index_opts;
 	/**
 	 * Deferred DELETE handler passed to the write iterator.
 	 * It sends deferred DELETE statements generated during
@@ -250,6 +249,7 @@ vy_task_new(struct vy_scheduler *scheduler, struct vy_worker *worker,
 	task->lsm = lsm;
 	task->cmp_def = key_def_dup(lsm->cmp_def);
 	task->key_def = key_def_dup(lsm->key_def);
+	task->index_opts = lsm->opts;
 	vy_lsm_ref(lsm);
 	diag_create(&task->diag);
 	task->deferred_delete_handler.iface = &vy_task_deferred_delete_iface;
@@ -1069,7 +1069,7 @@ vy_task_write_run(struct vy_task *task, bool no_compression)
 	if (vy_run_writer_create(&writer, task->new_run, lsm->env->path,
 				 lsm->space_id, lsm->index_id,
 				 task->cmp_def, task->key_def,
-				 task->page_size, task->bloom_fpr,
+				 &task->index_opts,
 				 no_compression) != 0)
 		goto fail;
 
@@ -1417,8 +1417,6 @@ vy_task_dump_new(struct vy_scheduler *scheduler, struct vy_worker *worker,
 
 	task->new_run = new_run;
 	task->wi = wi;
-	task->bloom_fpr = lsm->opts.bloom_fpr;
-	task->page_size = lsm->opts.page_size;
 
 	lsm->is_dumping = true;
 	vy_scheduler_update_lsm(scheduler, lsm);
@@ -1733,8 +1731,6 @@ vy_task_compaction_new(struct vy_scheduler *scheduler, struct vy_worker *worker,
 	task->range = range;
 	task->new_run = new_run;
 	task->wi = wi;
-	task->bloom_fpr = lsm->opts.bloom_fpr;
-	task->page_size = lsm->opts.page_size;
 
 	/*
 	 * Remove the range we are going to compact from the heap

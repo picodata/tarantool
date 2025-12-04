@@ -98,6 +98,7 @@ const struct xlog_opts xlog_opts_default = {
 	.free_cache = false,
 	.sync_is_async = false,
 	.no_compression = false,
+	.compression_level = 3,
 };
 
 /* {{{ struct xlog_meta */
@@ -1157,7 +1158,7 @@ xlog_tx_write_zstd(struct xlog *log)
 	uint32_t crc32c = 0;
 	struct iovec *iov;
 	/* 3 is compression level. */
-	ZSTD_compressBegin(log->zctx, 3);
+	ZSTD_compressBegin(log->zctx, log->opts.compression_level);
 	size_t offset = XLOG_FIXHEADER_SIZE;
 	for (iov = log->obuf.iov; iov->iov_len; ++iov) {
 		/* Estimate max output buffer size. */

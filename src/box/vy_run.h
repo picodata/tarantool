@@ -618,11 +618,8 @@ struct vy_run_writer {
 	struct key_def *cmp_def;
 	/** Key definition to calculate bloom. */
 	struct key_def *key_def;
-	/**
-	 * Minimal page size. When a page becames bigger, it is
-	 * dumped.
-	 */
-	uint64_t page_size;
+	/** Various options, e.g. minimal page size. */
+	struct index_opts index_opts;
 	/**
 	 * Current page info capacity. Can grow with page number.
 	 */
@@ -631,8 +628,6 @@ struct vy_run_writer {
 	bool no_compression;
 	/** Xlog to write data. */
 	struct xlog data_xlog;
-	/** Bloom filter false positive rate. */
-	double bloom_fpr;
 	/** Bloom filter. */
 	struct tuple_bloom_builder *bloom;
 	/** Buffer of a current page row offsets. */
@@ -649,7 +644,7 @@ int
 vy_run_writer_create(struct vy_run_writer *writer, struct vy_run *run,
 		     const char *dirpath, uint32_t space_id, uint32_t iid,
 		     struct key_def *cmp_def, struct key_def *key_def,
-		     uint64_t page_size, double bloom_fpr, bool no_compression);
+		     struct index_opts *index_opts, bool no_compression);
 
 /**
  * Write a specified statement into a run.
