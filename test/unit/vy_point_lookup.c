@@ -21,10 +21,13 @@ write_run(struct vy_run *run, const char *dir_name,
 	  struct vy_lsm *lsm, struct vy_stmt_stream *wi)
 {
 	struct vy_run_writer writer;
+	struct index_opts index_opts = index_opts_default;
+	index_opts.page_size = 4096;
+	index_opts.bloom_fpr = 0.1;
 	if (vy_run_writer_create(&writer, run, dir_name,
 				 lsm->space_id, lsm->index_id,
 				 lsm->cmp_def, lsm->key_def,
-				 4096, 0.1, false) != 0)
+				 &index_opts, false) != 0)
 		goto fail;
 
 	if (wi->iface->start(wi) != 0)
