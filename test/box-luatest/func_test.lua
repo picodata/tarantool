@@ -115,6 +115,41 @@ g.test_msgpack_object_args = function()
     t.assert(g.server:eval('return box.func.decode_persistent.takes_raw_args'))
 end
 
+g.test_variadic_sql_func = function()
+    g.server:exec(function()
+        box.schema.func.create('FOO', {
+                language = 'LUA',
+                body = "function(mp) return mp:decode() end",
+                exports = {'SQL'},
+                takes_raw_args = true,
+                is_deterministic = true})
+
+        local sql = "SELECT foo('a', 'b', 1)"
+        local res = {{{'a', 'b', 1}}}
+        t.assert_equals(box.execute(sql).rows, res)
+
+        sql = "SELECT foo('a', 'b', 1, NULL, 1.23)"
+        res = {{{'a', 'b', 1, nil, 1.23}}}
+        t.assert_equals(box.execute(sql).rows, res)
+
+        sql = "SELECT foo()"
+        res = {{{}}}
+        t.assert_equals(box.execute(sql).rows, res)
+
+        -- check limit (max number of arguments is 127)
+        sql = [[
+        SELECT foo(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+        1,1,1,1,1)
+        ]]
+        t.assert_equals(box.execute(sql), nil)
+
+        box.schema.func.drop('FOO')
+    end)
+end
+
 g.test_gh_7822_vfunc_format = function()
     g.server:exec(function()
         t.assert_equals(box.space._vfunc:format(), box.space._func:format())

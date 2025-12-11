@@ -73,6 +73,7 @@ struct func_opts {
 	bool is_multikey;
 	/**
 	 * True if the function expects a msgpack object for args.
+	 * The function accepts variable number of args.
 	 */
 	bool takes_raw_args;
 };

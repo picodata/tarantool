@@ -3435,6 +3435,8 @@ func_def_new_from_tuple(struct tuple *tuple)
 				 diag_last_error(diag_get())->errmsg);
 			return NULL;
 		}
+		if (def->opts.takes_raw_args)
+			def->param_count = -1;
 	} else {
 		/* By default export to Lua, but not other frontends. */
 		def->exports.lua = true;
