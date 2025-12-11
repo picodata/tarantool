@@ -2502,6 +2502,9 @@ sql_func_find(struct Expr *expr)
 				     name));
 		return NULL;
 	}
+	if (func->def->param_count == -1)
+		return func;
+
 	int n = expr->x.pList != NULL ? expr->x.pList->nExpr : 0;
 	int argc = func->def->aggregate == FUNC_AGGREGATE_GROUP ?
 		   func->def->param_count - 1 : func->def->param_count;
