@@ -44,6 +44,7 @@
 #include "box/txn.h"
 #include "box/tuple.h"
 #include "box/port.h"
+#include "clock.h"
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
@@ -158,6 +159,12 @@ int sql_found_count = 0;
 
 /* Return true if the cursor was opened using the OP_OpenSorter opcode. */
 #define isSorter(x) ((x)->eCurType==CURTYPE_SORTER)
+
+const uint16_t OPCODE_YIELD_COUNT = 1024;
+
+/* Default vdbe yield callback is empty. */
+int
+(*vdbe_yield_cb)(struct vdbe_yield_args *args) = NULL;
 
 /*
  * Allocate VdbeCursor number iCur.  Return a pointer to it.  Return NULL
@@ -385,6 +392,11 @@ int sqlVdbeExec(Vdbe *p)
 	p->iCurrentTime = 0;
 	assert(p->explain==0);
 	p->pResultSet = 0;
+
+	int64_t start_time = 0;
+	if (vdbe_yield_cb) {
+		start_time = clock_monotonic64();
+	}
 #ifdef SQL_DEBUG
 	if (p->pc == 0 &&
 	    (p->sql_flags & (SQL_VdbeListing|SQL_VdbeEQP|SQL_VdbeTrace)) != 0) {
@@ -418,6 +430,16 @@ int sqlVdbeExec(Vdbe *p)
 
 		assert(pOp>=aOp && pOp<&aOp[p->nOp]);
 		p->step_count++;
+		if (p->step_count % OPCODE_YIELD_COUNT == 0) {
+			if (vdbe_yield_cb) {
+				struct vdbe_yield_args args = {
+					.start = &start_time,
+					.current = clock_monotonic64(),
+				};
+				if (vdbe_yield_cb(&args) != 0)
+					goto abort_due_to_error;
+			}
+		}
 		if (p->vdbe_max_steps > 0 &&
 		    p->vdbe_max_steps < p->step_count) {
 			diag_set(ClientError, ER_EXCEEDED_VDBE_MAX_STEPS,
