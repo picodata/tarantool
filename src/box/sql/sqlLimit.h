@@ -127,6 +127,21 @@ enum {
  */
 extern uint64_t default_vdbe_max_steps;
 
+/* The amount of opcodes to execute before running vdbe_yield_cb. */
+extern const uint16_t OPCODE_YIELD_COUNT;
+
+/* Arguments for vdbe_yield_cb callback. */
+struct vdbe_yield_args {
+	/* Time since the last fiber switch, controlled by vdbe callback. */
+	int64_t *start;
+	/* Current time. */
+	int64_t current;
+};
+
+/* Callback to execute custom logic while running vdbe. */
+extern int
+(*vdbe_yield_cb)(struct vdbe_yield_args *args);
+
 /*
  * The maximum number of arguments to an SQL function.
  */
