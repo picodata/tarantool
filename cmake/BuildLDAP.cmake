@@ -30,6 +30,7 @@ macro(ldap_build)
             --prefix=<INSTALL_DIR>
 
             --with-cyrus-sasl
+            --with-fetch=no
             --with-tls=openssl
 
             --enable-static
