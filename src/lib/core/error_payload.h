@@ -49,6 +49,33 @@ error_payload_create(struct error_payload *p);
 void
 error_payload_destroy(struct error_payload *p);
 
+struct error_payload_iter {
+	/** Index of the next field to be returned. */
+	int next_position;
+	/** Zero terminated field name. */
+	const char *name;
+	/** MessagePack field value. */
+	const char *mp_value;
+	/** Size of MessagePack field value. */
+	size_t mp_size;
+};
+
+/**
+ * Iterate over fields stored in the error payload.
+ *
+ * To start iteration, construct a `error_payload_iter`
+ * setting `next_position` to 0 and pass it to this function.
+ *
+ * Returns `true` if a new field information returned by this function.
+ * Returns `false` if there are no more fields.
+ *
+ * Make sure to not modify the error payload object while it's
+ * being iterated on.
+ */
+bool
+error_payload_iter_next(const struct error_payload *p,
+			struct error_payload_iter *iter);
+
 /**
  * Get value of a payload field as a string. If it is not string or is not
  * found - return NULL.
