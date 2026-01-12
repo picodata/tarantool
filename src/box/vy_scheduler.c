@@ -335,8 +335,11 @@ vy_worker_pool_start(struct vy_worker_pool *pool)
 		char name[FIBER_NAME_MAX];
 		snprintf(name, sizeof(name), "vinyl.%s.%d", pool->name, i);
 		struct vy_worker *worker = &pool->workers[i];
-		if (cord_costart(&worker->cord, name, vy_worker_f, worker) != 0)
+		if (cord_costart(&worker->cord, name,
+				 vy_worker_f, worker) != 0) {
+			diag_log();
 			panic("failed to start vinyl worker thread");
+		}
 
 		worker->pool = pool;
 		cpipe_create(&worker->worker_pipe, name);
@@ -427,8 +430,10 @@ vy_scheduler_create(struct vy_scheduler *scheduler, int write_threads,
 
 	scheduler->scheduler_fiber = fiber_new_system("vinyl.scheduler",
 						      vy_scheduler_f);
-	if (scheduler->scheduler_fiber == NULL)
+	if (scheduler->scheduler_fiber == NULL) {
+		diag_log();
 		panic("failed to allocate vinyl scheduler fiber");
+	}
 
 	fiber_cond_create(&scheduler->scheduler_cond);
 
