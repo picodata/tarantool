@@ -70,6 +70,12 @@ error_unref(struct error *e)
 	}
 }
 
+struct error_payload *
+error_get_payload(struct error *e)
+{
+	return &e->payload;
+}
+
 const struct error_field *
 error_find_field(const struct error *e, const char *name)
 {

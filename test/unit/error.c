@@ -451,6 +451,76 @@ test_payload_move(void)
 }
 
 static void
+test_payload_iter(void)
+{
+	header();
+	plan(19);
+
+	struct error_payload p;
+	error_payload_create(&p);
+
+	/**
+	 * happy path test:
+	 * - check that just iterating works
+	 * - and preserves the insertion order
+	 */
+	error_payload_set_uint(&p, "key1", 1);
+	error_payload_set_str(&p, "key2", "value2");
+	error_payload_set_bool(&p, "key3", true);
+
+	struct error_payload_iter iter = { .next_position = 0 };
+
+	char buf[1024];
+	char *data;
+	bool has_next;
+
+	has_next = error_payload_iter_next(&p, &iter);
+	is(has_next, true, "has_next cmp 0");
+	is(strcmp(iter.name, "key1"), 0, "key1 key cmp");
+	is(iter.next_position, 1, "next_position cmp 0");
+	data = mp_encode_uint(buf, 1);
+	is((size_t)(data - buf), iter.mp_size, "key1 mp size cmp");
+	is(memcmp(iter.mp_value, buf, iter.mp_size), 0, "key1 mp cmp");
+
+	has_next = error_payload_iter_next(&p, &iter);
+	is(has_next, true, "has_next cmp 1");
+	is(strcmp(iter.name, "key2"), 0, "key2 key cmp");
+	is(iter.next_position, 2, "next_position cmp 1");
+	data = mp_encode_str(buf, "value2", 6);
+	is((size_t)(data - buf), iter.mp_size, "key2 mp size cmp");
+	is(memcmp(iter.mp_value, buf, iter.mp_size), 0, "key2 mp cmp");
+
+	has_next = error_payload_iter_next(&p, &iter);
+	is(has_next, true, "has_next cmp 2");
+	is(strcmp(iter.name, "key3"), 0, "key3 key cmp");
+	is(iter.next_position, 3, "next_position cmp 2");
+	data = mp_encode_bool(buf, true);
+	is((size_t)(data - buf), iter.mp_size, "key3 mp size cmp");
+	is(memcmp(iter.mp_value, buf, iter.mp_size), 0, "key3 mp cmp");
+
+	has_next = error_payload_iter_next(&p, &iter);
+	is(has_next, false, "has_next cmp 3");
+	is(iter.next_position, 3, "next_position cmp 3");
+
+	error_payload_destroy(&p);
+
+	/* corner case: test that iterating over an empty error payload works */
+	error_payload_create(&p);
+
+	/* reset the iterator */
+	iter.next_position = 0;
+
+	has_next = error_payload_iter_next(&p, &iter);
+	is(has_next, false, "has_next cmp 4");
+	is(iter.next_position, 0, "next_position cmp 4");
+
+	error_payload_destroy(&p);
+
+	check_plan();
+	footer();
+}
+
+static void
 test_error_code(void)
 {
 	header();
@@ -610,7 +680,7 @@ int
 main(void)
 {
 	header();
-	plan(13);
+	plan(14);
 
 	random_init();
 	memory_init();
@@ -625,6 +695,7 @@ main(void)
 	test_payload_field_mp();
 	test_payload_clear();
 	test_payload_move();
+	test_payload_iter();
 	test_error_code();
 	test_error_format_msg();
 	test_error_append_msg();
