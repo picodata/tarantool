@@ -253,6 +253,7 @@ ch = nil
 mgmt = nil
 fiber.self().storage.key -- our local storage is not affected by f
 -- attempt to access local storage of dead fiber raises error
+while f:status() ~= 'dead' do fiber.sleep(0.01) end
 pcall(function(f) return f.storage end, f)
 
 --
