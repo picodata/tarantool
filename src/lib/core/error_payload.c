@@ -26,6 +26,24 @@ error_payload_destroy(struct error_payload *p)
 	TRASH(p);
 }
 
+bool
+error_payload_iter_next(const struct error_payload *p,
+			struct error_payload_iter *iter)
+{
+	if (iter->next_position >= p->count) {
+		return false;
+	}
+	int current_position = iter->next_position;
+	struct error_field *current_field = p->fields[current_position];
+
+	iter->next_position = current_position + 1;
+	iter->name = current_field->name;
+	iter->mp_value = current_field->data;
+	iter->mp_size = current_field->size;
+
+	return true;
+}
+
 /**
  * Prepare a payload field to get a new value. If the field didn't exist, it is
  * added. If it existed then it is reallocated.

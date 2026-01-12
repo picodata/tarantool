@@ -128,6 +128,16 @@ error_ref(struct error *e);
 void
 error_unref(struct error *e);
 
+/**
+ * Gets the pointer to error payload from error pointer.
+ *
+ * This is useful to have for C API users to be able to use
+ * `error_payload_{get,set}_*` family of functions without
+ * duplicating tarantool's error struct definition.
+ */
+struct error_payload *
+error_get_payload(struct error *e);
+
 static inline const char *
 error_get_str(const struct error *e, const char *name)
 {

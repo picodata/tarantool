@@ -701,3 +701,9 @@ log_destroy
 log_new
 log_say
 log_set_format_by_name
+
+# picodata extended error API
+error_get_payload
+error_payload_iter_next
+error_payload_get_mp
+error_payload_set_mp
