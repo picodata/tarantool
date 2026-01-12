@@ -665,6 +665,8 @@ vy_range_compaction_slice_count(struct vy_range *range,
 	uint64_t est_new_run_size = 0;
 	/* The number of runs at the current level. */
 	uint32_t level_run_count = 0;
+	/* The total number of levels. */
+	uint32_t level_count = 0;
 	/*
 	 * The target (perfect) size of a run at the current level.
 	 * Calculated recurrently: the size of the next level equals
@@ -696,6 +698,7 @@ vy_range_compaction_slice_count(struct vy_range *range,
 	size = MAX(slice->count.bytes, 1);
 	slice = rlist_first_entry(&range->slices, struct vy_slice, in_range);
 	do {
+		level_count++;
 		target_run_size = size;
 		size = ceil(target_run_size / opts->run_size_ratio);
 	} while (size > (uint64_t)MAX(slice->count.bytes, 1));
@@ -767,7 +770,7 @@ vy_range_compaction_slice_count(struct vy_range *range,
 		}
 	}
 
-	if (level_run_count > 1) {
+	if (level_count > 1 && level_run_count > 1) {
 		/*
 		 * Do not store more than one run at the last level
 		 * to keep space amplification low.
