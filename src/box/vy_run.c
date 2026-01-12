@@ -153,8 +153,10 @@ vy_run_env_start_readers(struct vy_run_env *env)
 
 		snprintf(name, sizeof(name), "vinyl.reader.%d", i);
 		if (cord_costart(&reader->cord, name,
-				 vy_run_reader_f, reader) != 0)
+				 vy_run_reader_f, reader) != 0) {
+			diag_log();
 			panic("failed to start vinyl reader thread");
+		}
 		cpipe_create(&reader->reader_pipe, name);
 	}
 	env->next_reader = 0;
