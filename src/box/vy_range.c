@@ -217,7 +217,7 @@ int
 vy_range_snprint(char *buf, int size, const struct vy_range *range)
 {
 	int total = 0;
-	SNPRINT(total, snprintf, buf, size, "(");
+	SNPRINT(total, snprintf, buf, size, "[%" PRId64 "] (", range->id);
 	if (range->begin.stmt != NULL)
 		SNPRINT(total, tuple_snprint, buf, size, range->begin.stmt);
 	else
@@ -512,6 +512,13 @@ vy_range_needs_split(struct vy_range *range, int64_t range_size,
 					     mid_page->min_key_hint,
 					     range->cmp_def) > 0);
 	*p_split_key = mid_page->min_key;
+
+	say_verbose("range %" PRId64 " exceeds %" PRIu64 " and needs split: "
+		    "has %d slices, %" PRIu64 " bytes, last slice has "
+		    "%" PRIu64 " pages and %" PRIu64 " bytes",
+		    range->id, range_size, range->slice_count,
+		    range->count.bytes, slice->count.pages,
+		    slice->count.bytes);
 	return true;
 }
 
