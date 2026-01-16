@@ -70,6 +70,11 @@ struct vy_run_env {
 	 */
 	int next_reader;
 	/**
+	 * Use vinyl-local random seed to minimize impact of rand()
+	 * calls between different subsystems.
+	 */
+	unsigned int seed;
+	/**
 	 * We need this flag during compaction in order to determine we can
 	 * unconditionally remove unused runs' files in-place.
 	 */
