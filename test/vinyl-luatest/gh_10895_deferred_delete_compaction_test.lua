@@ -5,7 +5,16 @@ local g = t.group()
 
 g.before_all(function(cg)
     t.tarantool.skip_if_not_debug()
-    cg.server = server:new()
+    cg.server = server:new({
+        env = {
+            TARANTOOL_RUN_BEFORE_BOX_CFG = [[
+ffi = require('ffi')
+ffi.cdef('void srand(unsigned int seed);')
+ffi.C.srand(1)
+math.randomseed(1)
+            ]]
+        }
+    })
     cg.server:start()
 end)
 
