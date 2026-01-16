@@ -11,6 +11,7 @@ function common.default_box_cfg()
         vinyl_run_size_ratio = 2,
         vinyl_cache = 10240, -- 10kB
         vinyl_max_tuple_size = 1024 * 1024 * 6,
+        checkpoint_interval = 0,
     }
 end
 

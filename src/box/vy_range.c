@@ -400,8 +400,11 @@ vy_range_update_compaction_priority(struct vy_range *range,
 		 * value of rand() from the slice creation time.
 		 */
 		uint32_t max_run_count = opts->run_count_per_level;
-		if (slice->seed < RAND_MAX / 10)
+		if (slice->seed < RAND_MAX / 10) {
 			max_run_count++;
+			say_verbose("Randomizing compaction of slice %" PRId64
+				    " with seed %u", slice->id, slice->seed);
+		}
 		if (level_run_count > max_run_count) {
 			/*
 			 * The number of runs at the current level
