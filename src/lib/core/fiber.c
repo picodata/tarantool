@@ -1383,7 +1383,8 @@ fiber_stack_watermark_create(struct fiber *fiber,
 	 * To increase probability of stack overflow detection
 	 * we put the first mark at a random position.
 	 */
-	size_t offset = rand() % POISON_OFF * sizeof(poison_pool[0]);
+	size_t offset = rand_r(&cord()->seed) % POISON_OFF *
+		sizeof(poison_pool[0]);
 	if (stack_direction < 0) {
 		fiber->stack_watermark  = fiber->stack + fiber->stack_size;
 		fiber->stack_watermark -= FIBER_STACK_SIZE_WATERMARK;
@@ -1863,6 +1864,7 @@ cord_create(struct cord *cord, const char *name)
 	if (cord_is_main()) {
 		fiber_top_init();
 	}
+	cord->seed = rand();
 	cord_set_name(name);
 
 	trigger_init_in_thread();

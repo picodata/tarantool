@@ -871,6 +871,12 @@ struct cord {
 	struct fiber_slice max_slice;
 	/** Slice for current fiber execution in seconds. */
 	struct fiber_slice slice;
+	/**
+	 * Seed for rand_r(), initialized when the cord is created.
+	 * The goal of using an own seed is to minimize the impact
+	 * of randomness between cords.
+	 */
+	unsigned int seed;
 	char name[FIBER_NAME_INLINE];
 };
 
