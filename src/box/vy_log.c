@@ -717,6 +717,11 @@ vy_log_init(const char *dir)
 {
 	xdir_create(&vy_log.dir, dir, VYLOG, &INSTANCE_UUID,
 		    &xlog_opts_default);
+	/*
+	 * vylog files contain precious metadata. Always sync
+	 * writing to them.
+	 */
+	vy_log.dir.open_wflags |= O_SYNC;
 	latch_create(&vy_log.latch);
 	mempool_create(&vy_log.tx_pool, cord_slab_cache(),
 		       sizeof(struct vy_log_tx));
