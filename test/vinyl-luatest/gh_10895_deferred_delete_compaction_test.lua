@@ -8,7 +8,7 @@ g.before_all(function(cg)
     cg.server = server:new({
         env = {
             TARANTOOL_RUN_BEFORE_BOX_CFG = [[
-ffi = require('ffi')
+local ffi = require('ffi')
 ffi.cdef('void srand(unsigned int seed);')
 ffi.C.srand(1)
 math.randomseed(1)
@@ -34,6 +34,16 @@ end)
 g.test_deferred_delete_compaction = function(cg)
     cg.server:exec(function()
         local fiber = require('fiber')
+        local wait_compaction = function(tasks_completed)
+            while true do
+                local stat = box.stat.vinyl().scheduler
+                if stat.tasks_completed > tasks_completed and
+                    stat.tasks_inprogress == 0 then
+                    break
+                end
+                fiber.sleep(0.01)
+            end
+        end
 
         local s = box.schema.space.create('test', {
             engine = 'vinyl',
@@ -78,10 +88,9 @@ g.test_deferred_delete_compaction = function(cg)
         --
         -- Compaction of the primary index generates DELETE{1, 10} for
         -- the older INSERT{1, 10} stored in the secondary index.
+        local tc = box.stat.vinyl().scheduler.tasks_completed
         box.error.injection.set('ERRINJ_VY_COMPACTION_DELAY', false)
-        while box.stat.vinyl().scheduler.tasks_inprogress > 0 do
-            fiber.sleep(0.1)
-        end
+        wait_compaction(tc)
 
         -- Write DELETE{1,10} + INSERT{1,20} to the secondary index.
         --
@@ -101,22 +110,22 @@ g.test_deferred_delete_compaction = function(cg)
         -- DELETE for the secondary index, then dump and compaction of the
         -- secondary index.
         s:delete({1})
+        local tc = box.stat.vinyl().scheduler.tasks_completed
         box.snapshot()
         s.index.primary:compact()
-        while box.stat.vinyl().scheduler.tasks_inprogress > 0 do
-            fiber.sleep(0.1)
-        end
+        wait_compaction(tc)
 
+        local tc = box.stat.vinyl().scheduler.tasks_completed
         box.snapshot()
         s.index.secondary:compact()
-        while box.stat.vinyl().scheduler.tasks_inprogress > 0 do
-            fiber.sleep(0.1)
-        end
+        wait_compaction(tc)
 
         -- No statements should be left in either of the indexes, but if
         -- gh-10895 wasn't fixed, the secondary index run file would still
         -- contain the newer INSERT{1,10}.
         t.assert_equals(s.index.primary:len(), 0)
-        t.assert_equals(s.index.secondary:len(), 0)
+        while s.index.secondary:len() > 0 do
+            fiber.sleep(0.01)
+        end
     end)
 end
