@@ -29,6 +29,7 @@ find_program(LUACHECK luacheck ENV PATH)
 
 # Define PACKAGE macro in tarantool/config.h
 set(PACKAGE "Tarantool" CACHE STRING "Package name.")
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 #
 # Set default build type to Debug. This is to ease a developer's
