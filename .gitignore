@@ -9,6 +9,9 @@ _CPack_Packages
 .git-ignore/
 .pc/
 oss-fuzz/
+box-include-args
+bundled-ldap-prefix
+bundled-sasl-prefix
 coverity/
 coverage/
 coverage.info
@@ -32,6 +35,7 @@ Testing/
 /build
 .idea/
 .vscode/
+.cache
 # Ignore Makefile in the stupid way for `tar --exclude-vcs-ignores`
 /Makefile
 ./Makefile
@@ -46,6 +50,7 @@ extra/*/Makefile
 extra/luarocks/hardcoded.lua
 extra/luarocks/hardcoded.lua.c
 perf/Makefile
+perf/lua/Makefile
 test/Makefile
 test/*/Makefile
 test/*/*/Makefile
