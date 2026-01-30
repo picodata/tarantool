@@ -1492,7 +1492,7 @@ box.schema.index.create = function(space_id, name, options)
             run_count_per_level = box.cfg.vinyl_run_count_per_level,
             run_size_ratio = box.cfg.vinyl_run_size_ratio,
             bloom_fpr = box.cfg.vinyl_bloom_fpr,
-            compression_level = box.cfg.vinyl_space_amp,
+            compression_level = box.cfg.vinyl_compression_level,
         }
     else
         options_defaults = {}
