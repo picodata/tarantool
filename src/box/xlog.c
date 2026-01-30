@@ -1157,8 +1157,10 @@ xlog_tx_write_zstd(struct xlog *log)
 	}
 	uint32_t crc32c = 0;
 	struct iovec *iov;
-	/* 3 is compression level. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	ZSTD_compressBegin(log->zctx, log->opts.compression_level);
+#pragma GCC diagnostic pop
 	size_t offset = XLOG_FIXHEADER_SIZE;
 	for (iov = log->obuf.iov; iov->iov_len; ++iov) {
 		/* Estimate max output buffer size. */
@@ -1178,10 +1180,13 @@ xlog_tx_write_zstd(struct xlog *log)
 		 */
 		if (iov == log->obuf.iov + log->obuf.pos ||
 		    !(iov + 1)->iov_len) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 			fcompress = ZSTD_compressEnd;
 		} else {
 			fcompress = ZSTD_compressContinue;
 		}
+#pragma GCC diagnostic pop
 		size_t zsize = fcompress(log->zctx, zdst, zmax_size,
 					 (char *)iov->iov_base + offset,
 					 iov->iov_len - offset);
