@@ -25,7 +25,7 @@
 	ignore = dirty
 [submodule "third_party/zstd"]
 	path = third_party/zstd
-	url = https://github.com/tarantool/zstd.git
+	url = https://github.com/facebook/zstd.git
 	ignore = dirty
 [submodule "third_party/luarocks"]
 	path = third_party/luarocks

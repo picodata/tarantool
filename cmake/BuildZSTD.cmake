@@ -12,6 +12,10 @@ macro(zstd_build)
         third_party/zstd/lib/decompress/huf_decompress_amd64.S
         third_party/zstd/lib/decompress/zstd_ddict.c
         third_party/zstd/lib/decompress/zstd_decompress_block.c
+        third_party/zstd/lib/dictBuilder/zdict.c
+        third_party/zstd/lib/dictBuilder/cover.c
+        third_party/zstd/lib/dictBuilder/fastcover.c
+        third_party/zstd/lib/dictBuilder/divsufsort.c
         third_party/zstd/lib/compress/zstd_double_fast.c
         third_party/zstd/lib/compress/zstd_fast.c
         third_party/zstd/lib/compress/zstd_lazy.c
@@ -25,6 +29,7 @@ macro(zstd_build)
         third_party/zstd/lib/compress/zstd_compress_superblock.c
         third_party/zstd/lib/compress/zstd_compress_sequences.c
         third_party/zstd/lib/compress/zstd_compress_literals.c
+        third_party/zstd/lib/compress/zstd_preSplit.c
     )
     set(zstd_cflags "${DEPENDENCY_CFLAGS} -Ofast")
     if (CC_HAS_WNO_IMPLICIT_FALLTHROUGH)
