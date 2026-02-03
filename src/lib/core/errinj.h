@@ -172,6 +172,7 @@ struct errinj {
 	_(ERRINJ_VY_POINT_LOOKUP_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_VY_QUOTA_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_VY_READ_PAGE, ERRINJ_BOOL, {.bparam = false}) \
+	_(ERRINJ_VY_READ_PAGE_CB_SLEEP, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_VY_READ_PAGE_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_VY_READ_PAGE_TIMEOUT, ERRINJ_DOUBLE, {.dparam = 0}) \
 	_(ERRINJ_VY_READ_VIEW_MERGE_FAIL, ERRINJ_BOOL, {.bparam = false})\
