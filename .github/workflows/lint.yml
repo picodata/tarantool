@@ -116,10 +116,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
+      - name: Install checkpatch
+        run: git clone --depth 1 https://github.com/tarantool/checkpatch.git
       - name: test
-        uses: tarantool/checkpatch/.github/actions/checkpatch@master
-        with:
-          revision-range: HEAD~${{ github.event.pull_request.commits }}..HEAD
+        run: |
+          ./checkpatch/checkpatch.pl --color=always --show-types \
+            --ignore NO_DOC --ignore NO_TEST --ignore NO_CHANGELOG \
+            --git HEAD~${{ github.event.pull_request.commits }}..HEAD
       - name: Send VK Teams message on failure
         if: failure()
         uses: ./.github/actions/report-job-status
