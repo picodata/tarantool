@@ -4,7 +4,17 @@ local t = require('luatest')
 local g = t.group()
 
 g.before_all(function(cg)
-    cg.server = server:new{alias = 'master'}
+    cg.server = server:new({
+        alias = 'master',
+        env = {
+            TARANTOOL_RUN_BEFORE_BOX_CFG = [[
+local ffi = require('ffi')
+ffi.cdef('void srand(unsigned int seed);')
+ffi.C.srand(1)
+math.randomseed(1)
+            ]]
+        },
+    })
     cg.server:start()
 end)
 
@@ -18,6 +28,18 @@ end)
 --
 g.test_defer_deletes_and_upserts = function(cg)
     cg.server:exec(function()
+        local fiber = require('fiber')
+        local wait_compaction = function(tasks_completed)
+            while true do
+                local stat = box.stat.vinyl().scheduler
+                if stat.tasks_completed > tasks_completed and
+                    stat.tasks_inprogress == 0 and
+                    stat.compaction_queue == 0 then
+                    break
+                end
+                fiber.sleep(0.01)
+            end
+        end
         local s = box.schema.space.create('test', {
             engine = 'vinyl',
             defer_deletes = true,
@@ -38,7 +60,9 @@ g.test_defer_deletes_and_upserts = function(cg)
         s:create_index('sk', {parts = {2, 'unsigned'}, unique = false})
         -- Write the third run with DELETE in it.
         s:delete{1}
+        local tasks_completed = box.stat.vinyl().scheduler.tasks_completed
         box.snapshot()
+        wait_compaction(tasks_completed)
         -- Check that no compaction is in progress and the primary index
         -- have three runs with REPLACE, UPSERT, and DELETE.
         t.assert_covers(box.stat.vinyl().scheduler, {
