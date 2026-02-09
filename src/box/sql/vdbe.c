@@ -160,7 +160,7 @@ int sql_found_count = 0;
 /* Return true if the cursor was opened using the OP_OpenSorter opcode. */
 #define isSorter(x) ((x)->eCurType==CURTYPE_SORTER)
 
-const uint16_t OPCODE_YIELD_COUNT = 1024;
+uint64_t OPCODE_YIELD_COUNT = 1024;
 
 /* Default vdbe yield callback is empty. */
 int
