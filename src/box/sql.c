@@ -212,6 +212,8 @@ int tarantoolsqlNext(BtCursor *pCur, int *pRes)
 		*pRes = 0;
 		return 0;
 	}
+	if (sql_cursor_validate(pCur) != 0)
+		return -1;
 	assert(iterator_direction(pCur->iter_type) > 0);
 	return cursor_advance(pCur, pRes);
 }
@@ -231,6 +233,8 @@ int tarantoolsqlPrevious(BtCursor *pCur, int *pRes)
 		*pRes = 0;
 		return 0;
 	}
+	if (sql_cursor_validate(pCur) != 0)
+		return -1;
 	assert(iterator_direction(pCur->iter_type) < 0);
 	return cursor_advance(pCur, pRes);
 }
@@ -275,6 +279,8 @@ int64_t
 tarantoolsqlCount(struct BtCursor *pCur)
 {
 	assert(pCur->curFlags & BTCF_TaCursor);
+	if (sql_cursor_validate(pCur) != 0)
+		return -1;
 	/* Empty key encoded in MsgPack. */
 	const char empty_key[] = {0x90};
 	return box_index_count(pCur->space->def->id, pCur->index->def->iid,
@@ -530,6 +536,9 @@ tarantoolsqlDelete(struct BtCursor *pCur)
 	assert(pCur->curFlags & BTCF_TaCursor);
 	assert(pCur->iter != NULL);
 	assert(pCur->last_tuple != NULL);
+
+	if (sql_cursor_validate(pCur) != 0)
+		return -1;
 
 	char *key;
 	uint32_t key_size;
@@ -904,6 +913,8 @@ key_alloc(BtCursor *cur, size_t key_size)
 static int
 cursor_seek(BtCursor *pCur, int *pRes)
 {
+	if (sql_cursor_validate(pCur) != 0)
+		return -1;
 	/* Close existing iterator, if any */
 	if (pCur->iter) {
 		box_iterator_free(pCur->iter);
@@ -931,6 +942,9 @@ cursor_seek(BtCursor *pCur, int *pRes)
 		return -1;
 	}
 	pCur->iter = it;
+	pCur->space_cache_version = it->space_cache_version;
+	pCur->space_id = it->space_id;
+	pCur->index_id = it->index_id;
 	pCur->eState = CURSOR_VALID;
 
 	return cursor_advance(pCur, pRes);
