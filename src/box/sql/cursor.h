@@ -44,6 +44,17 @@ struct BtCursor {
 	u8 curFlags;		/* zero or more BTCF_* flags defined below */
 	u8 eState;		/* One of the CURSOR_XXX constants (see below) */
 	u8 hints;		/* As configured by CursorSetHints() */
+	/** Space cache version at the time of the last index lookup. */
+	uint32_t space_cache_version;
+	/** ID of the space the cursor is for. */
+	uint32_t space_id;
+	/** ID of the index the cursor is for. */
+	uint32_t index_id;
+	/**
+	 * We keep space_id and the space pointer (index_id and index pointer)
+	 * to avoid invoking space_by_id on each execution of SeekGE and other
+	 * operands that create iterators from the cursor.
+	 */
 	struct space *space;
 	struct index *index;
 	struct iterator *iter;
@@ -74,6 +85,12 @@ sqlCursorPayload(BtCursor *, u32 offset, u32 amt, void *);
  */
 void
 sql_cursor_cleanup(struct BtCursor *cursor);
+
+/*
+ * Check that the cursor refers to a valid space and index.
+ */
+int
+sql_cursor_validate(BtCursor *pCur);
 
 #ifndef NDEBUG
 int sqlCursorIsValid(BtCursor *);

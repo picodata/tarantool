@@ -1986,8 +1986,11 @@ case OP_Column: {
 		goto op_column_out;
 	enum field_type field_type = field_type_MAX;
 	/* Currently PSEUDO cursor does not have info about field types. */
-	if (pC->eCurType == CURTYPE_TARANTOOL)
+	if (pC->eCurType == CURTYPE_TARANTOOL) {
+		if (sql_cursor_validate(pC->uc.pCursor) != 0)
+			goto abort_due_to_error;
 		field_type = pC->uc.pCursor->space->def->fields[p2].type;
+	}
 	if (field_type == FIELD_TYPE_ANY)
 		pDest->flags |= MEM_Any;
 	else if (field_type == FIELD_TYPE_SCALAR)

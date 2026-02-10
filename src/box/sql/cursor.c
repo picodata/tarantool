@@ -32,6 +32,7 @@
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "box/tuple.h"
+#include "box/space_cache.h"
 
 void
 sql_cursor_cleanup(struct BtCursor *cursor)
@@ -44,7 +45,42 @@ sql_cursor_cleanup(struct BtCursor *cursor)
 	cursor->key = NULL;
 	cursor->iter = NULL;
 	cursor->last_tuple = NULL;
+	cursor->space_cache_version = 0;
+	cursor->space_id = 0;
+	cursor->index_id = 0;
 	cursor->eState = CURSOR_INVALID;
+}
+
+/*
+ * Check for space changes.
+ */
+static int
+cursor_check_space(BtCursor *pCur)
+{
+	struct space *space = space_by_id(pCur->space_id);
+	if (space == NULL)
+		return -1;
+	struct index *index = space_index(space, pCur->index_id);
+	if (index != pCur->index ||
+	    index->space_cache_version > pCur->space_cache_version)
+		return -1;
+	pCur->space = space;
+	return 0;
+}
+
+int
+sql_cursor_validate(BtCursor *pCur)
+{
+	/* An ephemeral space or an uninitialized cursor is considered valid. */
+	if (pCur->space_id == 0)
+		return 0;
+	if (pCur->space_cache_version != space_cache_version &&
+	    cursor_check_space(pCur) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "space cursor is no longer valid");
+		return -1;
+	}
+	return 0;
 }
 
 /*
