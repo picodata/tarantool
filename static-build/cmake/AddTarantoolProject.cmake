@@ -1,5 +1,15 @@
 include(ExternalProject)
 
+# On macOS, we explicitly throw the SDK into a child project
+if (APPLE)
+    execute_process(
+        COMMAND xcrun --show-sdk-path
+        OUTPUT_VARIABLE OSX_SYSROOT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    list(APPEND TARANTOOL_ARGS -DCMAKE_OSX_SYSROOT=${OSX_SYSROOT})
+endif()
+
 ExternalProject_Add(tarantool
     DEPENDS ${TARANTOOL_DEPENDS}
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..

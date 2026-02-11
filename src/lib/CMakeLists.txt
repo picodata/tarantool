@@ -2,6 +2,25 @@ add_subdirectory(bit)
 add_subdirectory(bitset)
 set(SMALL_EMBEDDED ON)
 add_subdirectory(small)
+
+# Remove only src/lib/small (the root with the VERSION file),
+# but leave src/lib/small/include and src/lib/small/include/small
+foreach(tgt IN ITEMS small small_shared small.perftest)
+    if(TARGET ${tgt})
+        get_target_property(dirs ${tgt} INCLUDE_DIRECTORIES)
+        if(dirs)
+            set(new_dirs "")
+            foreach(d ${dirs})
+                # убираем только если путь совпадает ровно с корнем сабмодуля
+                if(NOT d STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/small")
+                    list(APPEND new_dirs "${d}")
+                endif()
+            endforeach()
+            set_target_properties(${tgt} PROPERTIES INCLUDE_DIRECTORIES "${new_dirs}")
+        endif()
+    endif()
+endforeach()
+
 add_subdirectory(salad)
 add_subdirectory(csv)
 add_subdirectory(json)
