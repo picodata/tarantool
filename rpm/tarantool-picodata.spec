@@ -164,6 +164,14 @@ Group: Applications/Databases
 Summary: In-memory database and Lua application server
 License: BSD
 
+# In fedora 43 rpmbuild automatically add user and group in
+# package requirements if there are files owned by this user or group.
+# Need to add this Provides to satisfy these auto Requires
+%if 0%{?fedora} >= 43
+Provides: user(tarantool)
+Provides: group(tarantool)
+%endif
+
 Provides: tarantool-picodata-debuginfo = %{version}-%{release}
 Provides: tarantool-picodata-common = %{version}-%{release}
 Obsoletes: tarantool-picodata-common < 1.6.8.434-1
