@@ -2457,7 +2457,10 @@ case OP_IteratorOpen: {
 	bt_cur->curFlags |= space->def->id == 0 ? BTCF_TEphemCursor :
 				BTCF_TaCursor;
 	bt_cur->space = space;
+	bt_cur->space_id = space->def->id;
 	bt_cur->index = index;
+	bt_cur->index_id = pOp->p2;
+	bt_cur->space_cache_version = space_cache_version;
 	bt_cur->eState = CURSOR_INVALID;
 	bt_cur->hints = pOp->p5;
 	/* Key info still contains sorter order and collation. */
