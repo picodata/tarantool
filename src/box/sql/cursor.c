@@ -64,6 +64,7 @@ cursor_check_space(BtCursor *pCur)
 	if (index != pCur->index ||
 	    index->space_cache_version > pCur->space_cache_version)
 		return -1;
+	pCur->space_cache_version = space_cache_version;
 	pCur->space = space;
 	return 0;
 }
