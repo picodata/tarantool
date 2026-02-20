@@ -218,6 +218,15 @@ allocateCursor(
 	return pCx;
 }
 
+struct space *
+space_get_from_mem(struct Mem *mem)
+{
+	if (mem_is_uint(mem)) {
+		return space_by_id(mem->u.u);
+	}
+	return (struct space *)mem->u.p;
+}
+
 #ifdef SQL_DEBUG
 #  define REGISTER_TRACE(P,R,M)					\
 	if ((P->sql_flags & SQL_VdbeTrace) != 0)		\
@@ -2429,7 +2438,7 @@ case OP_IteratorOpen: {
 			 "changed: need to re-compile SQL statement");
 		goto abort_due_to_error;
 	}
-	struct space *space = aMem[pOp->p3].u.p;
+	struct space *space = space_get_from_mem(&aMem[pOp->p3]);
 	assert(space != NULL);
 	if (access_check_space(space, BOX_PRIVILEGE_READ) != 0)
 		goto abort_due_to_error;
@@ -2465,10 +2474,8 @@ case OP_IteratorOpen: {
  * space to register P1.
  */
 case OP_OpenSpace: {
-	assert(pOp->p1 >= 0 && pOp->p1 > 0);
-	struct space *space = space_by_id(pOp->p2);
-	assert(space != NULL);
-	mem_set_ptr(&aMem[pOp->p1], space);
+	assert(pOp->p1 >= 0 && pOp->p2 > 0);
+	mem_set_uint(&aMem[pOp->p1], pOp->p2);
 	break;
 }
 
@@ -3545,7 +3552,7 @@ case OP_IdxReplace:
 case OP_IdxInsert: {
 	pIn2 = &aMem[pOp->p1];
 	assert(mem_is_bin(pIn2));
-	struct space *space = aMem[pOp->p2].u.p;
+	struct space *space = space_get_from_mem(&aMem[pOp->p2]);
 	assert(space != NULL);
 	if (space->def->id != 0) {
 		/* Make sure that memory has been allocated on region. */
@@ -3625,7 +3632,8 @@ case OP_Update: {
 	if (pOp->p5 & OPFLAG_NCHANGE)
 		p->nChange++;
 
-	struct space *space = aMem[pOp->p4.i].u.p;
+	struct space *space = space_get_from_mem(&aMem[pOp->p4.i]);
+	assert(space != NULL);
 	assert(pOp->p4type == P4_INT32);
 
 	struct Mem *key_mem = &aMem[pOp->p2];
