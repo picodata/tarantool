@@ -547,7 +547,7 @@ vy_scheduler_add_lsm(struct vy_scheduler *scheduler, struct vy_lsm *lsm)
 	return 0;
 }
 
-static void
+void
 vy_scheduler_update_lsm(struct vy_scheduler *scheduler, struct vy_lsm *lsm)
 {
 	assert(! heap_node_is_stray(&lsm->in_dump));
@@ -1598,6 +1598,15 @@ vy_task_compaction_complete(struct vy_task *task)
 	 * clusters still need compaction.  The flag is cleared by
 	 * vy_compaction_plan_seal() once no work remains.
 	 */
+	/*
+	 * Reset read amplification counters: the compacted slices
+	 * are gone, so the old waste accounting is stale.
+	 *
+	 * Note: threshold_version is NOT reset -- it is only set
+	 * in vy_compaction_plan_check_read_amp when the waste
+	 * threshold is actually crossed.
+	 */
+	vy_read_amp_stat_reset(&range->read_amp);
 	vy_lsm_update_range(lsm, range, new_slice, plan->slices);
 	/*
 	 * Sweep 3: propagate shared runs to neighbor ranges now that
