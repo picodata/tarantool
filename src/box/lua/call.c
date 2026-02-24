@@ -722,6 +722,74 @@ static const char *default_sandbox_exports[] = {
 };
 
 /**
+ * List of digest functions safe to expose in sandbox.
+ * These are pure hash functions with no I/O, no state, and no crypto keys.
+ *
+ * Not exposed for security/safety reasons:
+ *   - urandom (I/O operation, reads from /dev/urandom)
+ *   - pbkdf2, pbkdf2_hex (CPU-intensive, DoS risk)
+ *   - aes256cbc (encryption/decryption with keys)
+ *   - crc32.new, murmur.new, xxhash*.new (stateful objects)
+ */
+static const char * const sandbox_digest_exports[] = {
+	"md5", "md5_hex",
+	"sha1", "sha1_hex",
+	"sha224", "sha224_hex",
+	"sha256", "sha256_hex",
+	"sha384", "sha384_hex",
+	"sha512", "sha512_hex",
+	"md4", "md4_hex",
+	"crc32",
+	"murmur",
+	"xxhash32", "xxhash64",
+	"guava",
+	"base64_encode", "base64_decode",
+};
+
+/**
+ * Create a sandbox-safe digest table by extracting function references
+ * from the real digest module. The extracted functions are Lua closures
+ * that have their FFI bindings already captured in upvalues, so they
+ * work without giving the sandbox direct access to FFI.
+ *
+ * @param L Lua state. On success, pushes the digest table onto the stack.
+ * @return 0 on success, -1 on error.
+ */
+static int
+prepare_sandbox_digest(struct lua_State *L)
+{
+	/* Load the real digest module: require('digest') */
+	lua_getglobal(L, "require");
+	if (lua_isnil(L, -1)) {
+		lua_pop(L, 1);
+		return -1;
+	}
+	lua_pushstring(L, "digest");
+	if (lua_pcall(L, 1, 1, 0) != 0) {
+		lua_pop(L, 1);
+		return -1;
+	}
+
+	/* Create new table for sandbox-safe digest functions */
+	lua_newtable(L);
+
+	/* Extract safe functions from digest module */
+	for (size_t i = 0; i < nelem(sandbox_digest_exports); i++) {
+		const char *name = sandbox_digest_exports[i];
+		lua_getfield(L, -2, name);
+		if (!lua_isnil(L, -1)) {
+			lua_setfield(L, -2, name);
+		} else {
+			lua_pop(L, 1);
+		}
+	}
+
+	/* Remove the original digest module, keep only sandbox_digest */
+	lua_remove(L, -2);
+	return 0;
+}
+
+/**
  * Assemble a new sandbox with given exports table on the top of
  * a given Lua stack. All modules in exports list are copied
  * deeply to ensure the immutability of this system object.
@@ -760,6 +828,19 @@ prepare_lua_sandbox(struct lua_State *L, const char *exports[],
 		}
 		lua_setfield(L, -2, exports[i]);
 	}
+
+	/*
+	 * Add sandbox-safe digest functions.
+	 * These are function references extracted from the real digest
+	 * module. The functions work because their FFI bindings are
+	 * captured in closure upvalues, not accessed through the sandbox.
+	 *
+	 * Failure to add digest is not fatal - sandbox still works.
+	 */
+	if (prepare_sandbox_digest(L) == 0) {
+		lua_setfield(L, -2, "digest");
+	}
+
 	rc = 0;
 end:
 	luaL_unref(tarantool_L, LUA_REGISTRYINDEX, luaL_deepcopy_func_ref);
