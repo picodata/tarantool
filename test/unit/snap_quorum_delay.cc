@@ -60,6 +60,8 @@
 extern int replication_synchro_quorum;
 extern double replication_synchro_timeout;
 
+extern "C" uint32_t instance_id;
+
 namespace /* local symbols */ {
 
 int test_result;
