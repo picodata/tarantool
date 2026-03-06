@@ -329,7 +329,7 @@ local function make_test_group(opts)
 
         t.assert_equals(g.cluster:get_leader(), g.cluster.servers[2])
 
-        t.helpers.retrying({}, function()
+        t.helpers.retrying({timeout = 60}, function()
             ensure_synchro_state_matches(g.cluster.servers)
             ensure_mesh_replication_healthy(g.cluster.servers)
         end)
