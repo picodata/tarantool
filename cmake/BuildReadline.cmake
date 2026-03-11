@@ -32,6 +32,7 @@ ExternalProject_Add(bundled-ncurses-project
     SOURCE_DIR ${NCURSES_INSTALL_DIR}/src/ncurses
     BINARY_DIR ${NCURSES_INSTALL_DIR}/src/ncurses-build
     STAMP_DIR ${NCURSES_INSTALL_DIR}/src/ncurses-stamp
+    DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
     URL ${BACKUP_STORAGE}/ncurses/ncurses-${NCURSES_VERSION}.tgz
     URL_MD5 ${NCURSES_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
@@ -83,6 +84,7 @@ ExternalProject_Add(bundled-readline-project
     SOURCE_DIR ${READLINE_INSTALL_DIR}/src/readline
     BINARY_DIR ${READLINE_INSTALL_DIR}/src/readline-build
     STAMP_DIR ${READLINE_INSTALL_DIR}/src/readline-stamp
+    DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
     URL ${BACKUP_STORAGE}/readline/readline-${READLINE_VERSION}.tar.gz
     URL_MD5 ${READLINE_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/configure

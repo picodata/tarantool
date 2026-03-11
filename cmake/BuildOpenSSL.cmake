@@ -19,6 +19,7 @@ ExternalProject_Add(bundled-openssl-project
     SOURCE_DIR ${OPENSSL_INSTALL_DIR}/src/openssl
     BINARY_DIR ${OPENSSL_INSTALL_DIR}/src/openssl-build
     STAMP_DIR ${OPENSSL_INSTALL_DIR}/src/openssl-stamp
+    DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
     URL ${BACKUP_STORAGE}/openssl/openssl-${OPENSSL_VERSION}.tar.gz
     URL_MD5 ${OPENSSL_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/config

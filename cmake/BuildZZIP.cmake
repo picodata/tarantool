@@ -36,6 +36,7 @@ ExternalProject_Add(bundled-zzip-project
     SOURCE_DIR ${ZZIP_INSTALL_DIR}/src/zzip
     BINARY_DIR ${ZZIP_INSTALL_DIR}/src/zzip-build
     STAMP_DIR ${ZZIP_INSTALL_DIR}/src/zzip-stamp
+    DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
     URL ${BACKUP_STORAGE}/zziplib/zziplib-${ZZIP_VERSION}.tar.gz
     URL_MD5 ${ZZIP_HASH}
     CMAKE_ARGS ${ZZIP_CMAKE_FLAGS}

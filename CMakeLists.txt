@@ -406,6 +406,11 @@ endif(CMAKE_BUILD_TYPE STREQUAL "Debug")
 # URL of the backup storage to download bundled dependencies from.
 set(BACKUP_STORAGE https://distrib.hb.vkcs.cloud)
 
+# CMake ExternalProject download cache directory.
+# Downloaded tarballs are cached in the directory to avoid
+# re-downloading on every build.
+set(CMAKE_EP_DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/.cmake-downloads)
+
 set(EMBED_LUAZLIB ${BUILD_STATIC})
 set(EMBED_LUAROCKS ${BUILD_STATIC})
 

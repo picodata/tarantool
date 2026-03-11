@@ -179,5 +179,8 @@ static-build/*-prefix
 static-build/Makefile
 static-build/build
 
+# CMake ExternalProject download cache (tarballs for static build deps)
+/.cmake-downloads/
+
 # macOS files
 .DS_Store
