@@ -22,6 +22,7 @@ ExternalProject_Add(bundled-icu-project
     SOURCE_DIR ${ICU_INSTALL_DIR}/src/icu
     BINARY_DIR ${ICU_INSTALL_DIR}/src/icu-build
     STAMP_DIR ${ICU_INSTALL_DIR}/src/icu-stamp
+    DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
     URL ${BACKUP_STORAGE}/icu/icu4c-${ICU_VERSION}-src.tgz
     URL_MD5 ${ICU_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/source/configure

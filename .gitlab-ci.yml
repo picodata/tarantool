@@ -61,6 +61,18 @@ variables:
 
   - &else {}
 
+.base_cache_def: &base_cache_def
+  paths:
+    - .cmake-downloads/
+  key: "base_cache-$CI_COMMIT_REF_SLUG"
+  fallback_keys:
+    - base_cache-$MAIN_BRANCH
+
+.base_cache_template:
+  cache:
+    <<: *base_cache_def
+    policy: pull
+
 stages:
   - build-base-image
   - test
@@ -76,6 +88,8 @@ workflow:
     - if: $CI_PIPELINE_SOURCE == "web"
 
 .test:
+  extends:
+    - .base_cache_template
   rules:
     - <<: *if-build-base-changes-on-master-branch
       variables:
@@ -128,6 +142,9 @@ test-ubuntu:
   extends:
     - .test-ubuntu
     - .parallel
+  cache:
+    <<: *base_cache_def
+    policy: pull-push
 
 test-ubuntu-asan:
   extends:

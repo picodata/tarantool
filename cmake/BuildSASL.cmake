@@ -15,6 +15,7 @@ macro(sasl_build)
     include(ExternalProject)
     ExternalProject_Add(bundled-sasl
         DEPENDS ${LDAP_OPENSSL_DEPS}
+        DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
         URL ${SASL_URL}
         URL_MD5 ${SASL_HASH}
         CONFIGURE_COMMAND <SOURCE_DIR>/configure

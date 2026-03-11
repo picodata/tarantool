@@ -14,6 +14,7 @@ macro(ldap_build)
     include(ExternalProject)
     ExternalProject_Add(bundled-ldap
         DEPENDS ${LDAP_OPENSSL_DEPS} bundled-sasl
+        DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
         URL ${LDAP_URL}
         URL_MD5 ${LDAP_HASH}
         PATCH_COMMAND

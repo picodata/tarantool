@@ -17,6 +17,7 @@ ExternalProject_Add(bundled-zlib-project
     SOURCE_DIR ${ZLIB_INSTALL_DIR}/src/zlib
     BINARY_DIR ${ZLIB_INSTALL_DIR}/src/zlib-build
     STAMP_DIR ${ZLIB_INSTALL_DIR}/src/zlib-stamp
+    DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
     URL ${BACKUP_STORAGE}/zlib/zlib-${ZLIB_VERSION}.tar.gz
     URL_MD5 ${ZLIB_HASH}
     CONFIGURE_COMMAND env
