@@ -18,7 +18,7 @@ ExternalProject_Add(bundled-iconv-project
     BINARY_DIR ${ICONV_INSTALL_DIR}/src/iconv-build
     STAMP_DIR ${ICONV_INSTALL_DIR}/src/iconv-stamp
     DOWNLOAD_DIR ${CMAKE_EP_DOWNLOAD_DIR}
-    URL URL ${BACKUP_STORAGE}/libiconv/libiconv-${ICONV_VERSION}.tar.gz
+    URL ${BACKUP_STORAGE}/libiconv/libiconv-${ICONV_VERSION}.tar.gz
     URL_MD5 ${ICONV_HASH}
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         CC=${CMAKE_C_COMPILER}
