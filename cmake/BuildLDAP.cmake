@@ -4,8 +4,8 @@ macro(ldap_build)
     message(STATUS "Choosing bundled LDAP")
 
     # https://git.openldap.org/openldap/openldap
-    set(LDAP_VERSION 2.6.4)
-    set(LDAP_HASH fee2b0dca212b41c87976d0414f30f12)
+    set(LDAP_VERSION 2.6.7)
+    set(LDAP_HASH cf71b4b455ab8dfc8fdd4e247d697ccd)
     set(LDAP_URL https://mirror.lyrahosting.com/OpenLDAP/openldap-release/openldap-${LDAP_VERSION}.tgz)
 
     # Reusing approach from BuildLibCURL.cmake
