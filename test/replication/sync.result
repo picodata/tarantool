@@ -41,6 +41,9 @@ test_run:cmd("setopt delimiter ';'")
 count = 0;
 ---
 ...
+fill_delay = 0;
+---
+...
 function fill()
     for i = count + 1, count + 100 do
         box.space.test:replace{i}
@@ -54,6 +57,7 @@ function fill()
         end, 10)
         for i = count + 101, count + 200 do
             box.space.test:replace{i}
+            fiber.sleep(fill_delay)
         end
     end)
     count = count + 200
@@ -131,6 +135,9 @@ test_run:cmd("switch default")
 ---
 - true
 ...
+fill_delay = 0.1
+---
+...
 fill()
 ---
 ...
@@ -161,6 +168,22 @@ box.info.status -- running
 box.info.ro -- false
 ---
 - false
+...
+-- Clear the delays so remaining rows arrive quickly.
+test_run:cmd("switch default")
+---
+- true
+...
+fill_delay = 0
+---
+...
+box.error.injection.set('ERRINJ_RELAY_TIMEOUT', 0)
+---
+- ok
+...
+test_run:cmd("switch replica")
+---
+- true
 ...
 -- Wait for remaining rows to arrive.
 test_run:wait_cond(function() return box.space.test:count() == 400 end, 10)

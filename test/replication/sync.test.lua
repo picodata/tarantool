@@ -25,6 +25,7 @@ _ = box.space.test:create_index('pk')
 -- box.cfg() hence the need of replication delay.
 test_run:cmd("setopt delimiter ';'")
 count = 0;
+fill_delay = 0;
 function fill()
     for i = count + 1, count + 100 do
         box.space.test:replace{i}
@@ -38,6 +39,7 @@ function fill()
         end, 10)
         for i = count + 101, count + 200 do
             box.space.test:replace{i}
+            fiber.sleep(fill_delay)
         end
     end)
     count = count + 200
@@ -75,6 +77,7 @@ box.cfg{replication = {}}
 
 -- Fill the space.
 test_run:cmd("switch default")
+fill_delay = 0.1
 fill()
 test_run:cmd("switch replica")
 
@@ -89,6 +92,12 @@ box.cfg{replication = replication}
 box.space.test:count() < 400
 box.info.status -- running
 box.info.ro -- false
+
+-- Clear the delays so remaining rows arrive quickly.
+test_run:cmd("switch default")
+fill_delay = 0
+box.error.injection.set('ERRINJ_RELAY_TIMEOUT', 0)
+test_run:cmd("switch replica")
 
 -- Wait for remaining rows to arrive.
 test_run:wait_cond(function() return box.space.test:count() == 400 end, 10)
