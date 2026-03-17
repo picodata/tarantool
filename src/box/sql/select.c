@@ -4423,9 +4423,8 @@ pushDownWhereTerms(Parse * pParse,	/* Parse context (for malloc() and error repo
 		if ((pX->selFlags & (SF_Aggregate | SF_Recursive)) != 0) {
 			return 0;	/* restrictions (1) and (2) */
 		}
-	}
-	if (pSubq->pWin) {
-		return 0;	/* restriction (6) */
+		if (pX->pWin)
+			return 0;	/* restriction (6) */
 	}
 	if (pSubq->pLimit != 0) {
 		return 0;	/* restriction (3) */

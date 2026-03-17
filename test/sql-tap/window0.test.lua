@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(5)
+test:plan(7)
 
 test:execsql( [[
 DROP TABLE IF EXISTS "TMP_3781021201_1136";
@@ -145,5 +145,30 @@ test:do_execsql_test(
     [[
 SELECT x, y, last_value(y) OVER (ORDER BY y) FROM t0 ORDER BY x;
     ]], { 1, 'aaa', 'aaa', 2, 'aaa', 'aaa', 3, 'bbb', 'bbb' })
+
+test:do_execsql_test(
+    "compound query with outer filter",
+    [[
+SELECT * FROM (
+  SELECT count(*) OVER () AS id FROM (SELECT 1 AS id)
+  UNION ALL
+  SELECT 1
+) WHERE id = 1;
+    ]], {1,1})
+
+test:do_execsql_test(
+    "cte compound query with outer cast filter",
+    [[
+WITH
+a AS (
+SELECT 1 AS id
+),
+b AS (
+SELECT row_number() OVER (PARTITION BY id ORDER BY id) AS id FROM a
+UNION ALL
+SELECT 1 AS id
+)
+SELECT * FROM b WHERE 1 = 1 AND CAST(id AS INT) = 1;
+    ]], {1,1})
 
 test:finish_test()
