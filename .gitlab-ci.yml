@@ -106,6 +106,8 @@ workflow:
     GIT_STRATEGY: clone
     GIT_DEPTH: 0
     GIT_SUBMODULE_STRATEGY: recursive
+  before_script:
+    - mkdir -p test/artifacts/
   artifacts:
     when: always
     paths:
