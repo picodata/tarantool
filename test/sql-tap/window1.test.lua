@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(84)
+test:plan(88)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -1063,6 +1063,48 @@ FROM t8
 ORDER BY 10+sum(a) OVER (ORDER BY a) DESC;
     ]],
     {16,13,11,}
+)
+
+-- Do not push outer constraints into compound queries with window functions.
+test:do_execsql_test(
+    "window1-62.1",
+    [[
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a VARCHAR(20) PRIMARY KEY, b DOUBLE);
+INSERT INTO t1 VALUES('1',10.0);
+    ]]
+)
+
+test:do_execsql_test(
+    "window1-62.2",
+    [[
+SELECT * FROM (
+  SELECT sum(b) OVER() AS c FROM t1
+  UNION
+  SELECT b AS c FROM t1
+) WHERE c>10;
+    ]],
+    {}
+)
+
+test:do_execsql_test(
+    "window1-62.3",
+    [[
+INSERT INTO t1 VALUES('2',5.0);
+INSERT INTO t1 VALUES('3',15.0);
+    ]]
+)
+
+test:do_execsql_test(
+    "window1-62.4",
+    [[
+SELECT * FROM (
+  SELECT sum(b) OVER() AS c FROM t1
+  UNION
+  SELECT b AS c FROM t1
+) WHERE c>10;
+    ]],
+    {15,30}
 )
 
 test:finish_test()
