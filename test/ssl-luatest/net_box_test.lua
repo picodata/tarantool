@@ -219,10 +219,10 @@ g.test_ssl_and_plain_transports_in_single_server = function()
     end, { certs_file('self-sign-key.pem'), certs_file('self-sign-cert.pem') })
 
     g.client:exec(function(srv_uris)
-        -- box.info.listen returns addresses in reverse order
-        -- relative to box.cfg.listen, so [2] is ssl, [1] is plain
+        -- box.info.listen[1] is ssl, box.info.listen[2] is plain
+        -- (same order as box.cfg.listen)
         local secure_connection = require('net.box').connect({
-            uri = srv_uris[2],
+            uri = srv_uris[1],
             params = {
                 transport = 'ssl',
             }
@@ -231,7 +231,7 @@ g.test_ssl_and_plain_transports_in_single_server = function()
         t.assert_equals(secure_connection:eval('return 21 * 2'), 42)
 
         local connection = require('net.box').connect({
-            uri = srv_uris[1],
+            uri = srv_uris[2],
         })
         t.assert_equals(connection.error, nil)
         t.assert_equals(connection:eval('return 21 * 2'), 42)
