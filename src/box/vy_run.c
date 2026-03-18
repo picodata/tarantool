@@ -622,12 +622,10 @@ static enum tuple_bloom_version
 iproto_to_tuple_bloom_version(uint32_t key)
 {
 	switch (key) {
-	case VY_RUN_INFO_BLOOM_FILTER_LEGACY_V1:
+	case VY_RUN_INFO_BLOOM_FILTER_LEGACY:
 		return TUPLE_BLOOM_VERSION_V1;
-	case VY_RUN_INFO_BLOOM_FILTER_LEGACY_V2:
-		return TUPLE_BLOOM_VERSION_V2;
 	case VY_RUN_INFO_BLOOM_FILTER:
-		return TUPLE_BLOOM_VERSION_V3;
+		return TUPLE_BLOOM_VERSION_V2;
 	default:
 		unreachable();
 	}
@@ -639,10 +637,8 @@ tuple_bloom_version_to_iproto(enum tuple_bloom_version version)
 {
 	switch (version) {
 	case TUPLE_BLOOM_VERSION_V1:
-		return VY_RUN_INFO_BLOOM_FILTER_LEGACY_V1;
+		return VY_RUN_INFO_BLOOM_FILTER_LEGACY;
 	case TUPLE_BLOOM_VERSION_V2:
-		return VY_RUN_INFO_BLOOM_FILTER_LEGACY_V2;
-	case TUPLE_BLOOM_VERSION_V3:
 		return VY_RUN_INFO_BLOOM_FILTER;
 	default:
 		unreachable();
@@ -697,8 +693,7 @@ vy_run_info_decode(struct vy_run_info *run_info,
 		case VY_RUN_INFO_PAGE_COUNT:
 			run_info->page_count = mp_decode_uint(&pos);
 			break;
-		case VY_RUN_INFO_BLOOM_FILTER_LEGACY_V1:
-		case VY_RUN_INFO_BLOOM_FILTER_LEGACY_V2:
+		case VY_RUN_INFO_BLOOM_FILTER_LEGACY:
 		case VY_RUN_INFO_BLOOM_FILTER:
 			run_info->bloom = tuple_bloom_decode(
 				&pos, iproto_to_tuple_bloom_version(key));

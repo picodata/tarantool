@@ -46,13 +46,8 @@ struct key_def;
 enum tuple_bloom_version {
 	/** Full key bloom filter used by old vinyl versions. */
 	TUPLE_BLOOM_VERSION_V1,
-	/**
-	 * Bloom filter with incorrect hashing of suboptimally encoded
-	 * MessagePack integers.
-	 */
-	TUPLE_BLOOM_VERSION_V2,
 	/** The latest bloom filter. */
-	TUPLE_BLOOM_VERSION_V3,
+	TUPLE_BLOOM_VERSION_V2,
 };
 
 /** Holder for bloom filter definition along with its data. */
