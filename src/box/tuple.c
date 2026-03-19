@@ -77,7 +77,7 @@ tuple_pointer_hash(const struct tuple *a)
 
 static struct mh_tuple_uploaded_refs_t *tuple_uploaded_refs;
 
-static const double ALLOC_FACTOR = 1.05;
+const double ALLOC_FACTOR = 1.05;
 
 /**
  * Last tuple returned by public C API
@@ -395,7 +395,7 @@ tuple_free(void)
 	mh_tuple_uploaded_refs_delete(tuple_uploaded_refs);
 }
 
-static int
+int
 small_stats_noop_cb(const void *stats, void *cb_ctx)
 {
 	(void)stats;

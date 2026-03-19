@@ -47,6 +47,15 @@
 #include "fiber.h"
 
 /**
+ * Per-cord slab allocator for vinyl tuples.  Set once at cord
+ * init time:
+ *  - TX thread: points to &env->tx_alloc (set by vy_stmt_env_create)
+ *  - Background threads: points to the per-cord allocator
+ *    (set by vy_stmt_init_thread_alloc)
+ */
+static __thread struct small_alloc *vy_tuple_alloc;
+
+/**
  * Statement metadata keys.
  */
 enum vy_stmt_meta_key {
@@ -95,6 +104,35 @@ vy_tuple_new(struct tuple_format *format, const char *data, const char *end)
 	return tuple;
 }
 
+/**
+ * Initialize the per-thread slab allocator for vinyl tuples.
+ * Called once per worker cord before any tuple allocations.
+ */
+void
+vy_stmt_init_thread_alloc(struct small_alloc *alloc)
+{
+	assert(!cord_is_main());
+	assert(vy_tuple_alloc == NULL);
+	float actual_alloc_factor;
+	small_alloc_create(alloc, &cord()->slabc,
+			   sizeof(intptr_t), sizeof(intptr_t), ALLOC_FACTOR,
+			   &actual_alloc_factor);
+	vy_tuple_alloc = alloc;
+}
+
+/**
+ * Destroy the per-thread slab allocator.
+ * Called when a background cord shuts down.
+ */
+void
+vy_stmt_destroy_thread_alloc(struct small_alloc *alloc)
+{
+	assert(vy_tuple_alloc != NULL);
+	assert(vy_tuple_alloc == alloc);
+	small_alloc_destroy(alloc);
+	vy_tuple_alloc = NULL;
+}
+
 static void
 vy_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 {
@@ -116,7 +154,7 @@ vy_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 #ifndef NDEBUG
 	memset(tuple, '#', size); /* fail early */
 #endif
-	free(tuple);
+	smfree(vy_tuple_alloc, tuple, size);
 }
 
 void
@@ -126,16 +164,32 @@ vy_stmt_env_create(struct vy_stmt_env *env)
 	env->tuple_format_vtab.tuple_delete = vy_tuple_delete;
 	env->max_tuple_size = 1024 * 1024;
 	env->sum_tuple_size = 0;
+
+	float actual_alloc_factor;
+	small_alloc_create(&env->tx_alloc, &cord()->slabc,
+			   sizeof(intptr_t), sizeof(intptr_t), ALLOC_FACTOR,
+			   &actual_alloc_factor);
+	vy_tuple_alloc = &env->tx_alloc;
+
 	env->key_format = vy_simple_stmt_format_new(env, NULL, 0);
 	if (env->key_format == NULL)
 		panic("failed to create vinyl key format");
 	tuple_format_ref(env->key_format);
 }
 
+size_t
+vy_stmt_tuple_memory_used(struct vy_stmt_env *env)
+{
+	struct small_stats stats;
+	small_stats(&env->tx_alloc, &stats, small_stats_noop_cb, NULL);
+	return stats.used;
+}
+
 void
 vy_stmt_env_destroy(struct vy_stmt_env *env)
 {
 	tuple_format_unref(env->key_format);
+	small_alloc_destroy(&env->tx_alloc);
 }
 
 struct tuple_format *
@@ -211,7 +265,7 @@ vy_stmt_alloc(struct tuple_format *format, uint32_t data_offset, uint32_t bsize)
 			 "vinyl statement allocate");
 		return NULL;
 	});
-	struct tuple *tuple = malloc(total_size);
+	struct tuple *tuple = smalloc(vy_tuple_alloc, total_size);
 	if (unlikely(tuple == NULL)) {
 		diag_set(OutOfMemory, total_size, "malloc", "struct vy_stmt");
 		return NULL;

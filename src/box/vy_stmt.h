@@ -38,6 +38,7 @@
 #include <assert.h>
 #include <msgpuck.h>
 #include <bit/bit.h>
+#include <small/small.h>
 
 #include "tuple.h"
 #include "iproto_constants.h"
@@ -82,6 +83,13 @@ struct vy_stmt_env {
 	 */
 	size_t sum_tuple_size;
 	/**
+	 * Slab allocator for vinyl tuples in the TX thread.
+	 * Backed by cord()->slabc (shared with the runtime
+	 * allocator), but tracked separately for vinyl-specific
+	 * memory stats via small_stats().
+	 */
+	struct small_alloc tx_alloc;
+	/**
 	 * Tuple format used for creating key statements (e.g.
 	 * statements read from secondary index runs). It doesn't
 	 * impose any restrictions on tuple fields, neither does
@@ -100,6 +108,24 @@ vy_stmt_env_create(struct vy_stmt_env *env);
 /** Destroy a vinyl statement environment. */
 void
 vy_stmt_env_destroy(struct vy_stmt_env *env);
+
+/** Return memory used by vinyl tuples in the TX thread. */
+size_t
+vy_stmt_tuple_memory_used(struct vy_stmt_env *env);
+
+/**
+ * Initialize the per-thread slab allocator for vinyl tuples.
+ * Must be called in each background cord before any tuple allocations.
+ */
+void
+vy_stmt_init_thread_alloc(struct small_alloc *alloc);
+
+/**
+ * Destroy the per-thread slab allocator.
+ * Called when a background cord shuts down.
+ */
+void
+vy_stmt_destroy_thread_alloc(struct small_alloc *alloc);
 
 /** Create a simple vinyl statement format. */
 struct tuple_format *

@@ -57,6 +57,7 @@
 #include "vy_quota.h"
 #include "vy_range.h"
 #include "vy_run.h"
+#include "vy_stmt.h"
 #include "vy_write_iterator.h"
 #include "trivia/util.h"
 
@@ -99,6 +100,8 @@ struct vy_worker {
 	struct stailq_entry in_idle;
 	/** Route for sending deferred DELETEs back to tx. */
 	struct cmsg_hop deferred_delete_route[2];
+	/** Slab allocator for vinyl tuples in this worker. */
+	struct small_alloc tuple_alloc;
 };
 
 /** Max number of statements in a batch of deferred DELETEs. */
@@ -2194,6 +2197,7 @@ vy_worker_f(va_list ap)
 	struct cbus_endpoint endpoint;
 
 	cpipe_create(&worker->tx_pipe, "tx");
+	vy_stmt_init_thread_alloc(&worker->tuple_alloc);
 	cbus_endpoint_create(&endpoint, cord_name(&worker->cord),
 			     fiber_schedule_cb, fiber());
 	cbus_loop(&endpoint);
@@ -2211,6 +2215,7 @@ vy_worker_f(va_list ap)
 		fiber_join(fiber);
 	}
 	cbus_endpoint_destroy(&endpoint, cbus_process);
+	vy_stmt_destroy_thread_alloc(&worker->tuple_alloc);
 	cpipe_destroy(&worker->tx_pipe);
 	return 0;
 }

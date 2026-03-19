@@ -1450,6 +1450,13 @@ tuple_to_buf(struct tuple *tuple, char *buf, size_t size);
 size_t
 tuple_runtime_memory_used(void);
 
+/** No-op callback for small_stats when only totals are needed. */
+int
+small_stats_noop_cb(const void *stats, void *cb_ctx);
+
+/** Default alloc factor for slab allocators. */
+extern const double ALLOC_FACTOR;
+
 /**
  * Allocate size bytes on runtime_alloc.
  * NB: Allocated memory will be accounted in runtime statisitcs

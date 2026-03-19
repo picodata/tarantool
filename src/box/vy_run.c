@@ -44,6 +44,7 @@
 #include "xlog.h"
 #include "xrow.h"
 #include "vy_history.h"
+#include "vy_stmt.h"
 
 static const uint64_t vy_page_info_key_map = (1 << VY_PAGE_INFO_OFFSET) |
 					     (1 << VY_PAGE_INFO_SIZE) |
@@ -85,6 +86,8 @@ struct vy_run_reader {
 	struct cpipe reader_pipe;
 	/** Pipe from the reader thread to tx. */
 	struct cpipe tx_pipe;
+	/** Per-thread slab allocator for vinyl tuples. */
+	struct small_alloc tuple_alloc;
 };
 
 /** Cbus task for vinyl page read. */
@@ -127,10 +130,12 @@ vy_run_reader_f(va_list ap)
 	struct cbus_endpoint endpoint;
 
 	cpipe_create(&reader->tx_pipe, "tx_prio");
+	vy_stmt_init_thread_alloc(&reader->tuple_alloc);
 	cbus_endpoint_create(&endpoint, cord_name(cord()),
 			     fiber_schedule_cb, fiber());
 	cbus_loop(&endpoint);
 	cbus_endpoint_destroy(&endpoint, cbus_process);
+	vy_stmt_destroy_thread_alloc(&reader->tuple_alloc);
 	cpipe_destroy(&reader->tx_pipe);
 	return 0;
 }
