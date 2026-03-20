@@ -136,7 +136,6 @@ vy_stmt_destroy_thread_alloc(struct small_alloc *alloc)
 static void
 vy_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 {
-	struct vy_stmt_env *env = format->engine;
 	size_t size = tuple_size(tuple);
 	assert(tuple_is_unreferenced(tuple));
 	/*
@@ -144,13 +143,8 @@ vy_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 	 * multithread unsafe modifications of a reference
 	 * counter.
 	 */
-	if (cord_is_main()) {
-		if (format != env->key_format) {
-			assert(env->sum_tuple_size >= size);
-			env->sum_tuple_size -= size;
-		}
+	if (cord_is_main())
 		tuple_format_unref(format);
-	}
 #ifndef NDEBUG
 	memset(tuple, '#', size); /* fail early */
 #endif
@@ -163,7 +157,6 @@ vy_stmt_env_create(struct vy_stmt_env *env)
 	env->tuple_format_vtab.tuple_new = vy_tuple_new;
 	env->tuple_format_vtab.tuple_delete = vy_tuple_delete;
 	env->max_tuple_size = 1024 * 1024;
-	env->sum_tuple_size = 0;
 
 	float actual_alloc_factor;
 	small_alloc_create(&env->tx_alloc, &cord()->slabc,
@@ -272,11 +265,8 @@ vy_stmt_alloc(struct tuple_format *format, uint32_t data_offset, uint32_t bsize)
 	}
 	tuple_create(tuple, 1, tuple_format_id(format),
 		     data_offset, bsize, false);
-	if (cord_is_main()) {
-		if (format != env->key_format)
-			env->sum_tuple_size += total_size;
+	if (cord_is_main())
 		tuple_format_ref(format);
-	}
 	vy_stmt_set_lsn(tuple, 0);
 	vy_stmt_set_type(tuple, 0);
 	vy_stmt_set_flags(tuple, 0);

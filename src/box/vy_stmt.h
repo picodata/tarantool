@@ -76,13 +76,6 @@ struct vy_stmt_env {
 	 */
 	size_t max_tuple_size;
 	/**
-	 * Size of memory occupied by all vinyl tuples allocated
-	 * in the main thread. Note, this doesn't include keys,
-	 * which should be fine because keys shouldn't stay in
-	 * memory for long.
-	 */
-	size_t sum_tuple_size;
-	/**
 	 * Slab allocator for vinyl tuples in the TX thread.
 	 * Backed by cord()->slabc (shared with the runtime
 	 * allocator), but tracked separately for vinyl-specific

@@ -34,28 +34,32 @@ g.test_tuple_stat = function(cg)
             box.tuple.new() -- drop blessed tuple ref
             collectgarbage()
         end
-        -- Initial value is 0.
+        local function tuple_mem()
+            return box.stat.vinyl().memory.tuple
+        end
+        -- Record baseline (includes key format tuples and
+        -- slab allocator overhead).
         gc()
-        t.assert_equals(box.stat.vinyl().memory.tuple, 0)
+        local baseline = tuple_mem()
 
         -- Tuples pinned by Lua.
         box.cfg({vinyl_cache = 0})
         local ret = box.space.test:select()
         t.assert_equals(#ret, 10)
-        t.assert_almost_equals(box.stat.vinyl().memory.tuple, 10 * 1000, 1000)
+        t.assert_almost_equals(tuple_mem() - baseline, 10 * 1000, 3000)
         ret = nil -- luacheck: ignore
         gc()
-        t.assert_equals(box.stat.vinyl().memory.tuple, 0)
+        t.assert_equals(tuple_mem(), baseline)
 
         -- Tuples pinned by cache.
         box.cfg({vinyl_cache = 100 * 1000})
         ret = box.space.test:select()
         t.assert_equals(#ret, 10)
-        t.assert_almost_equals(box.stat.vinyl().memory.tuple, 10 * 1000, 1000)
+        t.assert_almost_equals(tuple_mem() - baseline, 10 * 1000, 3000)
         ret = nil -- luacheck: ignore
         gc()
-        t.assert_almost_equals(box.stat.vinyl().memory.tuple, 10 * 1000, 1000)
+        t.assert_almost_equals(tuple_mem() - baseline, 10 * 1000, 3000)
         box.cfg({vinyl_cache = 0})
-        t.assert_equals(box.stat.vinyl().memory.tuple, 0)
+        t.assert_equals(tuple_mem(), baseline)
     end)
 end
