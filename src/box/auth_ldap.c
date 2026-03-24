@@ -37,7 +37,7 @@ format_dn(const char *fmt, const char *user, uint32_t user_len, char *buf, size_
 {
 	/** Magic should be replaced with the actual user */
 	const char *magic = "$USER";
-	char *suffix = strstr(fmt, magic);
+	const char *suffix = strstr(fmt, magic);
 	if (suffix == NULL) {
 		say_error("TT_LDAP_DN_FMT doesn't contain $USER");
 		return -1;
