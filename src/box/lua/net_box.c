@@ -379,7 +379,7 @@ netbox_request_register(struct netbox_request *request,
 {
 	struct mh_i64ptr_t *h = transport->requests;
 	struct mh_i64ptr_node_t node = { request->sync, request };
-	struct mh_i64ptr_node_t *old_node = NULL;
+	struct mh_i64ptr_node_t *old_node = &(typeof(*old_node)) {};
 	mh_i64ptr_put(h, &node, &old_node, NULL);
 	assert(old_node == NULL);
 	request->transport = transport;

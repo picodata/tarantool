@@ -176,10 +176,9 @@ read_view_register(struct read_view *rv)
 	if (read_views == NULL)
 		read_views = mh_i64ptr_new();
 	struct mh_i64ptr_node_t node = { rv->id, rv };
-	struct mh_i64ptr_node_t old_node;
-	struct mh_i64ptr_node_t *old_node_ptr = &old_node;
-	mh_i64ptr_put(read_views, &node, &old_node_ptr, NULL);
-	assert(old_node_ptr == NULL);
+	struct mh_i64ptr_node_t *old_node = &(typeof(*old_node)) {};
+	mh_i64ptr_put(read_views, &node, &old_node, NULL);
+	assert(old_node == NULL);
 }
 
 /** Helper function that removes a read view object from the read_views map. */

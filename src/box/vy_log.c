@@ -1469,7 +1469,7 @@ vy_recovery_do_create_lsm(struct vy_recovery *recovery, int64_t id,
 	lsm->key_parts = vy_recovery_alloc_key_parts(key_parts, key_part_count);
 	struct mh_i64ptr_t *h = recovery->lsm_hash;
 	struct mh_i64ptr_node_t node = { id, lsm };
-	struct mh_i64ptr_node_t *old_node = NULL;
+	struct mh_i64ptr_node_t *old_node = &(typeof(*old_node)) {};
 	mh_i64ptr_put(h, &node, &old_node, NULL);
 	assert(old_node == NULL);
 	lsm->id = id;
@@ -1700,7 +1700,7 @@ vy_recovery_do_create_run(struct vy_recovery *recovery, int64_t run_id)
 	struct vy_run_recovery_info *run = xmalloc(sizeof(*run));
 	struct mh_i64ptr_t *h = recovery->run_hash;
 	struct mh_i64ptr_node_t node = { run_id, run };
-	struct mh_i64ptr_node_t *old_node = NULL;
+	struct mh_i64ptr_node_t *old_node = &(typeof(*old_node)) {};
 	mh_i64ptr_put(h, &node, &old_node, NULL);
 	assert(old_node == NULL);
 	run->id = run_id;

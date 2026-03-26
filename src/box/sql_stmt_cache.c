@@ -198,7 +198,7 @@ sql_session_stmt_hash_add_id(struct mh_i32ptr_t *hash, uint32_t stmt_id)
 {
 	struct stmt_cache_entry *entry = stmt_cache_find_entry(stmt_id);
 	const struct mh_i32ptr_node_t id_node = { stmt_id, entry };
-	struct mh_i32ptr_node_t *old_node = NULL;
+	struct mh_i32ptr_node_t *old_node = &(typeof(*old_node)) {};
 	mh_i32ptr_put(hash, &id_node, &old_node, NULL);
 	assert(old_node == NULL);
 	entry->refs++;
@@ -256,7 +256,7 @@ sql_stmt_cache_insert(struct sql_stmt *stmt)
 	uint32_t stmt_id = sql_stmt_calculate_id(sql_str, strlen(sql_str));
 	assert(sql_stmt_cache_find(stmt_id) == NULL);
 	const struct mh_i32ptr_node_t id_node = { stmt_id, entry };
-	struct mh_i32ptr_node_t *old_node = NULL;
+	struct mh_i32ptr_node_t *old_node = &(typeof(*old_node)) {};
 	mh_i32ptr_put(hash, &id_node, &old_node, NULL);
 	assert(old_node == NULL);
 	sql_stmt_cache.mem_used += sql_cache_entry_sizeof(stmt);
