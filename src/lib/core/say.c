@@ -1032,7 +1032,9 @@ say_format_json(struct log *log, char *buf, int len, int level,
 		SNPRINT(total, snprintf, msg_ptr, msg_cap, "\"message\": \"");
 
 		static const char msg_tail[] = "\", ";
-		msg_cap -= strlen(msg_tail);
+		if (msg_cap >= (int)strlen(msg_tail)) {
+			msg_cap -= (int)strlen(msg_tail);
+		}
 
 		/*
 		 * Print the message.
