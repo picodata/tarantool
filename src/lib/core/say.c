@@ -1346,8 +1346,8 @@ say_parse_syslog_opts(const char *init_str, struct say_syslog_opts *opts)
 		diag_set(OutOfMemory, strlen(init_str), "malloc", "opts->copy");
 		return -1;
 	}
-	char *ptr = opts->copy;
-	const char *option, *value;
+	char *ptr = opts->copy, *option;
+	const char *value;
 
 	/* strsep() overwrites the separator with '\0' */
 	while ((option = strsep(&ptr, ","))) {
@@ -1387,7 +1387,7 @@ say_parse_syslog_opts(const char *init_str, struct say_syslog_opts *opts)
 	return 0;
 duplicate:
 	/* Terminate the "bad" option, by overwriting '=' sign */
-	((char *)value)[-1] = '\0';
+	(option + (value - option))[-1] = '\0';
 	diag_set(IllegalParams, "duplicate option '%s'", option);
 error:
 	free(opts->copy); opts->copy = NULL;
