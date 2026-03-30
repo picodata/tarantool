@@ -178,6 +178,15 @@ enum {
 	 * not included in VY_STMT_FLAGS_ALL.
 	 */
 	VY_STMT_COUNTED			= 1 << 4,
+	/**
+	 * Set on a statement when a point lookup finds a newer
+	 * version that is invisible in the current read view.
+	 * Tells the caller that this is not the latest version
+	 * and must not be cached.
+	 * Transient: never persisted, not included in
+	 * VY_STMT_FLAGS_ALL.
+	 */
+	VY_STMT_STALE			= 1 << 5,
 };
 
 /**
@@ -298,6 +307,13 @@ static inline void
 vy_stmt_del_flag(struct tuple *stmt, uint8_t flag)
 {
 	((struct vy_stmt *)stmt)->flags &= ~flag;
+}
+
+/** Check if the vinyl statement has a given flag set. */
+static inline bool
+vy_stmt_has_flag(struct tuple *stmt, uint8_t flag)
+{
+	return vy_stmt_flags(stmt) & flag;
 }
 
 /** Check if the entry has VY_STMT_EXCLUSIVE_BOUND flag set. */
