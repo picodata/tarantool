@@ -6,7 +6,7 @@ macro(ldap_build)
     # https://git.openldap.org/openldap/openldap
     set(LDAP_VERSION 2.6.7)
     set(LDAP_HASH cf71b4b455ab8dfc8fdd4e247d697ccd)
-    set(LDAP_URL https://mirror.lyrahosting.com/OpenLDAP/openldap-release/openldap-${LDAP_VERSION}.tgz)
+    set(LDAP_URL https://mirror.koddos.net/OpenLDAP/openldap-release/openldap-${LDAP_VERSION}.tgz)
 
     # Reusing approach from BuildLibCURL.cmake
     get_filename_component(OPENSSL_INSTALL_DIR ${OPENSSL_INCLUDE_DIR} DIRECTORY)
