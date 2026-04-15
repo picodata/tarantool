@@ -341,8 +341,16 @@ target_link_libraries(box box_error tuple stat xrow xlog vclock crc32 raft
 add_dependencies(box build_bundled_libs generate_sql_files)
 
 # Dump all include directories of libbox for bindgen.
+# This will produce an unparsable file if any include directory contains a space.
+# This is not changing the status quo: tarantool won't build in directory with spaces in the name anyways.
 get_target_property(box_include_dirs box INCLUDE_DIRECTORIES)
 list(APPEND box_include_dirs ${PROJECT_SOURCE_DIR}/src/box)
 list(TRANSFORM box_include_dirs PREPEND "-I ")
 list(JOIN box_include_dirs " " box_include_args)
 file(WRITE ${PROJECT_BINARY_DIR}/box-include-args ${box_include_args})
+
+# Dump all defines of libbox for bindgen.
+get_property(box_definitions DIRECTORY PROPERTY COMPILE_DEFINITIONS)
+list(TRANSFORM box_definitions PREPEND "-D")
+list(JOIN box_definitions " " box_define_args)
+file(WRITE ${PROJECT_BINARY_DIR}/box-define-args ${box_define_args})

@@ -10,6 +10,7 @@ _CPack_Packages
 .pc/
 oss-fuzz/
 box-include-args
+box-define-args
 bundled-ldap-prefix
 bundled-sasl-prefix
 coverity/
