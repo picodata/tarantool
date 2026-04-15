@@ -15,9 +15,18 @@ end
 local function range_insert_spawn(server, start, stop)
     for i = start, stop do
         server:exec(function(val)
-            require('fiber').new(function()
+            require('fiber').create(function()
                 box.space.test:replace { val }
             end)
+            -- WAL barrier: flush the WAL pipe so box.info.vclock
+            -- reflects the spawned row before we return.  Set
+            -- FORCE_ASYNC to skip the synchro limbo barrier
+            -- (see txn_journal_entry_new), otherwise this write
+            -- would park on the limbo behind the spawned sync
+            -- txn that has no quorum.
+            box.begin{flags = box.internal.TXN_FORCE_ASYNC}
+            box.space.wal_barrier:replace { val }
+            box.commit()
         end, { i })
 
         -- validation pass, ensure we indeed made these changes

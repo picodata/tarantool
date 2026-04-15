@@ -1081,6 +1081,13 @@ box_txn_set_timeout(double timeout);
 API_EXPORT int
 box_txn_set_isolation(uint32_t level);
 
+/**
+ * OR @a flags into the current transaction's flags.
+ * @retval 0 on success, -1 if there is no current transaction.
+ */
+API_EXPORT int
+box_txn_set_flags(uint32_t flags);
+
 /** \endcond public */
 
 typedef struct txn_savepoint box_txn_savepoint_t;

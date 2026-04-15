@@ -301,6 +301,11 @@ local function make_test_group(opts)
         g.cluster:get_leader():exec(function()
             local s = box.schema.create_space('test', { is_sync = true })
             s:create_index('pk')
+            -- Local space used as a WAL barrier (see
+            -- range_insert_spawn in qpromote_commit_and_rollback_test).
+            local b = box.schema.create_space('wal_barrier',
+                                              { is_local = true })
+            b:create_index('pk')
         end)
 
         -- For clarity in the test code, at the beginning of the test in

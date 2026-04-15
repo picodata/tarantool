@@ -1290,6 +1290,18 @@ box_txn_set_timeout(double timeout)
 	return 0;
 }
 
+int
+box_txn_set_flags(uint32_t flags)
+{
+	struct txn *txn = in_txn();
+	if (txn == NULL) {
+		diag_set(ClientError, ER_NO_TRANSACTION);
+		return -1;
+	}
+	txn_set_flags(txn, flags);
+	return 0;
+}
+
 void
 txn_set_xrow_flags(uint8_t xrow_flags)
 {

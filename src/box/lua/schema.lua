@@ -83,6 +83,8 @@ ffi.cdef[[
     box_txn_begin();
     int
     box_txn_set_timeout(double timeout);
+    int
+    box_txn_set_flags(uint32_t flags);
     void
     memtx_tx_story_gc_step();
     int
@@ -287,6 +289,10 @@ end
 
 box.internal.normalize_txn_isolation_level = normalize_txn_isolation_level
 
+-- Txn flags for box.begin{flags = ...}.
+-- See TXN_FORCE_ASYNC in src/box/txn.h.
+box.internal.TXN_FORCE_ASYNC = 0x40
+
 local begin_options = {
     timeout = function(timeout)
         if type(timeout) ~= "number" or timeout <= 0 then
@@ -296,16 +302,25 @@ local begin_options = {
         return true
     end,
     txn_isolation = normalize_txn_isolation_level,
+    flags = function(flags)
+        if type(flags) ~= "number" then
+            box.error(box.error.ILLEGAL_PARAMS,
+                      "flags must be a number")
+        end
+        return true
+    end,
 }
 
 box.begin = function(options)
     local timeout
     local txn_isolation
+    local flags
     if options then
         check_param_table(options, begin_options)
         timeout = options.timeout
         txn_isolation = options.txn_isolation and
                         normalize_txn_isolation_level(options.txn_isolation)
+        flags = options.flags
     end
     if builtin.box_txn_begin() == -1 then
         box.error()
@@ -315,6 +330,10 @@ box.begin = function(options)
     end
     if txn_isolation and
        internal.txn_set_isolation(txn_isolation) ~= 0 then
+        box.rollback()
+        box.error()
+    end
+    if flags and builtin.box_txn_set_flags(flags) ~= 0 then
         box.rollback()
         box.error()
     end
