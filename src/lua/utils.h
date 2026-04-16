@@ -289,8 +289,6 @@ luaL_maplen(struct lua_State *L, int idx)
 	return size;
 }
 
-extern int luaL_nil_ref;
-
 void
 luaL_register_type(struct lua_State *L, const char *type_name,
 		   const struct luaL_Reg *methods);
@@ -468,11 +466,8 @@ luaT_toerror(lua_State *L);
  * Can be used as replacement of nil in Lua tables.
  * @param L stack
  */
-static inline void
-luaL_pushnull(struct lua_State *L)
-{
-	lua_rawgeti(L, LUA_REGISTRYINDEX, luaL_nil_ref);
-}
+void
+luaL_pushnull(struct lua_State *L);
 
 /**
  * Return true if the value at Lua stack is ffi's NULL

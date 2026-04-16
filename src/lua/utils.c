@@ -545,6 +545,12 @@ luaL_pushint64(struct lua_State *L, int64_t val)
 	}
 }
 
+void
+luaL_pushnull(struct lua_State *L)
+{
+	lua_rawgeti(L, LUA_REGISTRYINDEX, luaL_nil_ref);
+}
+
 static inline int
 luaL_convertint64(lua_State *L, int idx, bool unsignd, int64_t *result)
 {
