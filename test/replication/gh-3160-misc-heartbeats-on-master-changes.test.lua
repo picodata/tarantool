@@ -6,6 +6,11 @@ SERVERS = { 'autobootstrap1', 'autobootstrap2', 'autobootstrap3' }
 -- Deploy a cluster.
 test_run:create_cluster(SERVERS, "replication", {args="0.03"})
 test_run:wait_fullmesh(SERVERS)
+-- wait_fullmesh only checks upstream follow status. Under heavy load,
+-- autobootstrap can leave transient XlogGapError relays that haven't
+-- reconnected yet; wait for full vclock convergence so those recover
+-- before the test loop starts.
+test_run:wait_cluster_vclock(SERVERS, test_run:get_cluster_vclock(SERVERS))
 test_run:cmd("switch autobootstrap3")
 test_run = require('test_run').new()
 _ = box.schema.space.create('test_timeout'):create_index('pk')

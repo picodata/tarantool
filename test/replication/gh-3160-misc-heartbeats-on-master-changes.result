@@ -12,6 +12,14 @@ test_run:create_cluster(SERVERS, "replication", {args="0.03"})
 test_run:wait_fullmesh(SERVERS)
 ---
 ...
+-- wait_fullmesh only checks upstream follow status. Under heavy load,
+-- autobootstrap can leave transient XlogGapError relays that haven't
+-- reconnected yet; wait for full vclock convergence so those recover
+-- before the test loop starts.
+test_run:wait_cluster_vclock(SERVERS, test_run:get_cluster_vclock(SERVERS))
+---
+- {1: 10}
+...
 test_run:cmd("switch autobootstrap3")
 ---
 - true
