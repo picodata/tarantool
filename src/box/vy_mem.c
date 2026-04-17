@@ -100,14 +100,14 @@ vy_mem_tree_extent_free(struct matras_allocator *allocator, void *p)
 struct vy_mem *
 vy_mem_new(struct vy_mem_env *env, struct key_def *cmp_def,
 	   struct tuple_format *format, int64_t generation,
-	   uint32_t space_cache_version)
+	   uint32_t space_cache_version, uint32_t iid)
 {
-	struct vy_mem *index = calloc(1, sizeof(*index));
-	if (!index) {
-		diag_set(OutOfMemory, sizeof(*index),
-			 "malloc", "struct vy_mem");
-		return NULL;
-	}
+	size_t size = sizeof(struct vy_mem);
+	if (iid == 0)
+		size += sizeof(struct vy_stmt_stat);
+	struct vy_mem *index = xcalloc(1, size);
+	if (iid == 0)
+		index->stmt = (struct vy_stmt_stat *)(index + 1);
 	index->env = env;
 	index->dump_lsn = -1;
 	index->cmp_def = cmp_def;
@@ -163,30 +163,138 @@ vy_mem_older_lsn(struct vy_mem *mem, struct vy_entry entry)
 	return result;
 }
 
+/**
+ * Find the older version of this key at the given tree position.
+ * The tree is ordered by (key, lsn DESC); advancing one step from
+ * @a at yields the older same-key entry if one exists.
+ */
+static inline struct vy_entry
+vy_mem_older_at(struct vy_mem *mem, struct vy_mem_tree_iterator *at)
+{
+	struct vy_mem_tree_iterator next = *at;
+	vy_mem_tree_iterator_next(&mem->tree, &next);
+	if (vy_mem_tree_iterator_is_invalid(&next))
+		return vy_entry_none();
+	struct vy_entry older =
+		*vy_mem_tree_iterator_get_elem(&mem->tree, &next);
+	struct vy_entry cur =
+		*vy_mem_tree_iterator_get_elem(&mem->tree, at);
+	if (vy_entry_compare(cur, older, mem->cmp_def) != 0)
+		return vy_entry_none();
+	return older;
+}
+
+/**
+ * Predicate: does this statement contribute to per-type stats
+ * used by space:len()?
+ *
+ * INSERT is always counted: vinyl enforces uniqueness, so a
+ * committed INSERT represents a genuinely new key.
+ *
+ * DELETE is counted unless it tombstones what is already a
+ * tombstone (blind re-delete); only the non-DELETE older case
+ * actually removes a live key.
+ *
+ * REPLACE and UPSERT are counted only when they recreate a
+ * key -- older is absent or itself a tombstone. Otherwise they
+ * rewrite a live key and belong to the blind-write correction,
+ * not the baseline.
+ */
+static inline bool
+vy_mem_stmt_is_counted(enum iproto_type type, struct vy_entry older)
+{
+	if (type == IPROTO_INSERT)
+		return true;
+	if (older.stmt == NULL)
+		return true;
+	enum iproto_type older_type = vy_stmt_type(older.stmt);
+	if (type == IPROTO_DELETE)
+		return older_type != IPROTO_DELETE;
+	return older_type == IPROTO_DELETE;
+}
+
+/**
+ * Account a committed entry against mem/lsm row/byte counters.
+ * The per-type stat is separately bumped (gated by VY_STMT_COUNTED)
+ * at the end of vy_mem_commit_stmt.
+ */
+static inline void
+vy_mem_acct(struct vy_mem *mem, struct vy_entry entry,
+	    struct vy_mem_stat *stat)
+{
+	mem->count.rows++;
+	stat->count.rows++;
+	size_t size = tuple_size(entry.stmt);
+	mem->count.bytes += size;
+	stat->count.bytes += size;
+}
+
+/**
+ * Reverse the row half of vy_mem_acct. Bytes stay -- lsregion
+ * cannot free individual allocations. Used by the upsert squash
+ * path to cancel the commit path's rows++ when a REPLACE
+ * displaces a committed UPSERT at the same (key, lsn).
+ */
+void
+vy_mem_unacct(struct vy_mem *mem, struct vy_mem_stat *stat)
+{
+	mem->count.rows--;
+	stat->count.rows--;
+}
+
+/**
+ * Set VY_STMT_COUNTED on @a entry if it should contribute to the
+ * per-type stats used by space:len(). Runs at insert (prepare)
+ * time while the tree iterator is still at hand, so the older
+ * lookup is O(1). The flag is then read at commit and at
+ * squash-displace without any tree work.
+ *
+ * Flag accuracy relies on (a) the stmt's physical tree position
+ * being stable between prepare and commit -- LSN is reassigned on
+ * commit but the BPS tree is not resorted, so the stmt stays below
+ * the same older neighbour; (b) in-place type changes preserving
+ * the DELETE/non-DELETE distinction the predicate keys on (only
+ * the squash UPSERT->REPLACE swap does this and is safe); (c)
+ * prepared-write rollbacks being rare enough that the occasional
+ * stale flag on a neighbour is within space:len()'s existing
+ * approximation budget.
+ */
+static inline void
+vy_mem_set_counted_flag(struct vy_mem *mem, struct vy_entry entry,
+			struct vy_mem_tree_iterator *at)
+{
+	if (mem->stmt == NULL)
+		return;
+	struct vy_entry older = vy_mem_older_at(mem, at);
+	if (!vy_mem_stmt_is_counted(vy_stmt_type(entry.stmt), older))
+		return;
+	vy_stmt_add_flag(entry.stmt, VY_STMT_COUNTED);
+}
+
 int
-vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
-		     struct vy_stmt_counter *count)
+vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry)
 {
 	assert(vy_stmt_type(entry.stmt) == IPROTO_UPSERT);
 	/* Check if the statement can be inserted in the vy_mem. */
 	assert(entry.stmt->format_id == tuple_format_id(mem->format));
 	/* The statement must be from a lsregion. */
 	assert(!vy_stmt_is_refable(entry.stmt));
-	size_t size = tuple_size(entry.stmt);
 	struct vy_entry replaced = vy_entry_none();
-	struct vy_mem_tree_iterator inserted;
+	struct vy_mem_tree_iterator at;
 	if (vy_mem_tree_insert_get_iterator(&mem->tree, entry, &replaced,
-					    &inserted) != 0)
+					    &at) != 0)
 		return -1;
-	assert(! vy_mem_tree_iterator_is_invalid(&inserted));
+	assert(!vy_mem_tree_iterator_is_invalid(&at));
 	assert(vy_entry_is_equal(entry,
-		*vy_mem_tree_iterator_get_elem(&mem->tree, &inserted)));
-	if (replaced.stmt == NULL) {
-		mem->count.rows++;
-		count->rows++;
-	}
-	mem->count.bytes += size;
-	count->bytes += size;
+		*vy_mem_tree_iterator_get_elem(&mem->tree, &at)));
+	/*
+	 * vy_tx_prepare squashes same-key writes within a txn and the
+	 * PK has no multikey or deferred-delete paths, so an UPSERT
+	 * never collides at (key, lsn). The squash path writes a
+	 * REPLACE (not an UPSERT) and goes through vy_mem_insert.
+	 */
+	assert(replaced.stmt == NULL);
+	vy_mem_set_counted_flag(mem, entry, &at);
 	/*
 	 * All iterators begin to see the new statement, and
 	 * will be aborted in case of rollback.
@@ -208,9 +316,9 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 	 * These values are used by vy_lsm_commit_upsert to squash
 	 * UPSERTs subsequence.
 	 */
-	vy_mem_tree_iterator_next(&mem->tree, &inserted);
+	vy_mem_tree_iterator_next(&mem->tree, &at);
 	struct vy_entry *older = vy_mem_tree_iterator_get_elem(&mem->tree,
-							       &inserted);
+							       &at);
 	if (older == NULL || vy_stmt_type(older->stmt) != IPROTO_UPSERT ||
 	    vy_entry_compare(entry, *older, mem->cmp_def) != 0)
 		return 0;
@@ -228,8 +336,7 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 }
 
 int
-vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
-	      struct vy_stmt_counter *count)
+vy_mem_insert(struct vy_mem *mem, struct vy_entry entry)
 {
 	assert(vy_stmt_type(entry.stmt) != IPROTO_UPSERT);
 	/* Check if the statement can be inserted in the vy_mem. */
@@ -237,26 +344,35 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 	       entry.stmt->format_id == tuple_format_id(mem->format));
 	/* The statement must be from a lsregion. */
 	assert(!vy_stmt_is_refable(entry.stmt));
-	size_t size = tuple_size(entry.stmt);
 	struct vy_entry replaced = vy_entry_none();
-	if (vy_mem_tree_insert(&mem->tree, entry, &replaced, NULL))
+	struct vy_mem_tree_iterator at;
+	if (vy_mem_tree_insert_get_iterator(&mem->tree, entry, &replaced,
+					    &at) != 0)
 		return -1;
-	if (replaced.stmt == NULL) {
-		mem->count.rows++;
-		count->rows++;
-	}
-	mem->count.bytes += size;
-	count->bytes += size;
-	/*
-	 * All iterators begin to see the new statement, and
-	 * will be aborted in case of rollback.
-	 */
 	mem->version++;
+	if (replaced.stmt != NULL) {
+		/*
+		 * On the PK this is the upsert squash path: REPLACE
+		 * displaces the topmost committed UPSERT at the same
+		 * (key, lsn); the squash itself compensates for the
+		 * extra rows++ at commit via vy_mem_unacct. Per-type
+		 * stays invariant (the counted-sum treats REPLACE and
+		 * UPSERT the same), so leave the flag clear. On SKs a
+		 * multikey tuple can emit the same (key, lsn) twice;
+		 * no per-type work either, since SKs don't keep it.
+		 */
+		assert(mem->stmt == NULL ||
+		       (vy_stmt_type(entry.stmt) == IPROTO_REPLACE &&
+			vy_stmt_type(replaced.stmt) == IPROTO_UPSERT));
+		return 0;
+	}
+	vy_mem_set_counted_flag(mem, entry, &at);
 	return 0;
 }
 
 void
-vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry)
+vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry,
+		   struct vy_mem_stat *stat)
 {
 	/* The statement must be from a lsregion. */
 	assert(!vy_stmt_is_refable(entry.stmt));
@@ -275,26 +391,30 @@ vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry)
 	 * yield finishes and return a stale tuple.
 	 */
 	mem->version++;
+	vy_mem_acct(mem, entry, stat);
+	/*
+	 * The flag is cached on the statement, which is shared across
+	 * the primary and secondary mems; gate on mem->stmt so only the
+	 * primary bumps per-type stats.
+	 */
+	if (mem->stmt != NULL &&
+	    (vy_stmt_flags(entry.stmt) & VY_STMT_COUNTED) != 0)
+		vy_stmt_stat_acct(mem->stmt, vy_stmt_type(entry.stmt));
 }
 
 void
-vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry,
-		     struct vy_stmt_counter *count)
+vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry)
 {
 	/* The statement must be from a lsregion. */
 	assert(!vy_stmt_is_refable(entry.stmt));
 	/*
-	 * The statement isn't present in the memory tree if it was replaced by
-	 * vy_mem_insert(). In this case we must not decrement the row count.
-	 *
-	 * Either way, we don't subtract the statement size because lsregion
-	 * doesn't support freeing memory.
+	 * Counters advance only on commit, so rollback leaves them
+	 * alone. The entry's storage stays in lsregion (which doesn't
+	 * support freeing individual allocations) until the mem is
+	 * retired.
 	 */
-	if (vy_mem_tree_delete(&mem->tree, entry) == 0) {
+	if (vy_mem_tree_delete(&mem->tree, entry) == 0)
 		mem->version++;
-		mem->count.rows--;
-		count->rows--;
-	}
 }
 
 /* }}} vy_mem */

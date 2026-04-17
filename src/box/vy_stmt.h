@@ -171,6 +171,13 @@ enum {
 	 * persisted, not included in VY_STMT_FLAGS_ALL.
 	 */
 	VY_STMT_EXCLUSIVE_BOUND		= 1 << 3,
+	/**
+	 * The statement contributes to the primary index's per-type
+	 * counters used by space:len(). Decided at prepare and cached
+	 * so commit avoids a tree lookup. Transient: never persisted,
+	 * not included in VY_STMT_FLAGS_ALL.
+	 */
+	VY_STMT_COUNTED			= 1 << 4,
 };
 
 /**
@@ -276,6 +283,13 @@ static inline void
 vy_stmt_set_flags(struct tuple *stmt, uint8_t flags)
 {
 	((struct vy_stmt *)stmt)->flags = flags;
+}
+
+/** OR one or more flags into the vinyl statement's flag word. */
+static inline void
+vy_stmt_add_flag(struct tuple *stmt, uint8_t flag)
+{
+	((struct vy_stmt *)stmt)->flags |= flag;
 }
 
 /** Check if the entry has VY_STMT_EXCLUSIVE_BOUND flag set. */

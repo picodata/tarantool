@@ -71,6 +71,19 @@ static const int64_t VY_MIN_RANGE_SIZE = 128 * 1024 * 1024;
  */
 static const int64_t VY_MAX_RANGE_SIZE = 2LL * 1024 * 1024 * 1024;
 
+/**
+ * Probe the last-level bloom filter on every Nth blind write
+ * to estimate the overwrite rate. Low enough to be negligible
+ * on the hot path, high enough to give statistically useful
+ * samples quickly (~100 samples after 1600 writes).
+ *
+ * The first sample-rate worth of blind writes after a counter
+ * reset is sampled unconditionally, so the estimate starts
+ * converging immediately instead of defaulting to "all blind
+ * writes are new" for the first sample period.
+ */
+enum { VY_BLIND_WRITE_SAMPLE_RATE = 16 };
+
 int
 vy_lsm_env_create(struct vy_lsm_env *env, const char *path,
 		  int64_t *p_generation, struct tuple_format *key_format,
@@ -239,6 +252,24 @@ vy_lsm_mem_tree_size(struct vy_lsm *lsm)
 	return size;
 }
 
+/**
+ * Sum per-type statement stats across the active mem and all
+ * sealed mems. Only meaningful on the primary index.
+ */
+struct vy_stmt_stat
+vy_lsm_mem_stmt_stat(struct vy_lsm *lsm)
+{
+	assert(lsm->index_id == 0);
+	assert(lsm->mem->stmt != NULL);
+	struct vy_stmt_stat s = *lsm->mem->stmt;
+	struct vy_mem *mem;
+	rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+		assert(mem->stmt != NULL);
+		vy_stmt_stat_add(&s, mem->stmt);
+	}
+	return s;
+}
+
 struct vy_lsm *
 vy_lsm_new(struct vy_lsm_env *lsm_env, struct vy_cache_env *cache_env,
 	   struct vy_mem_env *mem_env, struct index_def *index_def,
@@ -323,7 +354,8 @@ vy_lsm_new(struct vy_lsm_env *lsm_env, struct vy_cache_env *cache_env,
 
 	lsm->mem = vy_mem_new(mem_env, cmp_def, format,
 			      *lsm->env->p_generation,
-			      space_cache_version);
+			      space_cache_version,
+			      index_def->iid);
 	if (lsm->mem == NULL)
 		goto fail_mem;
 
@@ -1114,6 +1146,14 @@ vy_lsm_update_range(struct vy_lsm *lsm, struct vy_range *range,
 	if (!heap_node_is_stray(&range->heap_node)) {
 		vy_range_heap_update(&lsm->range_heap, range);
 	}
+	/*
+	 * If the new slice is last, reset the blind write probe
+	 * stats built against the old bloom filter.
+	 */
+	if (add_slice != NULL &&
+	    rlist_last_entry(&range->slices, struct vy_slice,
+			     in_range) == add_slice)
+		vy_blind_write_stat_reset(&lsm->stat.blind);
 }
 
 void
@@ -1182,7 +1222,8 @@ vy_lsm_rotate_mem(struct vy_lsm *lsm)
 
 	assert(lsm->mem != NULL);
 	mem = vy_mem_new(lsm->mem->env, lsm->cmp_def, lsm->mem_format,
-			 *lsm->env->p_generation, space_cache_version);
+			 *lsm->env->p_generation, space_cache_version,
+			 lsm->index_id);
 	if (mem == NULL)
 		return -1;
 
@@ -1211,6 +1252,40 @@ vy_lsm_delete_mem(struct vy_lsm *lsm, struct vy_mem *mem)
 	vy_stmt_counter_sub(&lsm->stat.memory.count, &mem->count);
 	vy_mem_delete(mem);
 	lsm->mem_list_version++;
+}
+
+/**
+ * Sample the last-level bloom filter for this key. A hit means
+ * the key is already on disk: a concurrent blind write is an
+ * overwrite (no new key added) and a concurrent blind delete
+ * removes a live tuple. A miss means the opposite -- the write
+ * introduces a new key, the delete is a phantom. space:len()
+ * uses the accumulated hit/miss ratio to estimate the net
+ * effect of blind operations.
+ */
+void
+vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt)
+{
+	assert(lsm->index_id == 0);
+	int64_t n = ++lsm->stat.blind.attempts;
+	if (n > VY_BLIND_WRITE_SAMPLE_RATE && n % VY_BLIND_WRITE_SAMPLE_RATE != 0)
+		return;
+	struct vy_entry entry = {
+		.stmt = stmt,
+		.hint = vy_stmt_hint(stmt, lsm->key_def),
+	};
+	struct vy_range *range = vy_range_tree_find_by_key(
+		&lsm->range_tree, ITER_EQ, entry);
+	if (range == NULL || rlist_empty(&range->slices))
+		return;
+	struct vy_slice *last = rlist_last_entry(&range->slices,
+						 struct vy_slice, in_range);
+	if (last->run->info.bloom == NULL)
+		return;
+	if (vy_bloom_maybe_has(last->run->info.bloom, entry, lsm->key_def))
+		lsm->stat.blind.write_hit++;
+	else
+		lsm->stat.blind.write_miss++;
 }
 
 int
@@ -1275,11 +1350,10 @@ vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 		return -1;
 
 	entry.stmt = *region_stmt;
-	struct vy_stmt_counter *count = &lsm->stat.memory.count;
 	if (vy_stmt_type(*region_stmt) != IPROTO_UPSERT)
-		return vy_mem_insert(mem, entry, count);
+		return vy_mem_insert(mem, entry);
 	else
-		return vy_mem_insert_upsert(mem, entry, count);
+		return vy_mem_insert_upsert(mem, entry);
 }
 
 /**
@@ -1361,7 +1435,7 @@ void
 vy_lsm_commit_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 		   struct vy_entry entry)
 {
-	vy_mem_commit_stmt(mem, entry);
+	vy_mem_commit_stmt(mem, entry, &lsm->stat.memory);
 
 	if (vy_stmt_type(entry.stmt) == IPROTO_UPSERT)
 		vy_lsm_commit_upsert(lsm, mem, entry);
@@ -1382,7 +1456,7 @@ void
 vy_lsm_rollback_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 		     struct vy_entry entry)
 {
-	vy_mem_rollback_stmt(mem, entry, &lsm->stat.memory.count);
+	vy_mem_rollback_stmt(mem, entry);
 	vy_cache_on_rollback(&lsm->cache, entry);
 }
 

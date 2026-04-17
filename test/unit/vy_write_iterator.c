@@ -172,7 +172,9 @@ test_basic(void)
 		STMT_TEMPLATE(14, REPLACE, 1, 10),
 	};
 	const struct vy_stmt_template expected[] = {
-		content[9], content[7], content[4], content[2]
+		content[9], content[7], content[4],
+		/* Oldest on last-level: REPLACE -> INSERT (opt #5). */
+		STMT_TEMPLATE(7, INSERT, 1, 3)
 	};
 	const int vlsns[] = {7, 9, 12};
 	int content_count = sizeof(content) / sizeof(content[0]);
@@ -234,7 +236,8 @@ test_basic(void)
 	};
 	const struct vy_stmt_template expected[] = {
 		content[3],
-		STMT_TEMPLATE(7, REPLACE, 1, 2)
+		/* Oldest on last-level: REPLACE -> INSERT (opt #5). */
+		STMT_TEMPLATE(7, INSERT, 1, 2)
 	};
 	const int vlsns[] = {7};
 	int content_count = sizeof(content) / sizeof(content[0]);
@@ -255,7 +258,11 @@ test_basic(void)
 		STMT_TEMPLATE(7, REPLACE, 1, 1),
 		STMT_TEMPLATE(8, REPLACE, 1, 2),
 	};
-	const struct vy_stmt_template expected[] = { content[1], content[0] };
+	const struct vy_stmt_template expected[] = {
+		content[1],
+		/* Oldest on last-level: REPLACE -> INSERT (opt #5). */
+		STMT_TEMPLATE(7, INSERT, 1, 1)
+	};
 	const int vlsns[] = {7, 8};
 	int content_count = sizeof(content) / sizeof(content[0]);
 	int expected_count = sizeof(expected) / sizeof(expected[0]);
@@ -279,7 +286,10 @@ test_basic(void)
 		STMT_TEMPLATE(7, DELETE, 1),
 		STMT_TEMPLATE(8, REPLACE, 1, 1),
 	};
-	const struct vy_stmt_template expected[] = { content[1] };
+	const struct vy_stmt_template expected[] = {
+		/* Sole output is also the oldest: REPLACE -> INSERT. */
+		STMT_TEMPLATE(8, INSERT, 1, 1)
+	};
 	const int vlsns[] = {7, 8};
 	int content_count = sizeof(content) / sizeof(content[0]);
 	int expected_count = sizeof(expected) / sizeof(expected[0]);
@@ -356,7 +366,9 @@ test_basic(void)
 		STMT_TEMPLATE(21, REPLACE, 1, 4)
 	};
 	const struct vy_stmt_template expected[] = {
-		content[3], content[2], content[1]
+		content[3], content[2],
+		/* Oldest on last-level: REPLACE -> INSERT (opt #5). */
+		STMT_TEMPLATE(7, INSERT, 1, 2)
 	};
 	const int vlsns[] = {7, 10, 20, 21, 22, 23};
 	int content_count = sizeof(content) / sizeof(content[0]);
@@ -537,7 +549,8 @@ test_basic(void)
 	const struct vy_stmt_template expected[] = {
 		STMT_TEMPLATE(16, REPLACE, 1, 8),
 		STMT_TEMPLATE(11, REPLACE, 1, 5),
-		STMT_TEMPLATE(7, REPLACE, 1, 4),
+		/* Oldest on last-level: REPLACE -> INSERT (opt #5). */
+		STMT_TEMPLATE(7, INSERT, 1, 4),
 	};
 	const struct vy_stmt_template deferred[] = {
 		STMT_TEMPLATE(16, DELETE, 1, 7),

@@ -1468,6 +1468,7 @@ memtx_space_invalidate(struct space *space)
 static const struct space_vtab memtx_space_vtab = {
 	/* .destroy = */ memtx_space_destroy,
 	/* .bsize = */ memtx_space_bsize,
+	/* .len = */ generic_space_len,
 	/* .execute_replace = */ memtx_space_execute_replace,
 	/* .execute_delete = */ memtx_space_execute_delete,
 	/* .execute_update = */ memtx_space_execute_update,

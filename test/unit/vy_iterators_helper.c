@@ -11,7 +11,7 @@ struct vy_stmt_env stmt_env;
 struct vy_mem_env mem_env;
 struct vy_cache_env cache_env;
 struct mempool history_node_pool;
-struct vy_stmt_counter dummy_count;
+struct vy_mem_stat dummy_stat;
 
 void
 vy_iterator_C_test_init(size_t cache_size)
@@ -150,9 +150,9 @@ vy_mem_insert_template(struct vy_mem *mem, const struct vy_stmt_template *templ)
 	tuple_unref(entry.stmt);
 	entry.stmt = region_stmt;
 	if (templ->type == IPROTO_UPSERT)
-		vy_mem_insert_upsert(mem, entry, &dummy_count);
+		vy_mem_insert_upsert(mem, entry);
 	else
-		vy_mem_insert(mem, entry, &dummy_count);
+		vy_mem_insert(mem, entry);
 	return entry;
 }
 
@@ -213,8 +213,8 @@ create_test_mem(struct key_def *def)
 	format = vy_simple_stmt_format_new(&stmt_env, &def, 1);
 	fail_if(format == NULL);
 
-	/* Create mem */
-	struct vy_mem *mem = vy_mem_new(&mem_env, def, format, 1, 0);
+	/* Create mem: tests treat it as a primary-index mem (iid=0). */
+	struct vy_mem *mem = vy_mem_new(&mem_env, def, format, 1, 0, 0);
 	fail_if(mem == NULL);
 	return mem;
 }
@@ -273,7 +273,14 @@ vy_stmt_are_same(struct vy_entry actual,
 		tuple_unref(tmp.stmt);
 		return false;
 	}
-	if (vy_stmt_flags(actual.stmt) != expected->flags) {
+	/*
+	 * Compare only persistent flags. Transient flags
+	 * (VY_STMT_COUNTED, VY_STMT_EXCLUSIVE_BOUND) ride on
+	 * in-memory statements as scratch space and are not part
+	 * of the equivalence the templates express.
+	 */
+	if ((vy_stmt_flags(actual.stmt) & VY_STMT_FLAGS_ALL) !=
+	    expected->flags) {
 		tuple_unref(tmp.stmt);
 		return false;
 	}

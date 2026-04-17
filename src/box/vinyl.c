@@ -1263,6 +1263,85 @@ vinyl_space_bsize(struct space *space)
 	return lsm->stat.memory.count.bytes + lsm->stat.disk.count.bytes;
 }
 
+/**
+ * Estimate the number of live tuples in a vinyl space by
+ * combining per-type statement counters across disk and memory
+ * with a bloom-based correction for blind writes.
+ */
+static ssize_t
+vinyl_space_len(struct space *space)
+{
+	struct index *pk = space_index(space, 0);
+	if (pk == NULL)
+		return 0;
+	struct vy_lsm *lsm = vy_lsm(pk);
+	struct vy_lsm_stat *stat = &lsm->stat;
+	struct vy_stmt_stat mem = vy_lsm_mem_stmt_stat(lsm);
+	uint32_t mask = space->blind_write_mask;
+	/* Triggers and wal_ext force vy_get at runtime. */
+	if (!rlist_empty(&space->on_replace) || space->wal_ext != NULL)
+		mask = 0;
+	/*
+	 * Baseline: (inserts - deletes). Exact across the
+	 * whole LSM: last-level surviving keys are INSERTs
+	 * after major compaction (vy_write_iterator converts
+	 * REPLACE/UPSERT -> INSERT when is_last_level), and
+	 * matching INSERT/DELETE pairs on intermediate levels
+	 * cancel out.
+	 */
+	int64_t count = (stat->disk.stmt.inserts -
+			 stat->disk.stmt.deletes) +
+			(mem.inserts - mem.deletes);
+	if (mask == 0)
+		return MAX(count, 0);
+	/*
+	 * Blind writes. REPLACE/UPSERT on blind-write spaces
+	 * may create new keys without being converted to
+	 * INSERT at DML time. Weight them by the bloom-
+	 * estimated new-key fraction to avoid overcounting
+	 * overwrites.
+	 *
+	 * Blind deletes on non-existent keys (phantom deletes)
+	 * are subtracted in the baseline but don't actually
+	 * remove anything. Add them back, weighted by the miss
+	 * fraction of the shared probe.
+	 */
+	int64_t blind = 0;
+	if (mask & (1 << IPROTO_REPLACE))
+		blind += stat->disk.stmt.replaces + mem.replaces;
+	if (mask & (1 << IPROTO_UPSERT))
+		blind += stat->disk.stmt.upserts + mem.upserts;
+	int64_t wt = stat->blind.write_hit + stat->blind.write_miss;
+	/*
+	 * With no samples yet or a degenerate bloom (fpr >= 1 means
+	 * every lookup reports "maybe present", so the probe has no
+	 * signal), fall back to adding the raw blind-write count.
+	 */
+	if (wt > 0 && lsm->opts.bloom_fpr < 1.0) {
+		/*
+		 * Observed misses undercount true misses by the
+		 * bloom's false-positive rate: a key that's truly
+		 * absent still has fpr probability of reporting
+		 * "maybe present." Correct by dividing by (1 - fpr)
+		 * and clamping.
+		 */
+		double miss_rate =
+			(double)stat->blind.write_miss / (double)wt;
+		miss_rate /= 1.0 - lsm->opts.bloom_fpr;
+		if (miss_rate > 1.0)
+			miss_rate = 1.0;
+		count += (int64_t)(blind * miss_rate);
+		if (mask & (1 << IPROTO_DELETE)) {
+			int64_t deletes = mem.deletes +
+					  stat->disk.stmt.deletes;
+			count += (int64_t)(deletes * miss_rate);
+		}
+	} else {
+		count += blind;
+	}
+	return MAX(count, 0);
+}
+
 static ssize_t
 vinyl_index_size(struct index *index)
 {
@@ -1905,6 +1984,7 @@ vy_delete(struct vy_env *env, struct vy_tx *tx, struct txn_stmt *stmt,
 			return -1;
 		if (space->index_count > 1)
 			vy_stmt_set_flags(delete, VY_STMT_DEFERRED_DELETE);
+		vy_lsm_probe_blind_write(pk, delete);
 		rc = vy_tx_set(tx, pk, delete);
 	}
 	tuple_unref(delete);
@@ -2123,6 +2203,8 @@ vy_lsm_upsert(struct vy_tx *tx, struct vy_lsm *lsm,
 	if (vystmt == NULL)
 		return -1;
 	assert(vy_stmt_type(vystmt) == IPROTO_UPSERT);
+	assert(lsm->index_id == 0);
+	vy_lsm_probe_blind_write(lsm, vystmt);
 	int rc = vy_tx_set(tx, lsm, vystmt);
 	tuple_unref(vystmt);
 	return rc;
@@ -2430,8 +2512,11 @@ vy_replace(struct vy_env *env, struct vy_tx *tx, struct txn_stmt *stmt,
 	 *   disabled.
 	 * - if the space has WAL extensions.
 	 */
-	if ((space->index_count > 1 && !vy_defer_deletes(space, pk)) ||
-	    !rlist_empty(&space->on_replace) || space->wal_ext != NULL) {
+	bool is_blind = (space->index_count <= 1 ||
+			 vy_defer_deletes(space, pk)) &&
+			rlist_empty(&space->on_replace) &&
+			space->wal_ext == NULL;
+	if (!is_blind) {
 		if (vy_get(pk, tx, vy_tx_read_view(tx),
 			   stmt->new_tuple, &stmt->old_tuple) != 0)
 			return -1;
@@ -2451,6 +2536,8 @@ vy_replace(struct vy_env *env, struct vy_tx *tx, struct txn_stmt *stmt,
 	 */
 	if (vy_tx_set(tx, pk, stmt->new_tuple) != 0)
 		return -1;
+	if (is_blind)
+		vy_lsm_probe_blind_write(pk, stmt->new_tuple);
 	if (space->index_count == 1)
 		return 0;
 	/*
@@ -3627,7 +3714,15 @@ vy_squash_process(struct vy_squash *squash)
 		 * We don't modify the resulting statement,
 		 * so there's no need in invalidating the cache.
 		 */
-		vy_mem_commit_stmt(mem, result);
+		vy_mem_commit_stmt(mem, result, &lsm->stat.memory);
+		/*
+		 * The squash REPLACE displaced a committed UPSERT at
+		 * the same (key, lsn). commit_stmt just bumped rows
+		 * for it, but the BPS tree swap did not add a new slot;
+		 * cancel the stray bump to keep rows counting live tree
+		 * entries.
+		 */
+		vy_mem_unacct(mem, &lsm->stat.memory);
 		vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_TX,
 				   mem_used_after - mem_used_before);
 		vy_regulator_check_dump_watermark(&env->regulator);
@@ -4155,9 +4250,9 @@ vy_build_insert_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 	vy_stmt_set_lsn(region_stmt, lsn);
 	struct vy_entry entry;
 	vy_stmt_foreach_entry(entry, region_stmt, lsm->cmp_def) {
-		if (vy_mem_insert(mem, entry, &lsm->stat.memory.count) != 0)
+		if (vy_mem_insert(mem, entry) != 0)
 			return -1;
-		vy_mem_commit_stmt(mem, entry);
+		vy_mem_commit_stmt(mem, entry, &lsm->stat.memory);
 	}
 	return 0;
 }
@@ -4778,6 +4873,7 @@ static const struct engine_vtab vinyl_engine_vtab = {
 static const struct space_vtab vinyl_space_vtab = {
 	/* .destroy = */ vinyl_space_destroy,
 	/* .bsize = */ vinyl_space_bsize,
+	/* .len = */ vinyl_space_len,
 	/* .execute_replace = */ vinyl_space_execute_replace,
 	/* .execute_delete = */ vinyl_space_execute_delete,
 	/* .execute_update = */ vinyl_space_execute_update,

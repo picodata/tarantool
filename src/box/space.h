@@ -61,6 +61,8 @@ struct space_vtab {
 	void (*destroy)(struct space *);
 	/** Return binary size of a space. */
 	size_t (*bsize)(struct space *);
+	/** Estimate the number of live tuples. */
+	ssize_t (*len)(struct space *space);
 
 	int (*execute_replace)(struct space *, struct txn *,
 			       struct request *, struct tuple **result);
@@ -202,6 +204,11 @@ struct space {
 	bool run_triggers;
 	/** This space has foreign key constraints in its format. */
 	bool has_foreign_keys;
+	/**
+	 * Bitmask of DML types written without an old-tuple
+	 * lookup. Used by vinyl for space:len().
+	 */
+	uint32_t blind_write_mask;
 	/**
 	 * Space format or NULL if space does not have format
 	 * (sysview engine, for example).
@@ -463,6 +470,10 @@ index_find_unique(struct space *space, uint32_t index_id)
 size_t
 space_bsize(struct space *space);
 
+/** Estimate the number of live tuples in the space. */
+ssize_t
+space_len(struct space *space);
+
 /** Get definition of the n-th index of the space. */
 struct index_def *
 space_index_def(struct space *space, int n);
@@ -668,6 +679,7 @@ space_pop_constraint_id(struct space *space, const char *name);
  * Virtual method stubs.
  */
 size_t generic_space_bsize(struct space *);
+ssize_t generic_space_len(struct space *);
 int generic_space_ephemeral_replace(struct space *, const char *, const char *);
 int generic_space_ephemeral_delete(struct space *, const char *);
 int generic_space_ephemeral_rowid_next(struct space *, uint64_t *);

@@ -50,6 +50,26 @@ struct vy_stmt_stat {
 	int64_t upserts;
 };
 
+/**
+ * Blind-write probe counters: sampled hits/misses against the
+ * last-level bloom filter, used to weight REPLACE/UPSERT in
+ * space:len(). Reset whenever the last-level bloom is rebuilt.
+ */
+struct vy_blind_write_stat {
+	/** Total blind-write probe attempts (sampling tick). */
+	int64_t attempts;
+	/** Blind writes (REPLACE/UPSERT) hitting bloom. */
+	int64_t write_hit;
+	/** Blind writes missing bloom (new keys). */
+	int64_t write_miss;
+};
+
+static inline void
+vy_blind_write_stat_reset(struct vy_blind_write_stat *stat)
+{
+	memset(stat, 0, sizeof(*stat));
+}
+
 /** Used for accounting statements stored in memory. */
 struct vy_stmt_counter {
 	/** Number of statements. */
@@ -146,8 +166,8 @@ struct vy_lsm_stat {
 		/** How many upserts have been applied on read. */
 		int64_t applied;
 	} upsert;
-	/** Memory related statistics. */
-	struct {
+	/** LSM-wide memory statistics updated by vy_mem_insert(). */
+	struct vy_mem_stat {
 		/** Number of statements stored in memory. */
 		struct vy_stmt_counter count;
 		/** Memory iterator statistics. */
@@ -197,6 +217,12 @@ struct vy_lsm_stat {
 	} txw;
 	/** Dictionary compression evaluation stats. */
 	struct vy_dict_index_stat dict;
+	/**
+	 * Bloom-based estimation of the overwrite rate for
+	 * blind writes, from sampled probes of the last-level
+	 * bloom filter.
+	 */
+	struct vy_blind_write_stat blind;
 };
 
 /** Tuple cache statistics. */
@@ -415,6 +441,30 @@ vy_stmt_stat_acct(struct vy_stmt_stat *stat, enum iproto_type type)
 		break;
 	case IPROTO_UPSERT:
 		stat->upserts++;
+		break;
+	default:
+		break;
+	}
+}
+
+/**
+ * Unaccount a single statement of the given type in @stat.
+ */
+static inline void
+vy_stmt_stat_unacct(struct vy_stmt_stat *stat, enum iproto_type type)
+{
+	switch (type) {
+	case IPROTO_INSERT:
+		stat->inserts--;
+		break;
+	case IPROTO_REPLACE:
+		stat->replaces--;
+		break;
+	case IPROTO_DELETE:
+		stat->deletes--;
+		break;
+	case IPROTO_UPSERT:
+		stat->upserts--;
 		break;
 	default:
 		break;

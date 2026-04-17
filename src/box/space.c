@@ -120,6 +120,19 @@ space_fill_index_map(struct space *space)
 			space->index[index_count++] = index;
 		}
 	}
+	/*
+	 * REPLACE and DELETE are blind when vy_replace/vy_delete
+	 * skip vy_get: no secondary indexes or defer_deletes is on.
+	 * UPSERT is blind on PK-only spaces (fast path).
+	 * Triggers and wal_ext are checked dynamically.
+	 */
+	space->blind_write_mask = 0;
+	if (space->index_count <= 1 || space->def->opts.defer_deletes) {
+		space->blind_write_mask |= (1 << IPROTO_REPLACE);
+		space->blind_write_mask |= (1 << IPROTO_DELETE);
+	}
+	if (space->index_count <= 1)
+		space->blind_write_mask |= (1 << IPROTO_UPSERT);
 }
 
 bool
@@ -176,6 +189,8 @@ space_init_constraints(struct space *space)
 		}
 	}
 	space->has_foreign_keys = has_foreign_keys;
+	if (has_foreign_keys)
+		space->blind_write_mask &= ~(1 << IPROTO_UPSERT);
 	return 0;
 }
 
@@ -510,6 +525,12 @@ size_t
 space_bsize(struct space *space)
 {
 	return space->vtab->bsize(space);
+}
+
+ssize_t
+space_len(struct space *space)
+{
+	return space->vtab->len(space);
 }
 
 struct index_def *
@@ -928,6 +949,15 @@ generic_space_bsize(struct space *space)
 {
 	(void)space;
 	return 0;
+}
+
+ssize_t
+generic_space_len(struct space *space)
+{
+	struct index *pk = space_index(space, 0);
+	if (pk == NULL)
+		return 0;
+	return index_size(pk);
 }
 
 int

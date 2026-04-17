@@ -451,6 +451,10 @@ vy_lsm_name(struct vy_lsm *lsm);
 size_t
 vy_lsm_mem_tree_size(struct vy_lsm *lsm);
 
+/** Return per-type statement counts summed across all mems. */
+struct vy_stmt_stat
+vy_lsm_mem_stmt_stat(struct vy_lsm *lsm);
+
 /** Allocate a new LSM tree object. */
 struct vy_lsm *
 vy_lsm_new(struct vy_lsm_env *lsm_env, struct vy_cache_env *cache_env,
@@ -748,6 +752,15 @@ vy_lsm_coalesce_range(struct vy_lsm *lsm, struct vy_range *range);
  */
 void
 vy_lsm_force_compaction(struct vy_lsm *lsm);
+
+/**
+ * Probe the last-level bloom for a blind write to estimate
+ * the overwrite rate. Callable on the primary index only.
+ * Handles sampling internally; safe to call on every blind
+ * write without additional gating.
+ */
+void
+vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
 
 /**
  * Insert a statement into the in-memory index of an LSM tree. If

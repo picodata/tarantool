@@ -169,6 +169,11 @@ struct vy_mem {
 	/** Number of statements. */
 	struct vy_stmt_counter count;
 	/**
+	 * Per-type statement stats, consumed by space:len().
+	 * Non-NULL only for the primary index.
+	 */
+	struct vy_stmt_stat *stmt;
+	/**
 	 * Max LSN covered by this in-memory tree.
 	 *
 	 * Once the tree is dumped to disk it will be used to update
@@ -260,13 +265,15 @@ vy_mem_wait_pinned(struct vy_mem *mem)
  * @param format Format for REPLACE and DELETE tuples.
  * @param generation Generation of statements stored in the tree.
  * @param space_cache_version Data dictionary cache version
+ * @param iid Index id. Statement stats are kept only for the
+ *        primary key.
  * @retval new vy_mem instance on success.
  * @retval NULL on error, check diag.
  */
 struct vy_mem *
 vy_mem_new(struct vy_mem_env *env, struct key_def *cmp_def,
 	   struct tuple_format *format, int64_t generation,
-	   uint32_t space_cache_version);
+	   uint32_t space_cache_version, uint32_t iid);
 
 /**
  * Delete in-memory level.
@@ -284,46 +291,54 @@ vy_mem_older_lsn(struct vy_mem *mem, struct vy_entry entry);
  * Insert a statement into the in-memory level.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
- * @param count      Statement counter to update.
  *
  * @retval  0 Success.
  * @retval -1 Memory error.
  */
 int
-vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
-	      struct vy_stmt_counter *count);
+vy_mem_insert(struct vy_mem *mem, struct vy_entry entry);
 
 /**
  * Insert an upsert statement into the mem.
  *
  * @param mem Mem to insert to.
  * @param entry Upsert statement to insert.
- * @param count Statement counter to update.
  *
  * @retval  0 Success.
  * @retval -1 Memory error.
  */
 int
-vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
-		     struct vy_stmt_counter *count);
+vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry);
 
 /**
  * Confirm insertion of a statement into the in-memory level.
+ * Advances row/byte counters and, on the primary index, the
+ * per-type stat gated by the VY_STMT_COUNTED flag cached at
+ * insert time.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
+ * @param stat       LSM memory stat to update.
  */
 void
-vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry);
+vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry,
+		   struct vy_mem_stat *stat);
 
 /**
- * Remove a statement from the in-memory level.
+ * Remove a statement from the in-memory level. Counters advance
+ * only on commit, so rollback leaves them alone.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
- * @param count      Statement counter to update.
  */
 void
-vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry,
-		     struct vy_stmt_counter *count);
+vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry);
+
+/**
+ * Reverse the row half of vy_mem_acct for a committed entry
+ * that was a tree-slot rewrite, not a new append. Used by the
+ * upsert squash after its commit_stmt. Bytes stay (lsregion).
+ */
+void
+vy_mem_unacct(struct vy_mem *mem, struct vy_mem_stat *stat);
 
 /**
  * Iterator for in-memory level.

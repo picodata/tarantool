@@ -335,7 +335,7 @@ stat_diff(istat(), st)
       rows: 25
     rows: 25
     statement:
-      replaces: 25
+      inserts: 25
     dump:
       input:
         rows: 25
@@ -387,7 +387,7 @@ stat_diff(istat(), st)
       rows: 26
     rows: 25
     statement:
-      replaces: 25
+      inserts: 25
     dump:
       input:
         rows: 50
@@ -1084,8 +1084,8 @@ istat()
       bytes: 105949
     rows: 100
     statement:
-      inserts: 0
-      replaces: 100
+      inserts: 100
+      replaces: 0
       upserts: 0
       deletes: 0
     dump:
@@ -1628,8 +1628,8 @@ box.snapshot()
 ...
 i:stat().disk.statement
 ---
-- inserts: 1
-  replaces: 1
+- inserts: 2
+  replaces: 0
   upserts: 0
   deletes: 0
 ...
@@ -1645,8 +1645,8 @@ box.snapshot()
 ...
 i:stat().disk.statement
 ---
-- inserts: 1
-  replaces: 1
+- inserts: 2
+  replaces: 0
   upserts: 1
   deletes: 1
 ...
@@ -1665,8 +1665,8 @@ i = s.index.primary
 ...
 i:stat().disk.statement
 ---
-- inserts: 1
-  replaces: 1
+- inserts: 2
+  replaces: 0
   upserts: 1
   deletes: 1
 ...

@@ -421,6 +421,7 @@ session_settings_space_create_index(struct space *space, struct index_def *def)
 const struct space_vtab session_settings_space_vtab = {
 	/* .destroy = */ session_settings_space_destroy,
 	/* .bsize = */ generic_space_bsize,
+	/* .len = */ generic_space_len,
 	/* .execute_replace = */ session_settings_space_execute_replace,
 	/* .execute_delete = */ session_settings_space_execute_delete,
 	/* .execute_update = */ session_settings_space_execute_update,

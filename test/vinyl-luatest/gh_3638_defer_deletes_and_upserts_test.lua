@@ -74,9 +74,12 @@ g.test_defer_deletes_and_upserts = function(cg)
                     output = {rows = 0},
                     queue = {rows = 0},
                 },
+                -- First dump is last-level (no prior runs), so the
+                -- REPLACE was converted to INSERT. Subsequent dumps
+                -- preserve the UPSERT and DELETE types.
                 statement = {
-                    inserts = 0,
-                    replaces = 1,
+                    inserts = 1,
+                    replaces = 0,
                     deletes = 1,
                     upserts = 1,
                 },

@@ -37,6 +37,7 @@ ffi.cdef[[
     struct space *space_by_id(uint32_t id);
     void space_run_triggers(struct space *space, bool yesno);
     size_t space_bsize(struct space *space);
+    ssize_t space_len(struct space *space);
 
     typedef struct tuple box_tuple_t;
     typedef struct iterator box_iterator_t;
@@ -2579,11 +2580,11 @@ memtx_index_mt.__ipairs = memtx_index_mt.pairs
 local space_mt = {}
 space_mt.len = function(space)
     check_space_arg(space, 'len')
-    local pk = space.index[0]
-    if pk == nil then
-        return 0 -- empty space without indexes, return 0
+    local s = builtin.space_by_id(space.id)
+    if s == nil then
+        box.error(box.error.NO_SUCH_SPACE, space.name)
     end
-    return space.index[0]:len()
+    return tonumber(builtin.space_len(s))
 end
 space_mt.count = function(space, key, opts)
     check_space_arg(space, 'count')

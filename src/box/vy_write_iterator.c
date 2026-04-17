@@ -723,6 +723,19 @@ vy_write_iterator_build_history(struct vy_write_iterator *stream,
 		}
 
 		/*
+		 * On the last level, a surviving key has no older
+		 * version below -- all prior versions were merged
+		 * or dropped. So any REPLACE/UPSERT emerging from
+		 * major compaction is semantically an INSERT, even
+		 * if the oldest source statement was a blind write.
+		 * This also lets space:len() recover the correct
+		 * count via the exact inserts-deletes formula after
+		 * DDL changes that alter blind_write_mask.
+		 */
+		if (stream->is_last_level)
+			*is_first_insert = true;
+
+		/*
 		 * Even if the deferred DELETE handler is unset, as it is
 		 * the case for dump, we still have to preserve the oldest
 		 * statement marked with VY_STMT_DEFERRED_DELETE for each

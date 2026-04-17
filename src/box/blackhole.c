@@ -109,6 +109,7 @@ blackhole_space_create_index(struct space *space, struct index_def *def)
 static const struct space_vtab blackhole_space_vtab = {
 	/* .destroy = */ blackhole_space_destroy,
 	/* .bsize = */ generic_space_bsize,
+	/* .len = */ generic_space_len,
 	/* .execute_replace = */ blackhole_space_execute_replace,
 	/* .execute_delete = */ blackhole_space_execute_delete,
 	/* .execute_update = */ blackhole_space_execute_update,

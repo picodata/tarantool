@@ -247,7 +247,7 @@ result
           bloom_filter: <bloom_filter>
           max_key: ['ЭЭЭ']
           page_count: 1
-          stmt_stat: {9: 0, 2: 0, 5: 0, 3: 13}
+          stmt_stat: {9: 0, 2: 13, 5: 0, 3: 0}
           max_lsn: 19
           min_key: ['1001']
       - HEADER:
@@ -262,67 +262,67 @@ result
   - - 00000000000000000008.run
     - - HEADER:
           lsn: 10
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1001', 1001]
       - HEADER:
           lsn: 11
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1002', 1002]
       - HEADER:
           lsn: 12
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1003', 1003]
       - HEADER:
           lsn: 13
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1004', 1004]
       - HEADER:
           lsn: 14
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1005', 1005]
       - HEADER:
           lsn: 15
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1006', 1006]
       - HEADER:
           lsn: 16
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1007', 1007]
       - HEADER:
           lsn: 17
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1008', 1008]
       - HEADER:
           lsn: 18
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1009', 1009]
       - HEADER:
           lsn: 19
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['1010', 1010]
       - HEADER:
           lsn: 9
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['ёёё', null]
       - HEADER:
           lsn: 8
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['эээ', null]
       - HEADER:
           lsn: 7
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: ['ЭЭЭ', null]
       - HEADER:
@@ -380,7 +380,7 @@ result
           bloom_filter: <bloom_filter>
           max_key: [1010, '1010']
           page_count: 1
-          stmt_stat: {9: 0, 2: 0, 5: 0, 3: 13}
+          stmt_stat: {9: 0, 2: 13, 5: 0, 3: 0}
           max_lsn: 19
           min_key: [null, 'ёёё']
       - HEADER:
@@ -395,67 +395,67 @@ result
   - - 00000000000000000006.run
     - - HEADER:
           lsn: 9
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [null, 'ёёё']
       - HEADER:
           lsn: 8
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [null, 'эээ']
       - HEADER:
           lsn: 7
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [null, 'ЭЭЭ']
       - HEADER:
           lsn: 10
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1001, '1001']
       - HEADER:
           lsn: 11
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1002, '1002']
       - HEADER:
           lsn: 12
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1003, '1003']
       - HEADER:
           lsn: 13
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1004, '1004']
       - HEADER:
           lsn: 14
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1005, '1005']
       - HEADER:
           lsn: 15
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1006, '1006']
       - HEADER:
           lsn: 16
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1007, '1007']
       - HEADER:
           lsn: 17
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1008, '1008']
       - HEADER:
           lsn: 18
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1009, '1009']
       - HEADER:
           lsn: 19
-          type: REPLACE
+          type: INSERT
         BODY:
           tuple: [1010, '1010']
       - HEADER:
