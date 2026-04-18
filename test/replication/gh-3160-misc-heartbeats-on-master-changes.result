@@ -39,10 +39,16 @@ local function replica(id)
 end
 
 function wait_not_follow(id_a, id_b)
-    return test_run:wait_cond(function()
+    local flipped = test_run:wait_cond(function()
         return replica(id_a).status ~= 'follow' or
                replica(id_b).status ~= 'follow'
     end, box.cfg.replication_timeout / 5)
+    if not flipped then return false end
+    local recovered = test_run:wait_cond(function()
+        return replica(id_a).status == 'follow' and
+               replica(id_b).status == 'follow'
+    end, box.cfg.replication_timeout * 10)
+    return not recovered
 end;
 ---
 ...
