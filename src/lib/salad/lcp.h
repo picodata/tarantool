@@ -254,6 +254,8 @@ lcp_index_iter_init(struct lcp_index_iter *it,
 	if (index->count > 0) {
 		lcp_group_iter_init(&it->group_iter,
 				    &index->groups[0], buf);
+	} else {
+		memset(&it->group_iter, 0, sizeof(it->group_iter));
 	}
 }
 
