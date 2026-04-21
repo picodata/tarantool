@@ -88,6 +88,22 @@ uint64_t
 stmt_cache_schema_version(void);
 
 /**
+ * Decide whether a DDL operation on a temporary space should
+ * bump the statement cache schema version.
+ *
+ * Returns true to bump the version, false to leave it unchanged.
+ */
+typedef bool
+(*stmt_cache_bump_temp_f)(uint32_t space_id);
+
+/**
+ * An optional callback consulted by temporary-space DDL in
+ * schema_version_bump(). If NULL, temporary-space DDL bumps
+ * the statement cache schema version unconditionally.
+ */
+extern stmt_cache_bump_temp_f stmt_cache_bump_temp_cb;
+
+/**
  * Bump the schema version for the statement cache.
  */
 void

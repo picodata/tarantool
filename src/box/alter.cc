@@ -1649,9 +1649,15 @@ TruncateIndex::~TruncateIndex()
 static inline void
 schema_version_bump(struct space *space)
 {
-	if (!space_is_temporary(space))
+	if (!space_is_temporary(space)) {
 		box_bump_schema_version();
-	stmt_cache_bump_schema_version();
+		stmt_cache_bump_schema_version();
+		return;
+	}
+	if (stmt_cache_bump_temp_cb == NULL ||
+	    stmt_cache_bump_temp_cb(space->def->id)) {
+		stmt_cache_bump_schema_version();
+	}
 }
 
 /**

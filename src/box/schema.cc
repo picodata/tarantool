@@ -58,6 +58,7 @@
  */
 
 static struct mh_i32ptr_t *sequences;
+stmt_cache_bump_temp_f stmt_cache_bump_temp_cb;
 
 /** Schema version. */
 struct version {
