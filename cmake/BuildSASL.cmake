@@ -12,6 +12,24 @@ macro(sasl_build)
     # Reusing approach from BuildLibCURL.cmake
     get_filename_component(OPENSSL_INSTALL_DIR ${OPENSSL_INCLUDE_DIR} DIRECTORY)
 
+    # clang is very strict about missing `#include <time.h>`.
+    set(SASL_EXTRA_CFLAGS_LIST
+        "-Wno-error=incompatible-pointer-types"
+        "-Wno-error=implicit-function-declaration")
+
+    set(SASL_EXTRA_CFLAGS "")
+    foreach(CFLAG IN LISTS SASL_EXTRA_CFLAGS_LIST)
+        set(SASL_C_FLAG_NAME "SASL_C_FLAG_${CFLAG}")
+        string(MAKE_C_IDENTIFIER "${SASL_C_FLAG_NAME}" SASL_C_FLAG_NAME)
+
+        # XXX: check_c_compiler_flag caches the variable, so
+        # we have to use a unique variable name for each check.
+        check_c_compiler_flag(${CFLAG} ${SASL_C_FLAG_NAME})
+        if(${SASL_C_FLAG_NAME})
+            set(SASL_EXTRA_CFLAGS "${SASL_EXTRA_CFLAGS} ${CFLAG}")
+        endif()
+    endforeach()
+
     include(ExternalProject)
     ExternalProject_Add(bundled-sasl
         DEPENDS ${LDAP_OPENSSL_DEPS}
@@ -20,7 +38,7 @@ macro(sasl_build)
         URL_MD5 ${SASL_HASH}
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             "CC=${CMAKE_C_COMPILER}"
-            "CFLAGS=${DEPENDENCY_CFLAGS}"
+            "CFLAGS=${DEPENDENCY_CFLAGS} ${SASL_EXTRA_CFLAGS}"
             "CPPFLAGS=${DEPENDENCY_CPPFLAGS} -I${OPENSSL_INCLUDE_DIR}"
             "LDFLAGS=-L${OPENSSL_INSTALL_DIR}/lib"
             "LIBS=-lssl -lcrypto -ldl -lpthread"
