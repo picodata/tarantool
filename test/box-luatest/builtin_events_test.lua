@@ -130,9 +130,17 @@ g.test_box_status = function(cg)
 
     -- promotion should turn rm
     cg.master:exec(function() box.ctl.promote(); box.ctl.wait_rw() end)
-    t.helpers.retrying({}, function() t.assert_ge(result_no, 7) end)
-    t.assert_equals(result,
-                    {is_ro = false, is_ro_cfg = false, status = 'running'})
+    -- Promotion can emit three box.status events: raft becomes
+    -- leader (is_ro=false), the PROMOTE entry enters txn_limbo
+    -- (is_ro=true while limbo holds it), the entry is confirmed
+    -- and limbo clears (is_ro=false). Polling only on the count
+    -- can exit on the middle event; require the snapshot too.
+    t.helpers.retrying({}, function()
+        t.assert_ge(result_no, 7)
+        t.assert_equals(result,
+                        {is_ro = false, is_ro_cfg = false,
+                         status = 'running'})
+    end)
 
     watcher:unregister()
     c:close()
