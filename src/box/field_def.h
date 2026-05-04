@@ -91,17 +91,18 @@ enum {
 	/**
 	 * This mask allows to store in VdbeOp.p5 operand of
 	 * OP_Eq, OP_Lt etc opcodes field type alongside with
-	 * flags.
+	 * flags. Uses bits 0-4 (5 bits), allowing up to 32 field types.
+	 * Comparison flags (SQL_JUMPIFNULL, etc.) start at bit 5.
 	 */
-	FIELD_TYPE_MASK = 15
+	FIELD_TYPE_MASK = 31
 };
 
 /**
  * For detailed explanation see context of OP_Eq, OP_Lt etc
  * opcodes in vdbe.c.
  */
-static_assert((int) field_type_MAX <= (int) FIELD_TYPE_MASK,
-	      "values of enum field_type should fit into 4 bits of VdbeOp.p5");
+static_assert((int)field_type_MAX <= (int)FIELD_TYPE_MASK + 1,
+	      "values of enum field_type should fit into 5 bits of VdbeOp.p5");
 
 extern const char *field_type_strs[];
 

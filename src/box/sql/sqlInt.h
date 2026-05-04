@@ -1138,12 +1138,46 @@ enum trim_side_mask {
  * It causes an assert() to fire if either operand to a comparison
  * operator is NULL.  It is added to certain comparison operators to
  * prove that the operands are always NOT NULL.
+ *
+ * Bit layout for comparison opcodes (OP_Eq, OP_Ne, OP_Lt, OP_Le, OP_Gt, OP_Ge):
+ *   Bits 0-4 (0x1F): Field type
+ *   Bit 5    (0x20): SQL_JUMPIFNULL
+ *   Bit 6    (0x40): SQL_STOREP2
+ *   Bit 7    (0x80): SQL_KEEPNULL
+ *   Bit 8   (0x100): SQL_NULLEQ
  */
-#define SQL_JUMPIFNULL   0x10	/* jumps if either operand is NULL */
-#define SQL_STOREP2      0x20	/* Store result in reg[P2] rather than jump */
-#define SQL_KEEPNULL     0x40	/* Used by vector == or <> */
-#define SQL_NULLEQ       0x80	/* NULL=NULL */
-#define SQL_NOTNULL      0x90	/* Assert that operands are never NULL */
+#define SQL_JUMPIFNULL   0x20	/* jumps if either operand is NULL */
+#define SQL_STOREP2      0x40	/* Store result in reg[P2] rather than jump */
+#define SQL_KEEPNULL     0x80	/* Used by vector == or <> */
+#define SQL_NULLEQ      0x100	/* NULL=NULL */
+#define SQL_NOTNULL     0x120	/* Assert that operands are never NULL */
+
+/*
+ * Compile-time checks for p5 flag layout in comparison opcodes.
+ * These ensure flags don't overlap with FIELD_TYPE_MASK or each other.
+ */
+static_assert((SQL_JUMPIFNULL & FIELD_TYPE_MASK) == 0,
+	      "SQL_JUMPIFNULL must not overlap with FIELD_TYPE_MASK");
+static_assert((SQL_STOREP2 & FIELD_TYPE_MASK) == 0,
+	      "SQL_STOREP2 must not overlap with FIELD_TYPE_MASK");
+static_assert((SQL_KEEPNULL & FIELD_TYPE_MASK) == 0,
+	      "SQL_KEEPNULL must not overlap with FIELD_TYPE_MASK");
+static_assert((SQL_NULLEQ & FIELD_TYPE_MASK) == 0,
+	      "SQL_NULLEQ must not overlap with FIELD_TYPE_MASK");
+static_assert((SQL_JUMPIFNULL & SQL_STOREP2) == 0,
+	      "SQL_JUMPIFNULL and SQL_STOREP2 must not overlap");
+static_assert((SQL_JUMPIFNULL & SQL_KEEPNULL) == 0,
+	      "SQL_JUMPIFNULL and SQL_KEEPNULL must not overlap");
+static_assert((SQL_JUMPIFNULL & SQL_NULLEQ) == 0,
+	      "SQL_JUMPIFNULL and SQL_NULLEQ must not overlap");
+static_assert((SQL_STOREP2 & SQL_KEEPNULL) == 0,
+	      "SQL_STOREP2 and SQL_KEEPNULL must not overlap");
+static_assert((SQL_STOREP2 & SQL_NULLEQ) == 0,
+	      "SQL_STOREP2 and SQL_NULLEQ must not overlap");
+static_assert((SQL_KEEPNULL & SQL_NULLEQ) == 0,
+	      "SQL_KEEPNULL and SQL_NULLEQ must not overlap");
+static_assert(SQL_NOTNULL == (SQL_JUMPIFNULL | SQL_NULLEQ),
+	      "SQL_NOTNULL must equal SQL_JUMPIFNULL | SQL_NULLEQ");
 
 /**
  * Return logarithm of tuple count in space.

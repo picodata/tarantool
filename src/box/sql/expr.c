@@ -486,6 +486,8 @@ expr_cmp_mutual_type(struct Expr *pExpr)
 static u8
 binaryCompareP5(Expr * pExpr1, Expr * pExpr2, int jumpIfNull)
 {
+	static_assert((FIELD_TYPE_MASK | SQL_JUMPIFNULL) <= 0xFF,
+		      "result must fit in u8");
 	enum field_type lhs = sql_expr_type(pExpr2);
 	enum field_type rhs = sql_expr_type(pExpr1);
 	u8 type_mask = sql_type_result(rhs, lhs) | (u8) jumpIfNull;
