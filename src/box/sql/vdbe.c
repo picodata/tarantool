@@ -1004,7 +1004,7 @@ case OP_SCopy: {            /* out2 */
 	break;
 }
 
-/* Opcode: ResultRow P1 P2 * * *
+/* Opcode: ResultRow P1 P2 P3 * *
  * Synopsis: output=r[P1@P2]
  *
  * The registers P1 through P1+P2-1 contain a single row of
@@ -1012,12 +1012,27 @@ case OP_SCopy: {            /* out2 */
  * with an SQL_ROW return code and it sets up the sql_stmt
  * structure to provide access to the r(P1)..r(P1+P2-1) values as
  * the result row.
+ *
+ * If P3 is non-zero, the row is not emitted to the caller; instead
+ * values in r[P1@P@] are copied into the bind variable slots aVar[P3-1@P2].
+ * This is used by picodata's transaction compiler to lift the scalar
+ * result of a LET assignment or IF-condition subprogram into slots
+ * that subsequent statements in the transaction read via OP_Variable.
+ * P3 is 0 for all other callers, so existing behaviour is preserved.
  */
 case OP_ResultRow: {
-	assert(p->nResColumn==pOp->p2);
+	assert(p->pFrame != NULL || p->nResColumn == pOp->p2);
 	assert(pOp->p1>0);
 	assert(pOp->p1+pOp->p2<=(p->nMem+1 - p->nCursor)+1);
 	assert(p->iStatement == 0 && p->anonymous_savepoint == NULL);
+
+	if (pOp->p3 != 0) {
+		assert(pOp->p2 >= 1);
+		for (int i = 0; i < pOp->p2; i++) {
+			mem_copy(&p->aVar[pOp->p3 - 1 + i], &aMem[pOp->p1 + i]);
+		}
+		break;
+	}
 
 	/* Invalidate all ephemeral cursor row caches */
 	p->cacheCtr = (p->cacheCtr + 2)|1;
