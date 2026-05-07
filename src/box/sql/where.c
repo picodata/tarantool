@@ -2268,16 +2268,13 @@ whereRangeVectorLen(Parse * pParse,	/* Parsing context */
 		    parts[i + nEq].sort_order != parts[nEq].sort_order)
 			break;
 		enum field_type rhs_type = sql_expr_type(pRhs);
-		enum field_type type =
-			sql_type_result(rhs_type, sql_expr_type(pLhs));
-		enum field_type idx_type = pLhs->iColumn >= 0 ?
-			space->def->fields[pLhs->iColumn].type : FIELD_TYPE_INTEGER;
-		if (type != idx_type)
+		assert(pLhs->iColumn >= 0);
+		enum field_type idx_type =
+			space->def->fields[pLhs->iColumn].type;
+		if (!field_type1_lookup_compatible_with_type2(rhs_type, idx_type))
 			break;
 		uint32_t id;
 		if (sql_binary_compare_coll_seq(pParse, pLhs, pRhs, &id) != 0)
-			break;
-		if (id == COLL_NONE)
 			break;
 		if (idx_def->key_def->parts[i + nEq].coll_id != id)
 			break;

@@ -3989,7 +3989,7 @@ u8 sqlHexToInt(int h);
 
 /**
  * Return the collation sequence for the expression pExpr. If
- * there is no defined collating sequence, return NULL.
+ * there is no explicit collating sequence found, return COLL_NONE.
  *
  * The collating sequence might be determined by a COLLATE operator
  * or by the presence of a column with a defined collating sequence.
@@ -4369,14 +4369,12 @@ int sqlReprepare(Vdbe *);
  *  - one of collations is mentioned alongside with explicit
  *    COLLATE clause, which forces this collation over another
  *    one. It is allowed to have the same forced collations;
- * - both collations are derived from table columns and they
- *   are the same;
- * - one collation is derived from table column and another
- *   one is not specified (i.e. COLL_NONE);
+ * - one of collations is COLL_NONE, another is not;
+ * - collations are the same;
  * In all other cases they are not accounted to be compatible
  * and error should be raised.
  * Collation to be used in comparison operator is returned
- * via @res_id: in case one of collations is absent, then
+ * via @res_id: in case one of collations is COLL_NONE, then
  * the second one is utilized.
  */
 int
@@ -4385,23 +4383,16 @@ collations_check_compatibility(uint32_t lhs_id, bool is_lhs_forced,
 			       uint32_t *res_id);
 
 /**
- * Return a pointer to the collation sequence that should be used
+ * Return a collation id of collation sequence that should be used
  * by a binary comparison operator comparing left and right.
  *
- * If the left hand expression has a collating sequence type, then
- * it is used. Otherwise the collation sequence for the right hand
- * expression is used, or the default (BINARY) if neither
- * expression has a collating type.
- *
- * Argument right (but not left) may be a null pointer. In this
- * case, it is not considered.
  * @param parser Parser.
  * @param left Left expression.
- * @param right Right expression. Can be NULL.
+ * @param right Right expression.
  * @param[out] id Id of resulting collation.
  *
  * @retval 0 on success.
- * @retval -1 in case of error (e.g. no collation found).
+ * @retval -1 in case of (incompatible collations or failed sql_expr_coll).
  */
 int
 sql_binary_compare_coll_seq(Parse *parser, Expr *left, Expr *right,
