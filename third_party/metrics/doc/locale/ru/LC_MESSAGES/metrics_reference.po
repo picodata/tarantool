@@ -73,6 +73,12 @@ msgid ""
 "box_slab>`."
 msgstr ""
 
+msgid ""
+"The ``tnt_slab_system_*`` metrics describe the system memtx allocator, which"
+" is configured by ``memtx_system_memory`` and used to store tuples and "
+"indexes of system spaces."
+msgstr ""
+
 msgid "Available memory, bytes:"
 msgstr ""
 
@@ -82,13 +88,29 @@ msgid ""
 msgstr ""
 
 msgid ""
+"``tnt_slab_system_quota_size``—the amount of memory available to store "
+"tuples and indexes of system spaces, equals ``memtx_system_memory``."
+msgstr ""
+
+msgid ""
 "``tnt_slab_arena_size``—the total memory used for tuples and indexes "
 "together (including allocated, but currently free slabs)."
 msgstr ""
 
 msgid ""
+"``tnt_slab_system_arena_size``—the total memory used for tuples and indexes "
+"of system spaces together (including allocated, but currently free slabs)."
+msgstr ""
+
+msgid ""
 "``tnt_slab_items_size``—the total amount of memory (including allocated, but"
 " currently free slabs) used only for tuples, no indexes."
+msgstr ""
+
+msgid ""
+"``tnt_slab_system_items_size``—the total amount of memory (including "
+"allocated, but currently free slabs) used only for tuples of system spaces, "
+"no indexes."
 msgstr ""
 
 msgid "Memory usage, bytes:"
@@ -100,13 +122,29 @@ msgid ""
 msgstr ""
 
 msgid ""
+"``tnt_slab_system_quota_used``—the amount of memory that is already reserved"
+" by the system memtx allocator."
+msgstr ""
+
+msgid ""
 "``tnt_slab_arena_used``—the efficient memory used for storing tuples and "
 "indexes together (omitting allocated, but currently free slabs)."
 msgstr ""
 
 msgid ""
+"``tnt_slab_system_arena_used``—the efficient memory used for tuples and "
+"indexes of system spaces (omitting allocated, but currently free slabs)."
+msgstr ""
+
+msgid ""
 "``tnt_slab_items_used``—the efficient amount of memory (omitting allocated, "
 "but currently free slabs) used only for tuples, no indexes."
+msgstr ""
+
+msgid ""
+"``tnt_slab_system_items_used``—the efficient amount of memory (omitting "
+"allocated, but currently free slabs) used only for tuples of system spaces, "
+"no indexes."
 msgstr ""
 
 msgid "Memory utilization, %:"
@@ -117,11 +155,26 @@ msgid ""
 msgstr ""
 
 msgid ""
+"``tnt_slab_system_quota_used_ratio``—tnt_slab_system_quota_used / "
+"tnt_slab_system_quota_size."
+msgstr ""
+
+msgid ""
 "``tnt_slab_arena_used_ratio``—tnt_slab_arena_used / tnt_slab_arena_used."
 msgstr ""
 
 msgid ""
+"``tnt_slab_system_arena_used_ratio``—tnt_slab_system_arena_used / "
+"tnt_slab_system_arena_size."
+msgstr ""
+
+msgid ""
 "``tnt_slab_items_used_ratio``—tnt_slab_items_used / tnt_slab_items_size."
+msgstr ""
+
+msgid ""
+"``tnt_slab_system_items_used_ratio``—tnt_slab_system_items_used / "
+"tnt_slab_system_items_size."
 msgstr ""
 
 msgid "Spaces"

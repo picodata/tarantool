@@ -70,6 +70,9 @@ The slab allocator is the main allocator used to store tuples.
 The following metrics help monitor the total memory usage and memory fragmentation.
 To learn more about use cases, refer to the
 :ref:`box.slab submodule documentation <box_introspection-box_slab>`.
+The ``tnt_slab_system_*`` metrics describe the system memtx allocator,
+which is configured by ``memtx_system_memory`` and used to store tuples
+and indexes of system spaces.
 
 Available memory, bytes:
 
@@ -82,11 +85,20 @@ Available memory, bytes:
         *   -   ``tnt_slab_quota_size``
             -   Amount of memory available to store tuples and indexes.
                 Is equal to ``memtx_memory``.
+        *   -   ``tnt_slab_system_quota_size``
+            -   Amount of memory available to store tuples and indexes of system spaces.
+                Is equal to ``memtx_system_memory``.
         *   -   ``tnt_slab_arena_size``
             -   Total memory available to store both tuples and indexes.
                 Includes allocated but currently free slabs.
+        *   -   ``tnt_slab_system_arena_size``
+            -   Total memory available to store both tuples and indexes of system spaces.
+                Includes allocated but currently free slabs.
         *   -   ``tnt_slab_items_size``
             -   Total amount of memory available to store only tuples and not indexes.
+                Includes allocated but currently free slabs.
+        *   -   ``tnt_slab_system_items_size``
+            -   Total amount of memory available to store only tuples of system spaces and not indexes.
                 Includes allocated but currently free slabs.
 
 Memory usage, bytes:
@@ -99,11 +111,19 @@ Memory usage, bytes:
 
         *   -   ``tnt_slab_quota_used``
             -   The amount of memory that is already reserved by the slab allocator.
+        *   -   ``tnt_slab_system_quota_used``
+            -   The amount of memory that is already reserved by the system memtx allocator.
         *   -   ``tnt_slab_arena_used``
             -   The effective memory used to store both tuples and indexes.
                 Disregards allocated but currently free slabs.
+        *   -   ``tnt_slab_system_arena_used``
+            -   The effective memory used to store tuples and indexes of system spaces.
+                Disregards allocated but currently free slabs.
         *   -   ``tnt_slab_items_used``
             -   The effective memory used to store only tuples and not indexes.
+                Disregards allocated but currently free slabs.
+        *   -   ``tnt_slab_system_items_used``
+            -   The effective memory used to store only tuples of system spaces and not indexes.
                 Disregards allocated but currently free slabs.
 
 Memory utilization, %:
@@ -116,10 +136,16 @@ Memory utilization, %:
 
         *   -   ``tnt_slab_quota_used_ratio``
             -   ``tnt_slab_quota_used / tnt_slab_quota_size``
+        *   -   ``tnt_slab_system_quota_used_ratio``
+            -   ``tnt_slab_system_quota_used / tnt_slab_system_quota_size``
         *   -   ``tnt_slab_arena_used_ratio``
             -   ``tnt_slab_arena_used / tnt_slab_arena_size``
+        *   -   ``tnt_slab_system_arena_used_ratio``
+            -   ``tnt_slab_system_arena_used / tnt_slab_system_arena_size``
         *   -   ``tnt_slab_items_used_ratio``
             -   ``tnt_slab_items_used / tnt_slab_items_size``
+        *   -   ``tnt_slab_system_items_used_ratio``
+            -   ``tnt_slab_system_items_used / tnt_slab_system_items_size``
 
 ..  _metrics-reference-spaces:
 
