@@ -2113,7 +2113,9 @@ fail:
 			   NULL, NULL);
 		return ret;
 	}
-	diag_set(OutOfMemory, MEMTX_EXTENT_SIZE, "mempool", "new slab");
+	diag_set(OutOfMemory, MEMTX_EXTENT_SIZE, "mempool",
+		 alloc_meta == &alloc_meta->memtx->system_allocator_meta
+			? "new slab (system)" : "new slab");
 	return NULL;
 }
 
