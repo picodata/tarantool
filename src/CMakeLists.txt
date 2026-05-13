@@ -359,6 +359,10 @@ if (EXPORT_LIBCURL_SYMBOLS)
     set(exports_file_sources ${exports_file_sources}
         ${PROJECT_SOURCE_DIR}/extra/exports_libcurl)
 endif()
+if (ENABLE_ASAN AND ENABLE_ASAN_SMOKE_TEST)
+    set(exports_file_sources ${exports_file_sources}
+        ${PROJECT_SOURCE_DIR}/extra/exports_asan_smoke)
+endif()
 string(REPLACE ";" " " exports_file_sources_str "${exports_file_sources}")
 
 # Exports syntax is toolchain-dependent, preprocessing is necessary

@@ -89,6 +89,9 @@
 #include "core/errinj.h"
 #include "core/clock_lowres.h"
 #include "lua/utils.h"
+#ifdef ENABLE_ASAN_SMOKE_TEST
+#include "core/asan_smoke.h"
+#endif
 
 static pid_t master_pid = -1;
 static struct pidfh *pid_file_handle;
@@ -789,6 +792,10 @@ tarantool_main(int argc, char **argv, void (*cb)(void *), void *cb_data)
 		say_syserror("failed to get start time, ignore");
 
 	random_init();
+
+#ifdef ENABLE_ASAN_SMOKE_TEST
+	asan_smoke_check_and_trigger();
+#endif
 
 	crc32_init();
 	memory_init();

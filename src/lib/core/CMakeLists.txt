@@ -55,6 +55,10 @@ if (ENABLE_BACKTRACE)
     list(APPEND core_sources  proc_name_cache.cc)
 endif()
 
+if (ENABLE_ASAN AND ENABLE_ASAN_SMOKE_TEST)
+    list(APPEND core_sources asan_smoke.c)
+endif()
+
 if(ENABLE_TUPLE_COMPRESSION)
     list(APPEND core_sources ${TUPLE_COMPRESSION_CORE_SOURCES})
 else()

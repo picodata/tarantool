@@ -117,3 +117,8 @@ if (ENABLE_ASAN)
 
     add_compile_flags("C;CXX" ${ASAN_FLAGS})
 endif()
+
+option(ENABLE_ASAN_SMOKE_TEST "Build ASan smoke test for verifying instrumentation" OFF)
+if (ENABLE_ASAN_SMOKE_TEST AND NOT ENABLE_ASAN)
+    message(FATAL_ERROR "ENABLE_ASAN_SMOKE_TEST requires ENABLE_ASAN=ON")
+endif()
