@@ -258,11 +258,29 @@ xrow_update_read_arg_delete(struct xrow_update_op *op, const char **expr,
 	return xrow_update_err_arg_type(op, "a positive integer");
 }
 
+static inline bool
+xrow_update_op_is_sql_arith(const struct xrow_update_op *op)
+{
+	return op->opcode == 'p' || op->opcode == 'm';
+}
+
+static inline bool
+xrow_update_op_is_sql_bool(const struct xrow_update_op *op)
+{
+	return op->opcode == 'a' || op->opcode == 'o';
+}
+
 static int
 xrow_update_read_arg_arith(struct xrow_update_op *op, const char **expr,
 			   int index_base)
 {
 	(void) index_base;
+	if (xrow_update_op_is_sql_arith(op) && mp_typeof(**expr) == MP_NIL) {
+		mp_decode_nil(expr);
+		op->arg.arith.is_null = true;
+		return 0;
+	}
+	op->arg.arith.is_null = false;
 	return xrow_mp_read_arg_arith(op, expr, &op->arg.arith);
 }
 
@@ -271,6 +289,20 @@ xrow_update_read_arg_bit(struct xrow_update_op *op, const char **expr,
 			 int index_base)
 {
 	(void) index_base;
+	if (xrow_update_op_is_sql_bool(op)) {
+		if (mp_typeof(**expr) == MP_NIL) {
+			mp_decode_nil(expr);
+			op->arg.bit.is_null = true;
+			return 0;
+		}
+		if (mp_typeof(**expr) == MP_BOOL) {
+			op->arg.bit.val = mp_decode_bool(expr);
+			op->arg.bit.is_null = false;
+			return 0;
+		}
+		return xrow_update_err_arg_type(op, "a boolean or nil");
+	}
+	op->arg.bit.is_null = false;
 	return xrow_update_mp_read_uint(op, expr, &op->arg.bit.val);
 }
 
@@ -365,6 +397,7 @@ xrow_update_arith_make(struct xrow_update_op *op,
 		       struct xrow_update_arg_arith arg,
 		       struct xrow_update_arg_arith *ret)
 {
+	ret->is_null = false;
 	struct xrow_update_arg_arith arg1 = arg;
 	struct xrow_update_arg_arith arg2 = op->arg.arith;
 	enum xrow_update_arith_type lowest_type = arg1.type;
@@ -375,9 +408,11 @@ xrow_update_arith_make(struct xrow_update_op *op,
 	if (lowest_type == XUPDATE_TYPE_INT) {
 		switch(opcode) {
 		case '+':
+		case 'p':
 			int96_add(&arg1.int96, &arg2.int96);
 			break;
 		case '-':
+		case 'm':
 			int96_invert(&arg2.int96);
 			int96_add(&arg1.int96, &arg2.int96);
 			break;
@@ -388,16 +423,19 @@ xrow_update_arith_make(struct xrow_update_op *op,
 		if (!int96_is_uint64(&arg1.int96) &&
 		    !int96_is_neg_int64(&arg1.int96))
 			return xrow_update_err_int_overflow(op);
-		*ret = arg1;
+		ret->type = arg1.type;
+		ret->int96 = arg1.int96;
 	} else if (lowest_type >= XUPDATE_TYPE_DOUBLE) {
 		double a = xrow_update_arg_arith_to_double(arg1);
 		double b = xrow_update_arg_arith_to_double(arg2);
 		double c;
 		switch(opcode) {
 		case '+':
+		case 'p':
 			c = a + b;
 			break;
 		case '-':
+		case 'm':
 			c = a - b;
 			break;
 		default:
@@ -425,10 +463,12 @@ xrow_update_arith_make(struct xrow_update_op *op,
 		}
 		switch(opcode) {
 		case '+':
+		case 'p':
 			if (decimal_add(&c, &a, &b) == NULL)
 				return xrow_update_err_decimal_overflow(op);
 			break;
 		case '-':
+		case 'm':
 			if (decimal_sub(&c, &a, &b) == NULL)
 				return xrow_update_err_decimal_overflow(op);
 			break;
@@ -445,6 +485,12 @@ xrow_update_arith_make(struct xrow_update_op *op,
 int
 xrow_update_op_do_arith(struct xrow_update_op *op, const char *old)
 {
+	if (xrow_update_op_is_sql_arith(op) &&
+	    (mp_typeof(*old) == MP_NIL || op->arg.arith.is_null)) {
+		op->arg.arith.is_null = true;
+		op->new_field_len = mp_sizeof_nil();
+		return 0;
+	}
 	struct xrow_update_arg_arith left_arg;
 	if (xrow_mp_read_arg_arith(op, &old, &left_arg) != 0 ||
 	    xrow_update_arith_make(op, left_arg, &op->arg.arith) != 0)
@@ -453,9 +499,52 @@ xrow_update_op_do_arith(struct xrow_update_op *op, const char *old)
 	return 0;
 }
 
+static int
+xrow_update_op_do_sql_bool(struct xrow_update_op *op, const char *old)
+{
+	/*
+	 * AND returns false if either operand is false; OR returns
+	 * true if either is true. Call that value the operator's
+	 * dominant: it forces the result regardless of NULL. With
+	 * no dominant in sight, NULL propagates; with two known
+	 * non-dominants the answer is the other operand, already
+	 * in op->arg.bit. So the cases below only write when
+	 * lhs forces a different result.
+	 */
+	assert(xrow_update_op_is_sql_bool(op));
+	bool dominant = (op->opcode == 'o');
+
+	switch (mp_typeof(*old)) {
+	case MP_BOOL: {
+		bool lhs = mp_decode_bool(&old);
+		if (lhs == dominant) {
+			op->arg.bit.val = dominant;
+			op->arg.bit.is_null = false;
+		}
+		/* Otherwise result == rhs, already in arg. */
+		break;
+	}
+	case MP_NIL:
+		/* lhs is NULL: result is rhs iff rhs is dominant. */
+		if (op->arg.bit.is_null || op->arg.bit.val != dominant)
+			op->arg.bit.is_null = true;
+		break;
+	default:
+		return xrow_update_err_arg_type(op, "a boolean or nil");
+	}
+
+	op->new_field_len = op->arg.bit.is_null
+		? mp_sizeof_nil()
+		: mp_sizeof_bool(op->arg.bit.val);
+	return 0;
+}
+
 int
 xrow_update_op_do_bit(struct xrow_update_op *op, const char *old)
 {
+	if (xrow_update_op_is_sql_bool(op))
+		return xrow_update_op_do_sql_bool(op, old);
+
 	uint64_t val = 0;
 	if (xrow_update_mp_read_uint(op, &old, &val) != 0)
 		return -1;
@@ -535,6 +624,10 @@ xrow_update_op_store_arith(struct xrow_update_op *op,
 {
 	(void) format_tree;
 	(void) in;
+	if (op->arg.arith.is_null) {
+		char *end = mp_encode_nil(out);
+		return end - out;
+	}
 	char *begin = out;
 	struct xrow_update_arg_arith *arg = &op->arg.arith;
 	switch (arg->type) {
@@ -580,6 +673,12 @@ xrow_update_op_store_bit(struct xrow_update_op *op,
 	(void) format_tree;
 	(void) this_node;
 	(void) in;
+	if (xrow_update_op_is_sql_bool(op)) {
+		char *end = op->arg.bit.is_null ?
+			    mp_encode_nil(out) :
+			    mp_encode_bool(out, op->arg.bit.val != 0);
+		return end - out;
+	}
 	char *end = mp_encode_uint(out, op->arg.bit.val);
 	return end - out;
 }
@@ -647,10 +746,17 @@ xrow_update_op_by(const char *opcode, uint32_t len, int op_num)
 		return &op_set;
 	case '+':
 	case '-':
+	/* 'p'/'m' are SQL +/- with NULL propagation. */
+	case 'p':
+	case 'm':
 		return &op_arith;
 	case '&':
 	case '|':
 	case '^':
+		return &op_bit;
+	/* SQL AND/OR with three-valued NULL semantics. */
+	case 'a':
+	case 'o':
 		return &op_bit;
 	case ':':
 		return &op_splice;

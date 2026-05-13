@@ -110,11 +110,25 @@ struct xrow_update_arg_arith {
 		struct int96_num int96;
 		decimal_t dec;
 	};
+	/**
+	 * SQL NULL marker for 'p'/'m' opcodes. The numeric union
+	 * is left undefined in that case.
+	 */
+	bool is_null;
 };
 
-/** Argument of AND, XOR, OR operations. */
+/**
+ * Argument of bit-family operations.
+ *
+ * Plain bit operations use @a val as an unsigned integer. SQL-aware
+ * bit-family operations use @a is_null as the SQL NULL marker and
+ * interpret @a val according to their own scalar type. Currently this
+ * is used by SQL boolean AND/OR opcodes 'a'/'o'.
+ */
 struct xrow_update_arg_bit {
 	uint64_t val;
+	/** SQL NULL marker for 'a'/'o' opcodes. */
+	bool is_null;
 };
 
 /** Argument of SPLICE. */

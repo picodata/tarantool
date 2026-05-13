@@ -1784,9 +1784,10 @@ space:upsert({1}, {{'!', 2, 100}}) -- must fail on checking tuple
 - error: 'Tuple field 1 type does not match one required by operation: expected string,
     got unsigned'
 ...
-space:upsert({'a'}, {{'a', 2, 100}}) -- must fail on checking ops
+space:upsert({'a'}, {{'a', 2, 100}}) -- must fail on checking SQL AND argument type
 ---
-- error: 'Unknown UPDATE operation #1: "a"'
+- error: 'Argument type in operation ''a'' on field 2 does not match field type: expected
+    a boolean or nil'
 ...
 space:upsert({'a'}, {{'!', 2, 'ups1'}}) -- 'fast' upsert via insert in one index
 ---
@@ -2377,6 +2378,52 @@ sec:get{200, 203, 200}
 sec:get{302, 303, 302}
 ---
 - [1, 303, 302, 302]
+...
+s:drop()
+---
+...
+-- SQL-aware update operations in upsert.
+s = box.schema.space.create('sql_update_ops', {engine = engine})
+---
+...
+_ = s:create_index('pk')
+---
+...
+s:upsert({1, box.NULL, box.NULL, box.NULL}, {{'p', 2, 1}, {'m', 3, 1}, {'o', 4, true}})
+---
+...
+s:select{}
+---
+- - [1, null, null, null]
+...
+s:upsert({1, 0, 0, false}, {{'p', 2, 1}, {'m', 3, 1}, {'o', 4, true}})
+---
+...
+s:select{}
+---
+- - [1, null, null, true]
+...
+s:replace{1, box.NULL, box.NULL, box.NULL}
+---
+- [1, null, null, null]
+...
+s:upsert({1, 0, 0, false}, {{'p', 2, 1}, {'m', 3, 1}, {'a', 4, false}})
+---
+...
+s:select{}
+---
+- - [1, null, null, false]
+...
+s:replace{1, 5, 5, true, false}
+---
+- [1, 5, 5, true, false]
+...
+s:upsert({1, 0, 0, false, false}, {{'p', 2, box.NULL}, {'m', 3, box.NULL}, {'a', 4, box.NULL}, {'o', 5, box.NULL}})
+---
+...
+s:select{}
+---
+- - [1, null, null, null, null]
 ...
 s:drop()
 ---

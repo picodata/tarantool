@@ -151,6 +151,8 @@ basic_test()
 {
 	const struct tuple_template statements[] = {
 		{ {1, 2, 3}, 3 },
+		{ {1, 2, 3}, 3 },
+		{ {1, 2, 3}, 3 },
 
 		{ {4, 5, 6}, 3 },
 		{ {1, 2, 3}, 3 },
@@ -167,6 +169,8 @@ basic_test()
 	const struct tuple_update_template update_ops[] = {
 		/* simple update, one field. */
 		{ {{'=', 3, 30}}, 1 },
+		{ {{'p', 2, 10}}, 1 },
+		{ {{'m', 2, 1}}, 1 },
 
 		/* field range update. */
 		{ {{'#', 3, 1}}, 1 },
@@ -190,6 +194,8 @@ basic_test()
 
 	const struct tuple_template results[] = {
 		{ {1, 2, 30}, 3 },
+		{ {1, 12, 3}, 3 },
+		{ {1, 1, 3}, 3 },
 
 		{ {4, 5}, 2 },
 		{ {1, 100, 2, 3}, 4 },
@@ -206,6 +212,8 @@ basic_test()
 
 	const uint64_t column_masks[] = {
 		1 << 2,
+		1 << 1,
+		1 << 1,
 
 		COLUMN_MASK_FULL << 2,
 		COLUMN_MASK_FULL << 1,
@@ -305,7 +313,7 @@ main()
 	fiber_init(fiber_c_invoke);
 	tuple_init(simple_hash);
 	header();
-	plan(28);
+	plan(34);
 
 	basic_test();
 	test_paths();

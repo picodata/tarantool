@@ -265,7 +265,7 @@ test_run:cmd("setopt delimiter ''");
 space = box.schema.space.create('test', { engine = engine })
 index1 = space:create_index('primary', { parts = {1, 'string'} })
 space:upsert({1}, {{'!', 2, 100}}) -- must fail on checking tuple
-space:upsert({'a'}, {{'a', 2, 100}}) -- must fail on checking ops
+space:upsert({'a'}, {{'a', 2, 100}}) -- must fail on checking SQL AND argument type
 space:upsert({'a'}, {{'!', 2, 'ups1'}}) -- 'fast' upsert via insert in one index
 space:upsert({'a', 'b'}, {{'!', 2, 'ups2'}}) -- 'fast' upsert via update in one index
 space:select{}
@@ -486,4 +486,19 @@ sec:select{}
 sec:get{100, 302, 50}
 sec:get{200, 203, 200}
 sec:get{302, 303, 302}
+s:drop()
+
+-- SQL-aware update operations in upsert.
+s = box.schema.space.create('sql_update_ops', {engine = engine})
+_ = s:create_index('pk')
+s:upsert({1, box.NULL, box.NULL, box.NULL}, {{'p', 2, 1}, {'m', 3, 1}, {'o', 4, true}})
+s:select{}
+s:upsert({1, 0, 0, false}, {{'p', 2, 1}, {'m', 3, 1}, {'o', 4, true}})
+s:select{}
+s:replace{1, box.NULL, box.NULL, box.NULL}
+s:upsert({1, 0, 0, false}, {{'p', 2, 1}, {'m', 3, 1}, {'a', 4, false}})
+s:select{}
+s:replace{1, 5, 5, true, false}
+s:upsert({1, 0, 0, false, false}, {{'p', 2, box.NULL}, {'m', 3, box.NULL}, {'a', 4, box.NULL}, {'o', 5, box.NULL}})
+s:select{}
 s:drop()
