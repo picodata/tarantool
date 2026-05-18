@@ -368,6 +368,19 @@ enum tuple_flag {
 	 * immediately while a snapshot is in progress.
 	 */
 	TUPLE_IS_TEMPORARY = 2,
+	/**
+	 * Set in tuple_create() when the allocating cord is main. The
+	 * tuple's refcount may only be modified on the main cord;
+	 * worker cords (dump / compaction / coio) must never
+	 * tuple_ref or tuple_unref such a tuple -- their mems / caches
+	 * already hold the refs they need, and a cross-cord refcount
+	 * touch on the non-atomic local_refs field is a race. The
+	 * asserts in tuple_ref / tuple_unref enforce this in debug
+	 * builds; the flag is also read at runtime by vinyl's
+	 * vy_stmt_is_refable() to gate refcount mutations, so it must
+	 * be set in release too.
+	 */
+	TUPLE_TX_LOCAL = 3,
 	tuple_flag_MAX,
 };
 
@@ -515,6 +528,8 @@ tuple_create(struct tuple *tuple, uint8_t refs, uint16_t format_id,
 	assert(data_offset <= INT16_MAX);
 	tuple->local_refs = refs;
 	tuple->flags = 0;
+	if (cord_is_main_dont_create())
+		tuple->flags |= 1 << TUPLE_TX_LOCAL;
 	tuple->format_id = format_id;
 	if (make_compact) {
 		assert(tuple_can_be_compact(data_offset, bsize));
@@ -1383,6 +1398,8 @@ tuple_acquire_refs(struct tuple *tuple);
 static inline void
 tuple_ref(struct tuple *tuple)
 {
+	assert(!tuple_has_flag(tuple, TUPLE_TX_LOCAL) ||
+	       cord_is_main_dont_create());
 	if (unlikely(tuple->local_refs >= TUPLE_LOCAL_REF_MAX))
 		tuple_upload_refs(tuple);
 	tuple->local_refs++;
@@ -1396,6 +1413,8 @@ tuple_ref(struct tuple *tuple)
 static inline void
 tuple_unref(struct tuple *tuple)
 {
+	assert(!tuple_has_flag(tuple, TUPLE_TX_LOCAL) ||
+	       cord_is_main_dont_create());
 	assert(tuple->local_refs >= 1);
 	if (--tuple->local_refs == 0) {
 		if (unlikely(tuple_has_flag(tuple, TUPLE_HAS_UPLOADED_REFS)))
