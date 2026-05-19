@@ -215,7 +215,6 @@ set(box_sources
     authentication.c
     auth_chap_sha1.c
     auth_ldap.c
-    auth_md5.c
     replication.cc
     recovery.cc
     xstream.cc

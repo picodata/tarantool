@@ -546,9 +546,7 @@ g.test_certificate_auth = function()
         }, {
             user = 'testuser',
             password = '',
-            -- even though user's auth_type is 'chap-sha1' and ours is 'md5'
-            -- the authentication still succeeds
-            auth_type = 'md5',
+            auth_type = 'chap-sha1',
         })
         return connection
     end, {

@@ -135,7 +135,7 @@ g.test_net_box = function(cg)
     conn = net.connect(cg.server.net_box_uri, {
         user = 'mickey',
         password = 'dogood',
-        auth_type = 'md5',
+        auth_type = 'chap-sha1',
     })
     t.assert_equals(
         conn.error,
