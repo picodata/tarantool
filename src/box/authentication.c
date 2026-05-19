@@ -32,6 +32,14 @@
 
 const struct auth_method *AUTH_METHOD_DEFAULT;
 
+/** Callback for picodata to register its auth methods with tarantool. */
+void
+__attribute__((weak))
+auth_register_extra_methods(void)
+{
+	/* Nothing to register here. */
+}
+
 /** Map of all registered authentication methods: name -> auth_method. */
 static struct mh_strnptr_t *auth_methods = NULL;
 
@@ -269,6 +277,8 @@ auth_init(void)
 	auth_method_register(md5_method);
 	struct auth_method *ldap_method = auth_ldap_new();
 	auth_method_register(ldap_method);
+
+	auth_register_extra_methods();
 }
 
 void
