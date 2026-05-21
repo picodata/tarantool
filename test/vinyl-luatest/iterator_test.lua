@@ -158,3 +158,154 @@ g.test_random_iterator_on_secondary_with_duplicates = function(cg)
         end
     end)
 end
+
+--
+-- Multi-part (integer, datetime, integer) PK populated with
+-- fully random data: the datetime column gives the page index
+-- a cmp_def comparator that diverges from byte order. Test
+-- should catch any non monotonic collation issue.
+--
+g.before_test('test_random_iterator_on_multi_part_datetime_pk', function(cg)
+    cg.saved_vinyl_cache = cg.server:exec(function()
+        local saved = box.cfg.vinyl_cache
+        -- Force each seek through the run reader.
+        box.cfg{vinyl_cache = 0}
+        return saved
+    end)
+end)
+
+g.after_test('test_random_iterator_on_multi_part_datetime_pk', function(cg)
+    cg.server:exec(function(saved)
+        box.cfg{vinyl_cache = saved}
+    end, {cg.saved_vinyl_cache})
+end)
+
+g.test_random_iterator_on_multi_part_datetime_pk = function(cg)
+    cg.server:exec(function()
+        local datetime = require('datetime')
+        local digest = require('digest')
+
+        local seed = math.floor(require('fiber').time() * 1e6)
+        math.randomseed(seed)
+
+        local s = box.schema.space.create('test', {engine = 'vinyl'})
+        s:format{
+            {name = 'c1',  type = 'integer'},
+            {name = 'c2',  type = 'datetime'},
+            {name = 'c3',  type = 'integer'},
+            {name = 'pad', type = 'string'},
+        }
+        -- Every row gets its own page because of string padding.
+        s:create_index('pk', {
+            parts = {{1, 'integer'}, {2, 'datetime'}, {3, 'integer'}},
+            page_size = 256,
+        })
+
+        local N = 2000
+        -- Datetime is stored little-endian, so byte 0 of the
+        -- encoded value is the LSB of seconds -- the byte the
+        -- LCP-of-first-and-last shortcut gets wrong. Stepping in
+        -- 2-hour strides keeps 7200 mod 256 == 32, so the LSB
+        -- cycles through only 8 of 256 values -- lifting the
+        -- bytewise-LCP collision between LCP-group endpoints
+        -- from ~1/256 (uniform random) to ~1/8 -- enough for
+        -- N=2000 to catch the bug reliably.
+        local TS_BASE = 1672531200  -- 2023-01-01 00:00:00 UTC
+        local pad = digest.urandom(300)
+        local oracle = {}
+        local seen = {}
+        while #oracle < N do
+            local c1 = math.random(1, 10)
+            local ts = TS_BASE + 7200 * math.random(0, 99)
+            local c3 = math.random(1, 10)
+            local skey = c1 .. ':' .. ts .. ':' .. c3
+            if not seen[skey] then
+                seen[skey] = true
+                local c2 = datetime.new{timestamp = ts}
+                s:insert{c1, c2, c3, pad}
+                table.insert(oracle, {c1, c2, c3})
+            end
+        end
+        box.snapshot()
+        t.assert_equals(s.index.pk:stat().disk.pages, N)
+
+        local function cmp(a, b)
+            if a[1] ~= b[1] then return a[1] < b[1] and -1 or 1 end
+            if a[2] ~= b[2] then return a[2] < b[2] and -1 or 1 end
+            if a[3] ~= b[3] then return a[3] < b[3] and -1 or 1 end
+            return 0
+        end
+        table.sort(oracle, function(a, b) return cmp(a, b) < 0 end)
+
+        local function lower_bound(seek)
+            local lo, hi = 1, #oracle + 1
+            while lo < hi do
+                local mid = math.floor((lo + hi) / 2)
+                if cmp(oracle[mid], seek) < 0 then
+                    lo = mid + 1
+                else
+                    hi = mid
+                end
+            end
+            return lo
+        end
+
+        local function upper_bound(seek)
+            local lo, hi = 1, #oracle + 1
+            while lo < hi do
+                local mid = math.floor((lo + hi) / 2)
+                if cmp(oracle[mid], seek) <= 0 then
+                    lo = mid + 1
+                else
+                    hi = mid
+                end
+            end
+            return lo
+        end
+
+        local function oracle_search(itype, seek)
+            if itype == 'GE' then
+                return oracle[lower_bound(seek)]
+            elseif itype == 'GT' then
+                return oracle[upper_bound(seek)]
+            elseif itype == 'LE' then
+                return oracle[upper_bound(seek) - 1]
+            elseif itype == 'LT' then
+                return oracle[lower_bound(seek) - 1]
+            elseif itype == 'EQ' or itype == 'REQ' then
+                local i = lower_bound(seek)
+                if oracle[i] ~= nil and cmp(oracle[i], seek) == 0 then
+                    return oracle[i]
+                end
+                return nil
+            end
+        end
+
+        local itypes = {'GE', 'GT', 'LE', 'LT', 'EQ', 'REQ'}
+        for _ = 1, 1000 do
+            local itype = itypes[math.random(#itypes)]
+            local seek
+            -- Half of the queries use oracle keys.
+            if math.random(2) == 1 then
+                seek = oracle[math.random(#oracle)]
+            else
+                local ts = TS_BASE + 7200 * math.random(0, 99)
+                seek = {math.random(1, 10),
+                        datetime.new{timestamp = ts},
+                        math.random(1, 10)}
+            end
+
+            local result = s:select(seek, {iterator = itype, limit = 1})
+            local first = result[1]
+            local exp = oracle_search(itype, seek)
+            local label = ('seed=%d %s'):format(seed, itype)
+            if exp == nil then
+                t.assert_equals(first, nil, label .. ': expected nil')
+            else
+                t.assert_equals(first[1], exp[1], label .. ': c1')
+                t.assert_equals(first[2], exp[2], label .. ': c2')
+                t.assert_equals(first[3], exp[3], label .. ': c3')
+            end
+        end
+    end)
+end

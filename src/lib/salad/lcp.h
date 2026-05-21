@@ -372,8 +372,7 @@ lcp_group_builder_add(struct lcp_group_builder *b,
 }
 
 /**
- * Finish building a group. Computes the LCP of the first and last
- * key (which bounds the LCP of all keys since they are sorted),
+ * Finish building a group. Computes the LCP of all keys naive,
  * allocates group->key (with packed data appended) and packs
  * the metadata and suffixes.
  *
@@ -394,13 +393,14 @@ lcp_group_builder_finish(struct lcp_group_builder *b,
 {
 	assert(b->key_count > 0);
 
-	/* Compute LCP from first and last key. */
+	/* Compute LCP with a single pass. */
 	const char *first_key = b->buf + b->key_offsets[0];
-	const char *last_key = b->buf +
-			       b->key_offsets[b->key_count - 1];
-	uint32_t prefix_len = lcp_len(first_key, b->key_lens[0],
-				      last_key,
-				      b->key_lens[b->key_count - 1]);
+	uint32_t prefix_len = b->key_lens[0];
+	for (uint32_t i = 1; i < b->key_count; i++) {
+		prefix_len = lcp_len(first_key, prefix_len,
+				     b->buf + b->key_offsets[i],
+				     b->key_lens[i]);
+	}
 
 	/*
 	 * Calculate data buffer length:
