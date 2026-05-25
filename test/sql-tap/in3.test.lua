@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(28)
+test:plan(29)
 
 --!./tcltestrunner.lua
 -- 2007 November 29
@@ -358,16 +358,24 @@ test:do_test(
         -- </in3-3.6>
     })
 
-test:do_test(
+test:do_catchsql_test(
     "in3-3.7",
-    function()
-        -- Numeric affinity is applied before the comparison takes place.
-        -- Making it impossible to use index t1_i3.
-        return exec_neph(" SELECT y IN (SELECT c FROM t1) FROM t2 ")
-    end, {
+    [[
+        SELECT y IN (SELECT c FROM t1) FROM t2
+    ]], {
         -- <in3-3.7>
-        1, false
+        1, "Type mismatch: can not convert number(1) to string"
         -- </in3-3.7>
+    })
+
+test:do_catchsql_test(
+    "in3-3.8",
+    [[
+        select (1, 2) in (values ('1', '2'), ('0', '8'), ('0', '7'), ('0', '3'));
+    ]], {
+        -- <in3-3.8>
+        1, "Type mismatch: can not convert integer(1) to string"
+        -- </in3-3.8>
     })
 
 -----------------------------------------------------------------------

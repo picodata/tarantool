@@ -478,22 +478,6 @@ expr_cmp_mutual_type(struct Expr *pExpr)
 	return type;
 }
 
-
-/*
- * Return the P5 value that should be used for a binary comparison
- * opcode (OP_Eq, OP_Ge etc.) used to compare pExpr1 and pExpr2.
- */
-static u8
-binaryCompareP5(Expr * pExpr1, Expr * pExpr2, int jumpIfNull)
-{
-	static_assert((FIELD_TYPE_MASK | SQL_JUMPIFNULL) <= 0xFF,
-		      "result must fit in u8");
-	enum field_type lhs = sql_expr_type(pExpr2);
-	enum field_type rhs = sql_expr_type(pExpr1);
-	u8 type_mask = sql_type_result(rhs, lhs) | (u8) jumpIfNull;
-	return type_mask;
-}
-
 int
 collations_check_compatibility(uint32_t lhs_id, bool is_lhs_forced,
 			       uint32_t rhs_id, bool is_rhs_forced,
@@ -572,10 +556,16 @@ codeCompare(Parse * pParse,	/* The parsing (and code generating) context */
 	if (sql_binary_compare_coll_seq(pParse, pLeft, pRight, &id) != 0)
 		return -1;
 	struct coll *coll = coll_by_id(id)->coll;
-	int p5 = binaryCompareP5(pLeft, pRight, jumpIfNull);
 	int addr = sqlVdbeAddOp4(pParse->pVdbe, opcode, in2, dest, in1,
 				     (void *)coll, P4_COLLSEQ);
-	sqlVdbeChangeP5(pParse->pVdbe, (u8) p5);
+	/*
+	 * Assert that we are generating code for concrete
+	 * comparison operators list
+	 */
+	assert(opcode == OP_Gt || opcode == OP_Ge ||
+	       opcode == OP_Lt || opcode == OP_Le ||
+	       opcode == OP_Eq || opcode == OP_Ne);
+	sqlVdbeChangeP5(pParse->pVdbe, (u8) jumpIfNull);
 	return addr;
 }
 
@@ -2655,7 +2645,17 @@ expr_in_type(struct Expr *pExpr)
 		if (pSelect != NULL) {
 			struct Expr *e = pSelect->pEList->a[i].pExpr;
 			enum field_type rhs = sql_expr_type(e);
-			zRet[i] = sql_type_result(rhs, lhs);
+			enum field_type mutual_type =
+				expr_unify_type_for_cmp(rhs, lhs);
+			/*
+			 * field_type_MAX means "no cast" for OP_ApplyType,
+			 * so it would silently turn incompatible IN comparisons
+			 * into false/true. So we cast the LHS probe to the RHS
+			 * set type instead. Therefore, while executing
+			 * OP_ApplyType opcode we fail on `mem_cast_implicit`
+			 */
+			zRet[i] = mutual_type == field_type_MAX ? rhs
+								: mutual_type;
 		} else {
 			zRet[i] = lhs;
 		}
@@ -2993,7 +2993,6 @@ sqlExprCodeIN(Parse * pParse,	/* Parsing and code generating context */
 	if (sqlExprCheckIN(pParse, pExpr))
 		return;
 	/* Type sequence for comparisons. */
-	enum field_type *zAff = expr_in_type(pExpr);
 	nVector = sqlExprVectorSize(pExpr->pLeft);
 	aiMap = sql_xmalloc0(nVector * (sizeof(int) + sizeof(char)) + 1);
 
@@ -3067,15 +3066,12 @@ sqlExprCodeIN(Parse * pParse,	/* Parsing and code generating context */
 			if (ii < pList->nExpr - 1 || destIfNull != destIfFalse) {
 				sqlVdbeAddOp4(v, OP_Eq, rLhs, labelOk, r2,
 						  (void *)coll, P4_COLLSEQ);
-				sqlVdbeChangeP5(v, zAff[0]);
 			} else {
 				assert(destIfNull == destIfFalse);
 				sqlVdbeAddOp4(v, OP_Ne, rLhs, destIfFalse,
 						  r2, (void *)coll,
 						  P4_COLLSEQ);
-				sqlVdbeChangeP5(v,
-						    zAff[0] |
-						    SQL_JUMPIFNULL);
+				sqlVdbeChangeP5(v, SQL_JUMPIFNULL);
 			}
 			sqlReleaseTempReg(pParse, regToFree);
 		}
@@ -3107,14 +3103,14 @@ sqlExprCodeIN(Parse * pParse,	/* Parsing and code generating context */
 	 * of the RHS using the LHS as a probe.  If found, the result is
 	 * true.
 	 */
-	zAff[nVector] = field_type_MAX;
+	enum field_type *zAff = expr_in_type(pExpr);
+	assert(zAff[nVector] == field_type_MAX);
 	sqlVdbeAddOp4(v, OP_ApplyType, rLhs, nVector, 0, (char*)zAff,
 			  P4_DYNAMIC);
 	/*
 	 * zAff will be freed at the end of VDBE execution, since
 	 * it was passed with P4_DYNAMIC flag.
 	 */
-	zAff = NULL;
 	if (destIfFalse == destIfNull) {
 		/* Combine Step 3 and Step 5 into a single opcode */
 		sqlVdbeAddOp4Int(v, OP_NotFound, pExpr->iTable,
@@ -3192,7 +3188,6 @@ sqlExprCodeIN(Parse * pParse,	/* Parsing and code generating context */
 	sqlExprCachePop(pParse);
 	VdbeComment((v, "end IN expr"));
 	sql_xfree(aiMap);
-	sql_xfree(zAff);
 }
 
 /*

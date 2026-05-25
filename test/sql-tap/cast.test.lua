@@ -1,7 +1,7 @@
 #!/usr/bin/env tarantool
 require('compat').binary_data_decoding = 'new'
 local test = require("sqltester")
-test:plan(109)
+test:plan(110)
 
 --!./tcltestrunner.lua
 -- 2005 June 25
@@ -1162,11 +1162,20 @@ test:do_execsql_test(
 
 -- Make sure that there is no unnecessary implicit casts in IN operator.
 test:do_execsql_test(
-    "cast-12",
+    "cast-12.1",
+    [[
+        SELECT 1
+        WHERE 0 = 1
+          AND 1 IN (SELECT '1');
+    ]], {
+    })
+
+test:do_catchsql_test(
+    "cast-12.2",
     [[
         SELECT 1 IN (SELECT '1');
     ]], {
-        false
+        1, "Type mismatch: can not convert integer(1) to string"
     })
 
 test:finish_test()

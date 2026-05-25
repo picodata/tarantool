@@ -1448,6 +1448,33 @@ g.test_datetime_26_9 = function()
     end)
 end
 
+g.test_datetime_26_10 = function()
+    g.server:exec(function()
+        local dt = require('datetime')
+        local dt1 = dt.new({year = 2001, month = 1, day = 1})
+        local dt2 = dt.new({year = 2002, month = 1, day = 1})
+
+        box.execute([[CREATE TABLE dt_in_t1(i INT PRIMARY KEY,
+                                            d DATETIME);]])
+        box.execute([[CREATE TABLE dt_in_t2(i INT PRIMARY KEY,
+                                            d DATETIME);]])
+        box.execute([[INSERT INTO dt_in_t1 VALUES(1, ?);]], {dt1})
+        box.execute([[INSERT INTO dt_in_t1 VALUES(2, ?);]], {dt2})
+        box.execute([[INSERT INTO dt_in_t2 VALUES(1, ?);]], {dt1})
+
+        local sql = [[WITH t1 AS (SELECT i, d FROM dt_in_t1),
+                           t2 AS (SELECT d FROM dt_in_t2)
+                      SELECT d IN (SELECT d FROM t2) FROM t1 ORDER BY i;]]
+        local res = {{true}, {false}}
+        local result, err = box.execute(sql)
+
+        box.execute([[DROP TABLE dt_in_t1;]])
+        box.execute([[DROP TABLE dt_in_t2;]])
+        t.assert_equals(err, nil)
+        t.assert_equals(result.rows, res)
+    end)
+end
+
 -- Make sure that SCALAR primary key can contain DATETIME.
 g.test_datetime_27 = function()
     g.server:exec(function()
