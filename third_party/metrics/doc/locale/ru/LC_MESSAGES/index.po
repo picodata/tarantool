@@ -1,0 +1,12 @@
+
+msgid "Monitoring"
+msgstr ""
+
+msgid ""
+"Monitoring is the process of measuring and tracking Tarantool performance "
+"according to key metrics influencing it. These metrics are typically "
+"monitored in real time, allowing you to identify or predict issues."
+msgstr ""
+
+msgid "This chapter includes the following sections:"
+msgstr ""
