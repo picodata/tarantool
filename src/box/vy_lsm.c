@@ -153,7 +153,7 @@ vy_lsm_add_dict(struct vy_lsm *lsm, struct vy_dict *dict)
 {
 	struct mh_i64ptr_t *h = lsm->dict_hash;
 	struct mh_i64ptr_node_t node = { dict->id, dict };
-	struct mh_i64ptr_node_t *old_node = NULL;
+	struct mh_i64ptr_node_t *old_node = &(typeof(*old_node)) {};
 	mh_i64ptr_put(h, &node, &old_node, NULL);
 	assert(old_node == NULL);
 	dict->on_drop = vy_dict_on_drop;
