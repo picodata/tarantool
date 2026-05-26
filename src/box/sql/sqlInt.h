@@ -1886,8 +1886,7 @@ struct Select {
  *
  *     SRT_Set         The result must be a single column.  Store each
  *                     row of result as the key in table pDest->iSDParm.
- *                     Apply the type pDest->det_type before storing
- *                     results.  Used to implement "IN (SELECT ...)".
+ *                     Used to implement "IN (SELECT ...)".
  *
  *     SRT_EphemTab    Create an temporary table pDest->iSDParm and store
  *                     the result there. The cursor is left open after
@@ -1945,8 +1944,6 @@ struct Select {
  */
 struct SelectDest {
 	u8 eDest;		/* How to dispose of the results.  On of SRT_* above. */
-	/** Type used when eDest==SRT_Set */
-	enum field_type *dest_type;
 	int iSDParm;		/* A parameter used by the eDest disposal method */
 	/** Register containing ephemeral's space pointer. */
 	int reg_eph;
@@ -3947,13 +3944,6 @@ expr_cmp_mutual_type(struct Expr *pExpr);
  */
 enum field_type
 sql_expr_type(struct Expr *pExpr);
-
-/**
- * This function duplicates first @len entries of types array
- * and terminates new array with field_type_MAX member.
- */
-enum field_type *
-field_type_sequence_dup(enum field_type *types, uint32_t len);
 
 /**
  * Convert z to a 64-bit signed or unsigned integer.

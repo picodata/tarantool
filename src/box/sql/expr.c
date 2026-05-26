@@ -185,16 +185,6 @@ sql_emit_args_types(struct Vdbe *v, int reg, struct func *base, uint32_t argc)
 	return 0;
 }
 
-enum field_type *
-field_type_sequence_dup(enum field_type *types, uint32_t len)
-{
-	uint32_t sz = (len + 1) * sizeof(enum field_type);
-	enum field_type *ret_types = sql_xmalloc(sz);
-	memcpy(ret_types, types, sz);
-	ret_types[len] = field_type_MAX;
-	return ret_types;
-}
-
 struct Expr *
 sqlExprAddCollateToken(struct Expr *pExpr, const Token *pCollName, int dequote)
 {
@@ -2767,16 +2757,13 @@ sqlCodeSubselect(Parse * pParse,	/* Parsing context */
 					int i;
 					sqlSelectDestInit(&dest, SRT_Set,
 							      pExpr->iTable, reg_eph);
-					dest.dest_type = expr_in_type(pExpr);
 					assert((pExpr->iTable & 0x0000FFFF) ==
 					       pExpr->iTable);
 					pSelect->iLimit = 0;
 					if (sqlSelect
 					    (pParse, pSelect, &dest)) {
-						sql_xfree(dest.dest_type);
 						return 0;
 					}
-					sql_xfree(dest.dest_type);
 					assert(pEList != 0);
 					assert(pEList->nExpr > 0);
 					for (i = 0; i < nVal; i++) {

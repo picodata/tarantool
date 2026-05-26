@@ -409,7 +409,7 @@ cmd ::= createkw(X) VIEW ifnotexists(E) nm(Y) eidlist_opt(C)
 //////////////////////// The SELECT statement /////////////////////////////////
 //
 cmd ::= select(X).  {
-  SelectDest dest = {SRT_Output, 0, 0, 0, 0, 0, 0};
+  SelectDest dest = {SRT_Output, 0, 0, 0, 0, 0};
   if(pParse->parse_only) {
     diag_set(ClientError, ER_SQL_PARSER_GENERIC,
              "Failed to parse SQL expression");
