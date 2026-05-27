@@ -11,8 +11,6 @@ _CPack_Packages
 oss-fuzz/
 box-include-args
 box-define-args
-bundled-ldap-prefix
-bundled-sasl-prefix
 coverity/
 coverage/
 coverage.info

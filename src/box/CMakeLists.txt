@@ -86,7 +86,6 @@ add_custom_target(box_generate_lua_sources
     DEPENDS ${lua_sources})
 set_property(DIRECTORY PROPERTY ADDITIONAL_MAKE_CLEAN_FILES ${lua_sources})
 
-include_directories(${LDAP_INCLUDE_DIR})
 include_directories(${ZSTD_INCLUDE_DIRS})
 include_directories(${PROJECT_BINARY_DIR}/src/box/sql)
 include_directories(${PROJECT_BINARY_DIR}/src/box)
@@ -215,7 +214,6 @@ set(box_sources
     user.cc
     authentication.c
     auth_chap_sha1.c
-    auth_ldap.c
     replication.cc
     recovery.cc
     xstream.cc

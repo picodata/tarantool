@@ -58,16 +58,6 @@ Requires(pre): %{_sbindir}/groupadd
 BuildRequires: zlib-devel
 Requires: zlib
 
-# for LDAP support
-%if "%{?mandriva_os}" == "linux"
-BuildRequires: lib64sasl2-devel
-BuildRequires: lib64ldap2.4_2-devel
-%endif
-%if 0%{?rhel} >= 7
-BuildRequires: cyrus-sasl-devel
-BuildRequires: openldap-devel
-%endif
-
 %if %{with systemd}
 Requires(post): systemd
 Requires(preun): systemd
@@ -256,9 +246,6 @@ C and Lua/C modules.
 %endif
 %if %{_gc64} == "true"
          -DLUAJIT_ENABLE_GC64:BOOL=ON \
-%endif
-%if 0%{?rhel} >= 7
-         -DENABLE_BUNDLED_LDAP:BOOL=OFF \
 %endif
 %if 0%{?rhel} == 7
          -DENABLE_BUNDLED_OPENSSL:BOOL=ON \

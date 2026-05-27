@@ -134,7 +134,6 @@ luacheck:
     NO_OUTPUT_TIMEOUT: 440
     TEST_TIMEOUT: 420
   script:
-    - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
     - make -f .test.mk test-$BUILD_PROFILE
   after_script:
     - find /tmp/t/ -type s -delete
@@ -164,7 +163,6 @@ test-mac-m1:
       - ulimit -n 10240
       - sudo mkdir -p /private/tmp/t
       - sudo chown -R $(id -u) /private/tmp/t
-      - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
       - make -f .test.mk build
 
 checkpatch:
@@ -207,7 +205,6 @@ coverage:
     TEST_TIMEOUT: 420
     NO_OUTPUT_TIMEOUT: 440
   script:
-    - export PATH="$PATH:$PWD" # for GLAuth (CMake will download it)
     - make -f .test.mk test-coverage
 
 # TODO: move out shared setup for fuzzing jobs

@@ -50,7 +50,6 @@ RUN dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
         tarantool-picodata-devel-${TARANTOOL_VERSION} \
         mariadb-devel \
         postgresql14-libs \
-        cyrus-sasl \
         libev \
         proj \
         geos \
@@ -62,7 +61,6 @@ RUN dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
         make \
         gcc-c++ \
         postgresql14-devel \
-        cyrus-sasl-devel \
         libev-devel \
         wget \
         proj-devel \
@@ -96,7 +94,6 @@ RUN dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-`rp
         git \
         cmake \
         postgresql14-devel \
-        cyrus-sasl-devel \
         libev-devel \
         wget \
         proj-devel \

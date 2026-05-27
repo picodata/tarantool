@@ -58,13 +58,6 @@ RUN wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh \
 # Install luacheck
 RUN luarocks-5.3 install luacheck 0.22.1-1
 
-# Install glauth for ldap tests
-ENV GLAUTH_URL=https://github.com/glauth/glauth/releases/download/v2.3.0/glauth-linux-amd64
-RUN set -e \
-    && cd /bin \
-    && curl -L -o glauth "$GLAUTH_URL" \
-    && chmod +x glauth
-
 # Timezone
 RUN ln -fs /usr/share/zoneinfo/Europe/Moscow /etc/localtime
 
