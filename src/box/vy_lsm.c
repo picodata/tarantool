@@ -248,7 +248,7 @@ vy_lsm_mem_tree_size(struct vy_lsm *lsm)
 {
 	struct vy_mem *mem;
 	size_t size = lsm->mem->tree_extent_size;
-	rlist_foreach_entry(mem, &lsm->sealed, in_sealed)
+	rlist_foreach_entry(mem, &lsm->sealed, in_mems)
 		size += mem->tree_extent_size;
 	return size;
 }
@@ -264,7 +264,7 @@ vy_lsm_mem_stmt_stat(struct vy_lsm *lsm)
 	assert(lsm->mem->stmt != NULL);
 	struct vy_stmt_stat s = *lsm->mem->stmt;
 	struct vy_mem *mem;
-	rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+	rlist_foreach_entry(mem, &lsm->sealed, in_mems) {
 		assert(mem->stmt != NULL);
 		vy_stmt_stat_add(&s, mem->stmt);
 	}
@@ -441,7 +441,7 @@ vy_lsm_delete(struct vy_lsm *lsm)
 		vy_lsm_unref(lsm->pk);
 
 	struct vy_mem *mem, *next_mem;
-	rlist_foreach_entry_safe(mem, &lsm->sealed, in_sealed, next_mem)
+	rlist_foreach_entry_safe(mem, &lsm->sealed, in_mems, next_mem)
 		vy_mem_delete(mem);
 	vy_mem_delete(lsm->mem);
 
@@ -910,7 +910,7 @@ int64_t
 vy_lsm_generation(struct vy_lsm *lsm)
 {
 	struct vy_mem *oldest = rlist_empty(&lsm->sealed) ? lsm->mem :
-		rlist_last_entry(&lsm->sealed, struct vy_mem, in_sealed);
+		rlist_last_entry(&lsm->sealed, struct vy_mem, in_mems);
 	return oldest->generation;
 }
 
@@ -1228,7 +1228,7 @@ vy_lsm_rotate_mem(struct vy_lsm *lsm)
 	if (mem == NULL)
 		return -1;
 
-	rlist_add_entry(&lsm->sealed, lsm->mem, in_sealed);
+	rlist_add_entry(&lsm->sealed, lsm->mem, in_mems);
 	lsm->mem = mem;
 	lsm->mem_list_version++;
 	return 0;
@@ -1248,8 +1248,8 @@ vy_lsm_rotate_mem_if_required(struct vy_lsm *lsm)
 void
 vy_lsm_delete_mem(struct vy_lsm *lsm, struct vy_mem *mem)
 {
-	assert(!rlist_empty(&mem->in_sealed));
-	rlist_del_entry(mem, in_sealed);
+	assert(!rlist_empty(&mem->in_mems));
+	rlist_del_entry(mem, in_mems);
 	vy_mem_delete(mem);
 	lsm->mem_list_version++;
 }
@@ -1290,13 +1290,13 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt)
 
 int
 vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
-	   struct vy_entry entry, struct tuple **region_stmt,
+	   struct vy_entry entry, struct tuple **mem_stmt,
 	   enum vy_quota_consumer_type consumer, struct vy_entry *prev)
 {
 	uint32_t format_id = entry.stmt->format_id;
 
 	assert(vy_stmt_is_refable(entry.stmt));
-	assert(*region_stmt == NULL || !vy_stmt_is_refable(*region_stmt));
+	assert(*mem_stmt == NULL || !vy_stmt_is_refable(*mem_stmt));
 
 	/* Abort transaction if format was changed by DDL */
 	if (!vy_stmt_is_key(entry.stmt) &&
@@ -1333,25 +1333,25 @@ vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 		tuple_unref(deleted.stmt);
 
 	/*
-	 * Allocate region_stmt on demand.
+	 * Allocate mem_stmt on demand.
 	 *
-	 * Also, reallocate region_stmt if it uses a different tuple
+	 * Also, reallocate mem_stmt if it uses a different tuple
 	 * format. This may happen during ALTER, when the LSM tree
 	 * that is currently being built uses the new space format
 	 * while other LSM trees still use the old space format.
 	 */
-	if (*region_stmt == NULL || (*region_stmt)->format_id != format_id) {
-		*region_stmt = vy_stmt_dup_lsregion(entry.stmt,
-						    &mem->env->allocator,
-						    mem->generation);
+	if (*mem_stmt == NULL || (*mem_stmt)->format_id != format_id) {
+		*mem_stmt = vy_stmt_dup_lsregion(entry.stmt,
+						 &mem->env->allocator,
+						 mem->generation);
 	}
 	if (need_unref)
 		tuple_unref(entry.stmt);
-	if (*region_stmt == NULL)
+	if (*mem_stmt == NULL)
 		return -1;
 
-	entry.stmt = *region_stmt;
-	if (vy_stmt_type(*region_stmt) != IPROTO_UPSERT)
+	entry.stmt = *mem_stmt;
+	if (vy_stmt_type(*mem_stmt) != IPROTO_UPSERT)
 		return vy_mem_insert(mem, entry, consumer, prev);
 	else
 		return vy_mem_insert_upsert(mem, entry, consumer, prev);
@@ -1374,7 +1374,7 @@ vy_lsm_complete_dump(struct vy_lsm *lsm, int64_t dump_lsn,
 	struct vy_stmt_counter dump_input;
 	vy_stmt_counter_reset(&dump_input);
 	struct vy_mem *mem, *next_mem;
-	rlist_foreach_entry_safe(mem, &lsm->sealed, in_sealed, next_mem) {
+	rlist_foreach_entry_safe(mem, &lsm->sealed, in_mems, next_mem) {
 		if (mem->generation > dump_generation)
 			continue;
 		vy_stmt_counter_add(&dump_input, &mem->count);

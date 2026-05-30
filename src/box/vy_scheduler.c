@@ -1461,7 +1461,7 @@ vy_task_dump_new(struct vy_scheduler *scheduler, struct vy_worker *worker,
 	 */
 	int64_t dump_lsn = -1;
 	struct vy_mem *mem, *next_mem;
-	rlist_foreach_entry_safe(mem, &lsm->sealed, in_sealed, next_mem) {
+	rlist_foreach_entry_safe(mem, &lsm->sealed, in_mems, next_mem) {
 		if (mem->generation > scheduler->dump_generation)
 			continue;
 		vy_mem_wait_pinned(mem);
@@ -1506,7 +1506,7 @@ vy_task_dump_new(struct vy_scheduler *scheduler, struct vy_worker *worker,
 				   is_last_level, scheduler->read_views, NULL);
 	if (wi == NULL)
 		goto err_wi;
-	rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+	rlist_foreach_entry(mem, &lsm->sealed, in_mems) {
 		if (mem->generation > scheduler->dump_generation)
 			continue;
 		if (vy_write_iterator_new_mem(wi, mem) != 0)

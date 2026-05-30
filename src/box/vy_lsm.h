@@ -288,7 +288,7 @@ struct vy_lsm {
 	struct vy_mem *mem;
 	/**
 	 * List of sealed in-memory indexes, i.e. indexes that can't be
-	 * inserted into, only read from, linked by vy_mem->in_sealed.
+	 * inserted into, only read from, linked by vy_mem->in_mems.
 	 * The newer an index, the closer it to the list head.
 	 */
 	struct rlist sealed;
@@ -765,15 +765,15 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
 
 /**
  * Insert a statement into the in-memory index of an LSM tree. If
- * the region_stmt is NULL and the statement is successfully inserted
- * then the new lsregion statement is returned via @a region_stmt.
+ * the mem_stmt is NULL and the statement is successfully inserted
+ * then the new lsregion statement is returned via @a mem_stmt.
  * Either vy_lsm_commit_stmt() or vy_lsm_rollback_stmt() must
  * be called on success.
  *
  * @param lsm         LSM tree the statement is for.
  * @param mem         In-memory tree to insert the statement into.
  * @param entry       Statement, allocated on malloc().
- * @param region_stmt NULL or the same statement, allocated on
+ * @param mem_stmt NULL or the same statement, allocated on
  *                    lsregion.
  * @param consumer    Operation class (TX, DDL, COMPACTION) the byte
  *                    charge belongs to, so the shared vy_quota keeps
@@ -787,7 +787,7 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
  */
 int
 vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
-	   struct vy_entry entry, struct tuple **region_stmt,
+	   struct vy_entry entry, struct tuple **mem_stmt,
 	   enum vy_quota_consumer_type consumer, struct vy_entry *prev);
 
 /**

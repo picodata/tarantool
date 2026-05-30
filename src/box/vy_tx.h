@@ -87,7 +87,7 @@ struct txv {
 	/** Statement of this operation. */
 	struct vy_entry entry;
 	/** Statement allocated on vy_mem->allocator. */
-	struct tuple *region_stmt;
+	struct tuple *mem_stmt;
 	/** Next in the transaction log. */
 	struct stailq_entry next_in_log;
 	/** Member the transaction write set. */

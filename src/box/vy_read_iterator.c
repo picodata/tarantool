@@ -708,7 +708,7 @@ vy_read_iterator_add_mem(struct vy_read_iterator *itr, bool is_prepared_ok)
 			     is_prepared_ok);
 	/* Add sealed in-memory indexes. */
 	struct vy_mem *mem;
-	rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+	rlist_foreach_entry(mem, &lsm->sealed, in_mems) {
 		sub_src = vy_read_iterator_add_src(itr);
 		vy_mem_iterator_open(&sub_src->mem_iterator,
 				     &lsm->stat.memory.iterator,

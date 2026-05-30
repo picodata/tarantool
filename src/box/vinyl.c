@@ -3655,11 +3655,11 @@ vy_squash_process(struct vy_squash *squash)
 	 * displaces the committed UPSERT at the same (key, lsn),
 	 * reverses the displaced UPSERT's bytes in the same step.
 	 */
-	struct tuple *region_stmt = NULL;
-	int rc = vy_lsm_set(lsm, mem, result, &region_stmt,
+	struct tuple *mem_stmt = NULL;
+	int rc = vy_lsm_set(lsm, mem, result, &mem_stmt,
 			    VY_QUOTA_CONSUMER_TX, NULL);
 	tuple_unref(result.stmt);
-	result.stmt = region_stmt;
+	result.stmt = mem_stmt;
 	if (rc == 0) {
 		/*
 		 * We don't modify the resulting statement,
@@ -4188,13 +4188,14 @@ static int
 vy_build_insert_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 		     struct tuple *stmt, int64_t lsn)
 {
-	struct tuple *region_stmt = vy_stmt_dup_lsregion(stmt,
-				&mem->env->allocator, mem->generation);
-	if (region_stmt == NULL)
+	struct tuple *mem_stmt = vy_stmt_dup_lsregion(stmt,
+						      &mem->env->allocator,
+						      mem->generation);
+	if (mem_stmt == NULL)
 		return -1;
-	vy_stmt_set_lsn(region_stmt, lsn);
+	vy_stmt_set_lsn(mem_stmt, lsn);
 	struct vy_entry entry;
-	vy_stmt_foreach_entry(entry, region_stmt, lsm->cmp_def) {
+	vy_stmt_foreach_entry(entry, mem_stmt, lsm->cmp_def) {
 		if (vy_mem_insert(mem, entry, VY_QUOTA_CONSUMER_DDL, NULL) != 0)
 			return -1;
 		vy_mem_commit_stmt(mem, entry);
@@ -4291,8 +4292,8 @@ static int
 vy_build_recover_stmt(struct vy_lsm *lsm, struct vy_lsm *pk,
 		      struct vy_entry mem_entry)
 {
-	struct tuple *region_stmt = mem_entry.stmt;
-	int64_t lsn = vy_stmt_lsn(region_stmt);
+	struct tuple *mem_stmt = mem_entry.stmt;
+	int64_t lsn = vy_stmt_lsn(mem_stmt);
 	if (lsn <= lsm->dump_lsn)
 		return 0; /* statement was dumped, nothing to do */
 
@@ -4318,16 +4319,16 @@ vy_build_recover_stmt(struct vy_lsm *lsm, struct vy_lsm *pk,
 			return -1;
 		}
 	}
-	enum iproto_type type = vy_stmt_type(region_stmt);
+	enum iproto_type type = vy_stmt_type(mem_stmt);
 	if (type == IPROTO_REPLACE || type == IPROTO_INSERT) {
 		uint32_t data_len;
-		const char *data = tuple_data_range(region_stmt, &data_len);
+		const char *data = tuple_data_range(mem_stmt, &data_len);
 		insert = vy_stmt_new_insert(lsm->mem_format,
 					    data, data + data_len);
 		if (insert == NULL)
 			goto err;
 	} else if (type == IPROTO_UPSERT) {
-		struct tuple *new_tuple = vy_apply_upsert(region_stmt,
+		struct tuple *new_tuple = vy_apply_upsert(mem_stmt,
 							  old_tuple,
 							  pk->cmp_def, true);
 		if (new_tuple == NULL)
@@ -4421,7 +4422,7 @@ vy_build_recover(struct vy_lsm *lsm, struct vy_lsm *pk)
 	int rc = 0;
 	struct vy_mem *mem;
 
-	rlist_foreach_entry_reverse(mem, &pk->sealed, in_sealed) {
+	rlist_foreach_entry_reverse(mem, &pk->sealed, in_mems) {
 		rc = vy_build_recover_mem(lsm, pk, mem);
 		if (rc != 0)
 			break;
@@ -4693,7 +4694,7 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 	/* Insert the deferred DELETE into secondary indexes. */
 	int rc = 0;
 	struct vy_env *env = vy_env(space->engine);
-	struct tuple *region_stmt = NULL;
+	struct tuple *mem_stmt = NULL;
 	for (uint32_t i = 1; i < space->index_count; i++) {
 		struct vy_lsm *lsm = vy_lsm(space->index[i]);
 		if (vy_is_committed(env, lsm))
@@ -4717,11 +4718,11 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 		}
 		struct vy_entry entry;
 		vy_stmt_foreach_entry(entry, delete, lsm->cmp_def) {
-			rc = vy_lsm_set(lsm, mem, entry, &region_stmt,
+			rc = vy_lsm_set(lsm, mem, entry, &mem_stmt,
 					VY_QUOTA_CONSUMER_COMPACTION, NULL);
 			if (rc != 0)
 				break;
-			entry.stmt = region_stmt;
+			entry.stmt = mem_stmt;
 			vy_lsm_commit_stmt(lsm, mem, entry);
 		}
 		if (rc != 0)

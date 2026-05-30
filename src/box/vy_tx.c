@@ -239,7 +239,7 @@ txv_new(struct vy_tx *tx, struct vy_lsm *lsm, struct vy_entry entry)
 	v->mem = NULL;
 	v->entry = entry;
 	tuple_ref(entry.stmt);
-	v->region_stmt = NULL;
+	v->mem_stmt = NULL;
 	v->tx = tx;
 	v->is_first_insert = false;
 	v->is_nop = false;
@@ -756,7 +756,7 @@ vy_lsm_check_concurrent_write_mem(struct vy_lsm *lsm, struct vy_tx *tx,
 {
 	int64_t min_lsn = tx->read_view->vlsn + 1;
 	struct vy_mem *mem;
-	rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+	rlist_foreach_entry(mem, &lsm->sealed, in_mems) {
 		if (mem->pin_count == 0 &&
 		    mem->dump_lsn >= 0 && mem->dump_lsn < min_lsn)
 			break;
@@ -796,7 +796,7 @@ vy_tx_manager_check_active_tx(struct vy_tx *tx, struct vy_lsm *lsm,
 					    multikey_idx))
 			continue;
 		struct vy_mem *mem;
-		rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+		rlist_foreach_entry(mem, &lsm->sealed, in_mems) {
 			/*
 			 * Only consider mems being dumped now (generation
 			 * <= dump_generation). A newer sealed mem -- one
@@ -1084,7 +1084,7 @@ vy_tx_prepare(struct vy_tx *tx)
 
 		/* In secondary indexes only REPLACE/DELETE can be written. */
 		vy_stmt_set_lsn(v->entry.stmt, MAX_LSN + tx->psn);
-		struct tuple **region_stmt =
+		struct tuple **mem_stmt =
 			(type == IPROTO_DELETE) ? &delete : &repsert;
 		/*
 		 * Check unique SK conflicts before inserting
@@ -1093,10 +1093,10 @@ vy_tx_prepare(struct vy_tx *tx)
 		if (uniq != NULL &&
 		    vy_tx_check_unique_secondary(tx, v, uniq) != 0)
 			return -1;
-		if (vy_lsm_set(lsm, v->mem, v->entry, region_stmt,
+		if (vy_lsm_set(lsm, v->mem, v->entry, mem_stmt,
 			       VY_QUOTA_CONSUMER_TX, p_prev) != 0)
 			return -1;
-		v->region_stmt = *region_stmt;
+		v->mem_stmt = *mem_stmt;
 		if (p_prev != NULL &&
 		    vy_tx_check_primary(tx, lsm, v->entry, prev) != 0)
 			return -1;
@@ -1128,11 +1128,11 @@ vy_tx_commit(struct vy_tx *tx, int64_t lsn)
 	/* Fix LSNs of the records and commit changes. */
 	struct txv *v;
 	stailq_foreach_entry(v, &tx->log, next_in_log) {
-		if (v->region_stmt != NULL) {
+		if (v->mem_stmt != NULL) {
 			struct vy_entry entry;
-			entry.stmt = v->region_stmt;
+			entry.stmt = v->mem_stmt;
 			entry.hint = v->entry.hint;
-			vy_stmt_set_lsn(v->region_stmt, lsn);
+			vy_stmt_set_lsn(v->mem_stmt, lsn);
 			vy_lsm_commit_stmt(v->lsm, v->mem, entry);
 		}
 		if (v->mem != NULL)
@@ -1201,9 +1201,9 @@ vy_tx_rollback_after_prepare(struct vy_tx *tx)
 
 	struct txv *v;
 	stailq_foreach_entry(v, &tx->log, next_in_log) {
-		if (v->region_stmt != NULL) {
+		if (v->mem_stmt != NULL) {
 			struct vy_entry entry;
-			entry.stmt = v->region_stmt;
+			entry.stmt = v->mem_stmt;
 			entry.hint = v->entry.hint;
 			vy_lsm_rollback_stmt(v->lsm, v->mem, entry);
 			vy_tx_abort_readers(tx, v);

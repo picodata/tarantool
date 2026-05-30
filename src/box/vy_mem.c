@@ -126,7 +126,7 @@ vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
 				vy_mem_tree_extent_free);
 	vy_mem_tree_create(&index->tree, cmp_def,
 			   &index->matras_allocator);
-	rlist_create(&index->in_sealed);
+	rlist_create(&index->in_mems);
 	fiber_cond_create(&index->pin_cond);
 	return index;
 }

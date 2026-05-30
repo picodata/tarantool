@@ -127,7 +127,7 @@ vy_point_lookup_scan_mems(struct vy_lsm *lsm, struct vy_tx *tx,
 				     key, history, &min_skipped_plsn) != 0)
 		return -1;
 	struct vy_mem *mem;
-	rlist_foreach_entry(mem, &lsm->sealed, in_sealed) {
+	rlist_foreach_entry(mem, &lsm->sealed, in_mems) {
 		if (vy_history_is_terminal(history))
 			break;
 		if (vy_point_lookup_scan_mem(lsm, mem, rv, is_prepared_ok,

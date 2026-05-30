@@ -185,8 +185,11 @@ struct vy_mem {
 	 * alive while the mem touches it.
 	 */
 	struct vy_mem_stat *lsm_stat;
-	/** Link in range->sealed list. */
-	struct rlist in_sealed;
+	/**
+	 * Link by which the mem hangs on its current list; empty
+	 * when it is on none.
+	 */
+	struct rlist in_mems;
 	/** BPS tree */
 	struct vy_mem_tree tree;
 	/* The matras allocator used by the tree. */
