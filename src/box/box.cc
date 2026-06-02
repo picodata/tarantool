@@ -2770,7 +2770,7 @@ box_check_promote(void) {
 	return 0;
 }
 
-int
+API_EXPORT int
 box_promote(void)
 {
 	if (!is_box_configured)

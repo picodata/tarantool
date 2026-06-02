@@ -379,7 +379,16 @@ typedef struct tuple box_tuple_t;
 bool
 box_in_promote(void);
 
-int
+/**
+ * Promote this instance to a synchronous replication leader: trigger a Raft
+ * election (or, with elections off, claim the limbo via a PROMOTE request).
+ * No-op if box is not configured, this instance is already the leader, or a
+ * promotion is already in progress.
+ *
+ * \retval 0 if success
+ * \retval -1 if failed.
+ */
+API_EXPORT int
 box_promote(void);
 
 int
