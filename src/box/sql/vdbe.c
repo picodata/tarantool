@@ -166,6 +166,56 @@ uint64_t OPCODE_YIELD_COUNT = 1024;
 int
 (*vdbe_yield_cb)(struct vdbe_yield_args *args) = NULL;
 
+int
+sql_insert_hook_mem_value(const struct Mem *mem,
+			  struct sql_insert_hook_value *out)
+{
+	if (mem == NULL || out == NULL)
+		return -1;
+
+	if (mem_is_null(mem)) {
+		out->type = SQL_INSERT_HOOK_VALUE_NULL;
+		return 0;
+	}
+	if (mem_is_nint(mem)) {
+		out->type = SQL_INSERT_HOOK_VALUE_INT;
+		out->u.i = mem->u.i;
+		return 0;
+	}
+	if (mem_is_uint(mem)) {
+		out->type = SQL_INSERT_HOOK_VALUE_UINT;
+		out->u.u = mem->u.u;
+		return 0;
+	}
+	if (mem_is_bool(mem)) {
+		out->type = SQL_INSERT_HOOK_VALUE_BOOL;
+		out->u.b = mem->u.b;
+		return 0;
+	}
+	if (mem_is_double(mem)) {
+		out->type = SQL_INSERT_HOOK_VALUE_DOUBLE;
+		out->u.d = mem->u.r;
+		return 0;
+	}
+	if (mem_is_dec(mem)) {
+		out->type = SQL_INSERT_HOOK_VALUE_DECIMAL;
+		out->u.dec = mem->u.d;
+		return 0;
+	}
+
+	out->type = SQL_INSERT_HOOK_VALUE_UNSUPPORTED;
+	return 0;
+}
+
+int
+sql_insert_hook_var_value(const struct Mem *a_var, int n_var, int slot,
+			  struct sql_insert_hook_value *out)
+{
+	if (a_var == NULL || out == NULL || slot <= 0 || slot > n_var)
+		return -1;
+	return sql_insert_hook_mem_value(&a_var[slot - 1], out);
+}
+
 /*
  * Allocate VdbeCursor number iCur.  Return a pointer to it.  Return NULL
  * if we run out of memory.
@@ -3553,7 +3603,7 @@ case OP_SorterInsert: {      /* in2 */
 	break;
 }
 
-/* Opcode: IdxInsert P1 P2 P3 * P5
+/* Opcode: IdxInsert P1 P2 P3 P4 P5
  * Synopsis: key=r[P1]
  *
  * @param P1 Index of a register with MessagePack data to insert.
@@ -3563,6 +3613,9 @@ case OP_SorterInsert: {      /* in2 */
  *           AUTOINCREMENT. If the value is NULL, than the newly
  *           generated autoincrement value will be saved to VDBE
  *           context.
+ * @param P4 Optional pointer to struct sql_insert_hook. If present,
+ *           OP_IdxInsert invokes the hook instead of the default
+ *           box_insert() path.
  * @param P5 Flags. If P5 contains OPFLAG_NCHANGE, then VDBE
  *        accounts the change in a case of successful insertion in
  *        nChange counter. If P5 contains OPFLAG_OE_IGNORE, then
@@ -3585,8 +3638,27 @@ case OP_IdxInsert: {
 		/* Make sure that memory has been allocated on region. */
 		assert(mem_is_ephemeral(&aMem[pOp->p1]));
 		if (pOp->opcode == OP_IdxInsert) {
-			rc = tarantoolsqlInsert(space, pIn2->z,
-						    pIn2->z + pIn2->n);
+			if (pOp->p4type == P4_PTR && pOp->p4.p != NULL) {
+				struct sql_insert_hook *hook = pOp->p4.p;
+				if (hook->run == NULL) {
+					diag_set(ClientError, ER_SQL_EXECUTE,
+						 "SQL insert hook callback is "
+						 "not installed");
+					goto abort_due_to_error;
+				}
+				struct sql_insert_hook_args args = {
+					.space_id = space->def->id,
+					.tuple = pIn2->z,
+					.tuple_end = pIn2->z + pIn2->n,
+					.a_var = p->aVar,
+					.n_var = p->nVar,
+					.ctx = hook->ctx,
+				};
+				rc = hook->run(&args);
+			} else {
+				rc = tarantoolsqlInsert(space, pIn2->z,
+							pIn2->z + pIn2->n);
+			}
 		} else {
 			rc = tarantoolsqlReplace(space, pIn2->z,
 						     pIn2->z + pIn2->n);

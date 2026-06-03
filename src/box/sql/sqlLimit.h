@@ -35,7 +35,10 @@
  *
  * This file defines various limits of what sql can process.
  */
+#include "core/decimal.h"
 #include "tt_static.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 enum {
 	/*
@@ -141,6 +144,74 @@ struct vdbe_yield_args {
 /* Callback to execute custom logic while running vdbe. */
 extern int
 (*vdbe_yield_cb)(struct vdbe_yield_args *args);
+
+struct Mem;
+
+enum sql_insert_hook_value_type {
+	SQL_INSERT_HOOK_VALUE_UNSUPPORTED = 0,
+	SQL_INSERT_HOOK_VALUE_NULL,
+	SQL_INSERT_HOOK_VALUE_INT,
+	SQL_INSERT_HOOK_VALUE_UINT,
+	SQL_INSERT_HOOK_VALUE_BOOL,
+	SQL_INSERT_HOOK_VALUE_DOUBLE,
+	SQL_INSERT_HOOK_VALUE_DECIMAL,
+};
+
+/* Value copied from an SQL Mem cell for external insert hooks. */
+struct sql_insert_hook_value {
+	/* Kind of the value stored in the union below. */
+	enum sql_insert_hook_value_type type;
+	union {
+		/* Signed integer value. */
+		int64_t i;
+		/* Unsigned integer value. */
+		uint64_t u;
+		/* Boolean value. */
+		bool b;
+		/* Double precision floating point value. */
+		double d;
+		/* Decimal value. */
+		decimal_t dec;
+	} u;
+};
+
+/* Convert an SQL Mem cell to a hook value. */
+int
+sql_insert_hook_mem_value(const struct Mem *mem,
+			  struct sql_insert_hook_value *out);
+
+/* Convert an SQL aVar slot to a hook value. */
+int
+sql_insert_hook_var_value(const struct Mem *a_var, int n_var, int slot,
+			  struct sql_insert_hook_value *out);
+
+/* Arguments for sql_insert_hook callback. */
+struct sql_insert_hook_args {
+	/* Identifier of the target persistent space. */
+	uint32_t space_id;
+	/* MessagePack tuple data. */
+	const char *tuple;
+	/* End of MessagePack tuple data. */
+	const char *tuple_end;
+	/* Values available to OP_Variable opcodes in the current VDBE. */
+	const struct Mem *a_var;
+	/* Number of entries in a_var. */
+	int n_var;
+	/* Opaque context owned by the hook installer. */
+	void *ctx;
+};
+
+/* Callback for OP_IdxInsert hook payloads. */
+typedef int
+(*sql_insert_hook_f)(struct sql_insert_hook_args *args);
+
+/* Optional hook payload for OP_IdxInsert opcodes marked with P4_PTR. */
+struct sql_insert_hook {
+	/* Callback to run instead of the default insert path. */
+	sql_insert_hook_f run;
+	/* Opaque context passed to the callback. */
+	void *ctx;
+};
 
 /*
  * The maximum number of arguments to an SQL function.
