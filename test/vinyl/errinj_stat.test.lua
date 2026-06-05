@@ -150,7 +150,12 @@ _ = s:create_index('pk')
 box.stat.vinyl().regulator.blocked_writers == 0
 
 errinj.set('ERRINJ_VY_RUN_WRITE_DELAY', true)
-pad = string.rep('x', box.cfg.vinyl_memory * 9 / 10)
+-- Stall the dump, then push used memory past the limit with a single
+-- insert. The quota admits an over-limit write (soft limit), so used
+-- stays above the limit while the dump is blocked. Every subsequent
+-- writer then blocks on the used > limit term, which is independent of
+-- the rate limit, so exactly five of them queue up.
+pad = string.rep('x', box.cfg.vinyl_memory * 11 / 10)
 _ = s:insert{0, pad}
 pad = string.rep('x', box.cfg.vinyl_memory * 2 / 10)
 for i = 1, 5 do fiber.create(function() s:insert{i, pad} end) end

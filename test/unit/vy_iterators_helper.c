@@ -1,4 +1,5 @@
 #include "vy_iterators_helper.h"
+#include "vy_quota.h"
 #include "memory.h"
 #include "fiber.h"
 #include "say.h"
@@ -7,8 +8,30 @@
 
 struct tt_uuid INSTANCE_UUID;
 
+/*
+ * Minimal stand-ins for vy_quota_acct / vy_quota_unacct so the
+ * unit tests need not link vy_quota.c and its fiber/ev dependencies.
+ * They track only the used-bytes counter, which is all the mem
+ * accounting exercised here touches.
+ */
+void
+vy_quota_unacct(struct vy_quota_acct *a, size_t size)
+{
+	a->used -= size;
+}
+
+void
+vy_quota_acct(struct vy_quota_acct *a, enum vy_quota_consumer_type type,
+	      size_t size)
+{
+	(void)type;
+	a->used += size;
+}
+
 struct vy_stmt_env stmt_env;
 struct vy_mem_env mem_env;
+/* Accounting target for the mem env; see the quota stubs above. */
+static struct vy_quota_acct mem_quota_acct;
 struct vy_cache_env cache_env;
 struct mempool history_node_pool;
 struct vy_mem_stat dummy_stat;
@@ -26,7 +49,7 @@ vy_iterator_C_test_init(size_t cache_size)
 	vy_cache_env_create(&cache_env, cord_slab_cache());
 	vy_cache_env_set_quota(&cache_env, cache_size);
 	size_t mem_size = 64 * 1024 * 1024;
-	vy_mem_env_create(&mem_env, mem_size, NULL);
+	vy_mem_env_create(&mem_env, mem_size, &mem_quota_acct, NULL);
 	mempool_create(&history_node_pool, cord_slab_cache(),
 		       sizeof(struct vy_history_node));
 }
@@ -150,9 +173,9 @@ vy_mem_insert_template(struct vy_mem *mem, const struct vy_stmt_template *templ)
 	tuple_unref(entry.stmt);
 	entry.stmt = region_stmt;
 	if (templ->type == IPROTO_UPSERT)
-		vy_mem_insert_upsert(mem, entry, NULL);
+		vy_mem_insert_upsert(mem, entry, VY_QUOTA_CONSUMER_TX, NULL);
 	else
-		vy_mem_insert(mem, entry, NULL);
+		vy_mem_insert(mem, entry, VY_QUOTA_CONSUMER_TX, NULL);
 	return entry;
 }
 

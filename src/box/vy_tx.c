@@ -1093,7 +1093,8 @@ vy_tx_prepare(struct vy_tx *tx)
 		if (uniq != NULL &&
 		    vy_tx_check_unique_secondary(tx, v, uniq) != 0)
 			return -1;
-		if (vy_lsm_set(lsm, v->mem, v->entry, region_stmt, p_prev) != 0)
+		if (vy_lsm_set(lsm, v->mem, v->entry, region_stmt,
+			       VY_QUOTA_CONSUMER_TX, p_prev) != 0)
 			return -1;
 		v->region_stmt = *region_stmt;
 		if (p_prev != NULL &&

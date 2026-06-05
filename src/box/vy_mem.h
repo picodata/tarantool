@@ -44,6 +44,7 @@
 #include "vy_stmt.h" /* for comparators */
 #include "vy_stmt_stream.h"
 #include "vy_read_view.h"
+#include "vy_quota_consumer.h"
 #include "vy_stat.h"
 
 #if defined(__cplusplus)
@@ -64,6 +65,12 @@ struct vy_mem_env {
 	/** TX manager, used for conflict detection on mem seal. */
 	struct vy_tx_manager *xm;
 	/**
+	 * Pure-accounting half of the vinyl quota: holding the acct
+	 * pointer, not the full vy_quota, keeps the hot insert/delete
+	 * paths structurally unable to reach the wait queue or regulator.
+	 */
+	struct vy_quota_acct *quota_acct;
+	/**
 	 * Sum of lsm->stat.memory across every LSM, kept current by
 	 * vy_mem_acct/unacct so the engine memory stat can be read
 	 * without walking the LSM list.
@@ -75,10 +82,12 @@ struct vy_mem_env {
  * Initialize a vinyl memory environment.
  * @param env[out] The environment to initialize.
  * @param memory The maximum number of in-memory bytes that vinyl uses.
+ * @param quota_acct Pure-accounting half of the vinyl quota,
+ *                   charged as statements enter and leave memory.
  */
 void
 vy_mem_env_create(struct vy_mem_env *env, size_t memory,
-		  struct vy_tx_manager *xm);
+		  struct vy_quota_acct *quota_acct, struct vy_tx_manager *xm);
 
 /**
  * Destroy a vinyl memory environment.
@@ -311,6 +320,9 @@ vy_mem_older_lsn(struct vy_mem *mem, struct vy_entry entry);
  * Insert a statement into the in-memory level.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
+ * @param consumer   Operation class (TX, DDL, COMPACTION) the byte
+ *                   charge belongs to, so the shared vy_quota keeps
+ *                   its per-class rate limit accurate.
  * @param prev       If not NULL, set to the previous version
  *                   of the same key in this mem (for conflict
  *                   detection). Set to vy_entry_none() if no
@@ -321,13 +333,16 @@ vy_mem_older_lsn(struct vy_mem *mem, struct vy_entry entry);
  */
 int
 vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
-	      struct vy_entry *prev);
+	      enum vy_quota_consumer_type consumer, struct vy_entry *prev);
 
 /**
  * Insert an upsert statement into the mem.
  *
  * @param mem Mem to insert to.
  * @param entry Upsert statement to insert.
+ * @param consumer Operation class (TX, DDL, COMPACTION) the byte
+ *        charge belongs to, so the shared vy_quota keeps its
+ *        per-class rate limit accurate.
  * @param prev       If not NULL, set to the previous version
  *                   of the same key in this mem (for conflict
  *                   detection). Set to vy_entry_none() if no
@@ -338,13 +353,14 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
  */
 int
 vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
+		     enum vy_quota_consumer_type consumer,
 		     struct vy_entry *prev);
 
 /**
- * Confirm insertion of a statement into the in-memory level.
- * Advances row/byte counters and, on the primary index, the
- * per-type stat gated by the VY_STMT_COUNTED flag cached at
- * insert time.
+ * Confirm insertion of a statement into the in-memory level. On the
+ * primary index, if the statement has the VY_STMT_COUNTED flag, set
+ * when it was inserted into the tree, advance the per-statement-type
+ * stat counters.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
  */
@@ -352,8 +368,10 @@ void
 vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry);
 
 /**
- * Remove a statement from the in-memory level. Counters advance
- * only on commit, so rollback leaves them alone.
+ * Remove a statement from the in-memory level. If the entry is
+ * still present in the tree (no later insert displaced it),
+ * reverses the insert-time vy_mem_acct. No-op if @a entry is no
+ * longer in @a mem.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
  */
@@ -361,12 +379,11 @@ void
 vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry);
 
 /**
- * Reverse the row half of vy_mem_acct for a committed entry
- * that was a tree-slot rewrite, not a new append. Used by the
- * upsert squash after its commit_stmt. Bytes stay (lsregion).
+ * Reverse of vy_mem_acct: subtract @a rows and @a bytes from the
+ * mem, its owning LSM's stat, the engine-wide stat, and the quota.
  */
 void
-vy_mem_unacct(struct vy_mem *mem);
+vy_mem_unacct(struct vy_mem *mem, int64_t rows, size_t bytes);
 
 /**
  * Iterator for in-memory level.

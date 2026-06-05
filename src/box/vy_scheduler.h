@@ -48,15 +48,12 @@ extern "C" {
 #endif /* defined(__cplusplus) */
 
 struct fiber;
+struct lsregion;
 struct vy_lsm;
 struct vy_quota;
 struct vy_run_env;
 struct vy_worker;
 struct vy_scheduler;
-
-typedef void
-(*vy_scheduler_dump_complete_f)(struct vy_scheduler *scheduler,
-				int64_t dump_generation, double dump_duration);
 
 struct vy_worker_pool {
 	/** Name of the pool. Used for naming threads. */
@@ -144,18 +141,18 @@ struct vy_scheduler {
 	/** Scheduler statistics. */
 	struct vy_scheduler_stat stat;
 	/**
-	 * Function called by the scheduler upon dump round
-	 * completion. It is supposed to free memory released
-	 * by the dump.
+	 * Mem-tree allocator. lsregion_gc on dump-round completion
+	 * needs it. Transient: removed with the slab/drain transition.
 	 */
-	vy_scheduler_dump_complete_f dump_complete_cb;
+	struct lsregion *mem_lsregion;
 	/** List of read views, see vy_tx_manager::read_views. */
 	struct rlist *read_views;
 	/** Context needed for writing runs. */
 	struct vy_run_env *run_env;
 	/**
-	 * Memory quota. Used for accounting deferred DELETE statements
-	 * written to memory during compaction.
+	 * Memory quota. Used to bill deferred DELETE statements in
+	 * compaction tasks, and to release/wake on dump-round
+	 * completion.
 	 */
 	struct vy_quota *quota;
 };
@@ -185,7 +182,7 @@ vy_scheduler_is_idle(struct vy_scheduler *scheduler);
  */
 void
 vy_scheduler_create(struct vy_scheduler *scheduler, int write_threads,
-		    vy_scheduler_dump_complete_f dump_complete_cb,
+		    struct lsregion *mem_lsregion,
 		    struct vy_run_env *run_env, struct rlist *read_views,
 		    struct vy_quota *quota);
 

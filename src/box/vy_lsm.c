@@ -1250,8 +1250,6 @@ vy_lsm_delete_mem(struct vy_lsm *lsm, struct vy_mem *mem)
 {
 	assert(!rlist_empty(&mem->in_sealed));
 	rlist_del_entry(mem, in_sealed);
-	vy_stmt_counter_sub(&lsm->stat.memory.count, &mem->count);
-	vy_stmt_counter_sub(&mem->env->stat.count, &mem->count);
 	vy_mem_delete(mem);
 	lsm->mem_list_version++;
 }
@@ -1293,7 +1291,7 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt)
 int
 vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 	   struct vy_entry entry, struct tuple **region_stmt,
-	   struct vy_entry *prev)
+	   enum vy_quota_consumer_type consumer, struct vy_entry *prev)
 {
 	uint32_t format_id = entry.stmt->format_id;
 
@@ -1354,16 +1352,15 @@ vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 
 	entry.stmt = *region_stmt;
 	if (vy_stmt_type(*region_stmt) != IPROTO_UPSERT)
-		return vy_mem_insert(mem, entry, prev);
+		return vy_mem_insert(mem, entry, consumer, prev);
 	else
-		return vy_mem_insert_upsert(mem, entry, prev);
+		return vy_mem_insert_upsert(mem, entry, consumer, prev);
 }
 
-void
+int64_t
 vy_lsm_complete_dump(struct vy_lsm *lsm, int64_t dump_lsn,
 		     int64_t dump_generation, double dump_time,
-		     const struct vy_disk_stmt_counter *dump_output,
-		     struct vy_scheduler_stat *sched_stat)
+		     const struct vy_disk_stmt_counter *dump_output)
 {
 	/*
 	 * Update dump_lsn before freeing the sealed mems so
@@ -1384,15 +1381,12 @@ vy_lsm_complete_dump(struct vy_lsm *lsm, int64_t dump_lsn,
 		vy_lsm_delete_mem(lsm, mem);
 	}
 	vy_lsm_acct_dump(lsm, dump_time, &dump_input, dump_output);
-	/*
-	 * Indexes of the same space share a memory level so we
-	 * account dump input only when the primary index is dumped.
-	 */
-	if (lsm->index_id == 0)
-		sched_stat->dump_input += dump_input.bytes;
-	sched_stat->dump_output += dump_output->bytes;
-	sched_stat->dump_time += dump_time;
 	lsm->is_dumping = false;
+	/*
+	 * Indexes of a space share a memory level, so only the primary
+	 * index's input is accounted; return 0 for secondary indexes.
+	 */
+	return lsm->index_id == 0 ? dump_input.bytes : 0;
 }
 
 /**

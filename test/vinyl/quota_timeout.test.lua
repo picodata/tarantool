@@ -24,11 +24,16 @@ s:count()
 mem = box.stat.vinyl().memory.level0
 mem < 1000000
 
--- Since the following operation requires more memory than configured
--- and dump is disabled, it should fail with ER_VY_QUOTA_TIMEOUT.
+-- The soft limit reserves nothing and admits a write while any quota
+-- is left. This second write is still under the limit at admission,
+-- so it is let in and overshoots, pushing used memory over the limit.
 _ = s:auto_increment{pad}
 s:count()
 box.stat.vinyl().memory.level0 == mem
+-- Now that used memory is over the limit and dump is disabled, the
+-- next write blocks and is aborted on timeout (ER_VY_QUOTA_TIMEOUT).
+_ = s:auto_increment{pad}
+s:count()
 
 --
 -- Check that increasing box.cfg.vinyl_memory wakes up fibers
@@ -53,7 +58,12 @@ box.error.injection.set('ERRINJ_VY_RUN_WRITE_DELAY', true)
 box.cfg{vinyl_timeout=60}
 box.cfg{too_long_threshold=0.01}
 
-pad = string.rep('x', 2 * box.cfg.vinyl_memory / 3)
+-- The first write is admitted even though it fills the whole quota
+-- (soft limit), pushing used memory over the limit. The second write
+-- then blocks on the memory limit while the dump is stalled, and waits
+-- long enough to log the warning. Blocking on the rate limit would not
+-- do, as it neither schedules a dump nor waits for one.
+pad = string.rep('x', box.cfg.vinyl_memory)
 ch = fiber.channel(1)
 f = fiber.create(function() s:auto_increment{pad} s:auto_increment{pad} ch:put(true) end)
 fiber.sleep(0.02)
@@ -72,8 +82,12 @@ box.snapshot()
 -- Check that exceeding quota doesn't hang the scheduler
 -- in case there's nothing to dump.
 --
--- The following operation should fail instantly irrespective
--- of the value of 'vinyl_timeout' (gh-3291).
+-- A single transaction larger than the whole memory limit no longer
+-- fails: the soft limit reserves nothing and admits a write whenever
+-- any quota is left, so with memory empty this one is let in and
+-- overshoots the limit by its own size. gh-3291 is still satisfied --
+-- the write returns at once instead of hanging for vinyl_timeout --
+-- but now by admitting the write rather than rejecting it.
 --
 box.stat.vinyl().memory.level0 == 0
 box.cfg{vinyl_timeout = 9000}

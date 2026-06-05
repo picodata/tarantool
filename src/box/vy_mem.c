@@ -40,6 +40,7 @@
 #include "diag.h"
 #include "tuple.h"
 #include "vy_history.h"
+#include "vy_quota.h"
 
 /** {{{ vy_mem_env */
 
@@ -50,7 +51,7 @@ enum {
 
 void
 vy_mem_env_create(struct vy_mem_env *env, size_t memory,
-		  struct vy_tx_manager *xm)
+		  struct vy_quota_acct *quota_acct, struct vy_tx_manager *xm)
 {
 	/* Vinyl memory is limited by vy_quota. */
 	quota_init(&env->quota, QUOTA_MAX);
@@ -58,6 +59,7 @@ vy_mem_env_create(struct vy_mem_env *env, size_t memory,
 			   SLAB_SIZE, false, "vinyl");
 	lsregion_create(&env->allocator, &env->arena);
 	env->tree_extent_size = 0;
+	env->quota_acct = quota_acct;
 	env->xm = xm;
 }
 
@@ -133,6 +135,15 @@ void
 vy_mem_delete(struct vy_mem *index)
 {
 	index->env->tree_extent_size -= index->tree_extent_size;
+	/*
+	 * Settle accounting: return the mem's bytes to the quota and
+	 * subtract its counters from the per-LSM and engine-wide sums.
+	 * The lsregion memory itself is freed in bulk by the dump
+	 * scheduler's lsregion_gc; releasing here only lets throttling
+	 * see the bytes freed at dump-complete time.
+	 */
+	assert(index->count.bytes >= 0);
+	vy_mem_unacct(index, index->count.rows, (size_t)index->count.bytes);
 	/*
 	 * It would be expected to destroy the index->matras_allocator and
 	 * the index->tree here, but they simply free allocated and reserved
@@ -217,35 +228,34 @@ vy_mem_stmt_is_counted(enum iproto_type type, struct vy_entry older)
 }
 
 /**
- * Account a committed entry against the mem, its owning LSM's
- * memory stat (mem->lsm_stat) and the engine-wide sum
- * (mem->env->stat). The per-type stat is separately bumped (gated
- * by VY_STMT_COUNTED) at the end of vy_mem_commit_stmt.
+ * Single point that updates all four counters (mem, per-LSM,
+ * engine-wide, vy_quota) so callers can't drift them apart.
+ * Per-statement callers pass rows=1; vy_mem_delete passes
+ * mem->count for the bulk release at deletion.
  */
 static inline void
-vy_mem_acct(struct vy_mem *mem, struct vy_entry entry)
+vy_mem_acct(struct vy_mem *mem, int64_t rows, size_t bytes,
+	    enum vy_quota_consumer_type consumer)
 {
-	mem->count.rows++;
-	mem->lsm_stat->count.rows++;
-	mem->env->stat.count.rows++;
-	size_t size = tuple_size(entry.stmt);
-	mem->count.bytes += size;
-	mem->lsm_stat->count.bytes += size;
-	mem->env->stat.count.bytes += size;
+	mem->count.rows += rows;
+	mem->count.bytes += bytes;
+	mem->lsm_stat->count.rows += rows;
+	mem->lsm_stat->count.bytes += bytes;
+	mem->env->stat.count.rows += rows;
+	mem->env->stat.count.bytes += bytes;
+	vy_quota_acct(mem->env->quota_acct, consumer, bytes);
 }
 
-/**
- * Reverse the row half of vy_mem_acct. Bytes stay -- lsregion
- * cannot free individual allocations. Used by the upsert squash
- * path to cancel the commit path's rows++ when a REPLACE
- * displaces a committed UPSERT at the same (key, lsn).
- */
 void
-vy_mem_unacct(struct vy_mem *mem)
+vy_mem_unacct(struct vy_mem *mem, int64_t rows, size_t bytes)
 {
-	mem->count.rows--;
-	mem->lsm_stat->count.rows--;
-	mem->env->stat.count.rows--;
+	mem->count.rows -= rows;
+	mem->count.bytes -= bytes;
+	mem->lsm_stat->count.rows -= rows;
+	mem->lsm_stat->count.bytes -= bytes;
+	mem->env->stat.count.rows -= rows;
+	mem->env->stat.count.bytes -= bytes;
+	vy_quota_unacct(mem->env->quota_acct, bytes);
 }
 
 /**
@@ -279,6 +289,7 @@ vy_mem_set_counted_flag(struct vy_mem *mem, struct vy_entry entry,
 
 int
 vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
+		     enum vy_quota_consumer_type consumer,
 		     struct vy_entry *prev)
 {
 	assert(vy_stmt_type(entry.stmt) == IPROTO_UPSERT);
@@ -301,6 +312,7 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 	 * REPLACE (not an UPSERT) and goes through vy_mem_insert.
 	 */
 	assert(replaced.stmt == NULL);
+	vy_mem_acct(mem, 1, tuple_size(entry.stmt), consumer);
 	vy_mem_set_counted_flag(mem, entry, &at);
 	/*
 	 * All iterators begin to see the new statement, and
@@ -356,7 +368,7 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 
 int
 vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
-	      struct vy_entry *prev)
+	      enum vy_quota_consumer_type consumer, struct vy_entry *prev)
 {
 	assert(vy_stmt_type(entry.stmt) != IPROTO_UPSERT);
 	/* Check if the statement can be inserted in the vy_mem. */
@@ -369,21 +381,19 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 	if (vy_mem_tree_insert_get_iterator(&mem->tree, entry, &replaced,
 					    &at) != 0)
 		return -1;
+	vy_mem_acct(mem, 1, tuple_size(entry.stmt), consumer);
 	mem->version++;
 	if (replaced.stmt != NULL) {
 		/*
-		 * On the PK this is the upsert squash path: REPLACE
-		 * displaces the topmost committed UPSERT at the same
-		 * (key, lsn); the squash itself compensates for the
-		 * extra rows++ at commit via vy_mem_unacct. Per-type
-		 * stays invariant (the counted-sum treats REPLACE and
-		 * UPSERT the same), so leave the flag clear. On SKs a
-		 * multikey tuple can emit the same (key, lsn) twice;
-		 * no per-type work either, since SKs don't keep it.
+		 * PK: upsert squash (REPLACE displaces a committed
+		 * UPSERT at the same (key, lsn)). SK: multikey tuple
+		 * producing the same (key, lsn) twice. Net rows
+		 * cancel; bytes adjust by the difference.
 		 */
 		assert(mem->stmt == NULL ||
 		       (vy_stmt_type(entry.stmt) == IPROTO_REPLACE &&
 			vy_stmt_type(replaced.stmt) == IPROTO_UPSERT));
+		vy_mem_unacct(mem, 1, tuple_size(replaced.stmt));
 		if (prev != NULL)
 			*prev = vy_entry_none();
 		return 0;
@@ -426,7 +436,6 @@ vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry)
 	 * yield finishes and return a stale tuple.
 	 */
 	mem->version++;
-	vy_mem_acct(mem, entry);
 	/*
 	 * The flag is cached on the statement, which is shared across
 	 * the primary and secondary mems; gate on mem->stmt so only the
@@ -443,13 +452,15 @@ vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry)
 	/* The statement must be from a lsregion. */
 	assert(!vy_stmt_is_refable(entry.stmt));
 	/*
-	 * Counters advance only on commit, so rollback leaves them
-	 * alone. The entry's storage stays in lsregion (which doesn't
-	 * support freeing individual allocations) until the mem is
-	 * retired.
+	 * A later vy_mem_insert may have already displaced this entry
+	 * (and reversed its accounting); skip the decrement in that
+	 * case. The lsregion storage stays put until the mem is
+	 * retired -- only the accounting is undone here.
 	 */
-	if (vy_mem_tree_delete(&mem->tree, entry) == 0)
+	if (vy_mem_tree_delete(&mem->tree, entry) == 0) {
 		mem->version++;
+		vy_mem_unacct(mem, 1, tuple_size(entry.stmt));
+	}
 }
 
 /* }}} vy_mem */

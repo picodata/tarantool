@@ -118,8 +118,6 @@ struct vy_env {
 	struct vy_mem_env mem_env;
 	/** Scheduler */
 	struct vy_scheduler scheduler;
-	/** Load regulator. */
-	struct vy_regulator regulator;
 	/** Local recovery context. */
 	struct vy_recovery *recovery;
 	/** Local recovery vclock. */
@@ -255,15 +253,16 @@ vy_info_append_scheduler(struct vy_env *env, struct info_handler *h)
 static void
 vy_info_append_regulator(struct vy_env *env, struct info_handler *h)
 {
-	struct vy_regulator *r = &env->regulator;
+	struct vy_quota *q = &env->quota;
+	struct vy_regulator *r = &q->regulator;
 
 	info_table_begin(h, "regulator");
 	info_append_int(h, "write_rate", r->write_rate);
 	info_append_int(h, "dump_bandwidth", r->dump_bandwidth);
 	info_append_int(h, "dump_watermark", r->dump_watermark);
-	info_append_int(h, "rate_limit", vy_quota_get_rate_limit(r->quota,
-							VY_QUOTA_CONSUMER_TX));
-	info_append_int(h, "blocked_writers", r->quota->n_blocked);
+	size_t rate = vy_quota_get_rate_limit(q, VY_QUOTA_CONSUMER_TX);
+	info_append_int(h, "rate_limit", rate);
+	info_append_int(h, "blocked_writers", q->n_blocked);
 	info_table_end(h); /* regulator */
 }
 
@@ -296,7 +295,7 @@ vy_info_append_memory(struct vy_env *env, struct info_handler *h)
 {
 	info_table_begin(h, "memory");
 	info_append_int(h, "tx", vy_tx_manager_mem_used(env->xm));
-	info_append_int(h, "level0", lsregion_used(&env->mem_env.allocator));
+	info_append_int(h, "level0", env->quota.acct.used);
 	info_append_int(h, "tuple", vy_stmt_tuple_memory_used(&env->stmt_env));
 	info_append_int(h, "tuple_cache", env->cache_env.mem_used);
 	info_append_int(h, "page_index", env->lsm_env.page_index_size);
@@ -568,7 +567,7 @@ vinyl_engine_reset_stat(struct engine *engine)
 	memset(&xm->stat, 0, sizeof(xm->stat));
 
 	vy_scheduler_reset_stat(&env->scheduler);
-	vy_regulator_reset_stat(&env->regulator);
+	vy_regulator_reset_stat(&env->quota.regulator);
 }
 
 /** }}} Introspection */
@@ -2670,50 +2669,39 @@ vinyl_engine_prepare(struct engine *engine, struct txn *txn)
 	double timeout = (tx->is_applier_session ?
 			  TIMEOUT_INFINITY : env->timeout);
 	/*
-	 * Reserve quota needed by the transaction before allocating
-	 * memory. Since this may yield, which opens a time window for
-	 * the transaction to be sent to read view or aborted, we call
-	 * it before checking for conflicts.
+	 * Soft limit: admit the transaction as long as any quota is
+	 * left, even if its write set pushes us over. Blocking on the
+	 * exact write set would wait below the dump watermark -- a dead
+	 * zone where no dump fires. Since this may yield, opening a
+	 * window for the transaction to be sent to read view or aborted,
+	 * we call it before checking for conflicts. vy_mem_insert charges
+	 * the real bytes during prepare.
 	 */
-	if (vy_quota_use(&env->quota, VY_QUOTA_CONSUMER_TX,
-			 tx->write_size, timeout) != 0)
+	if (vy_quota_wait(&env->quota, VY_QUOTA_CONSUMER_TX, timeout) != 0)
 		return -1;
 
-	size_t mem_used_before = lsregion_used(&env->mem_env.allocator);
-
-	int rc = vy_tx_prepare(tx);
-
-	size_t mem_used_after = lsregion_used(&env->mem_env.allocator);
-	assert(mem_used_after >= mem_used_before);
-	vy_quota_adjust(&env->quota, VY_QUOTA_CONSUMER_TX,
-			tx->write_size, mem_used_after - mem_used_before);
-	vy_regulator_check_dump_watermark(&env->regulator);
-	return rc;
+	/*
+	 * vy_quota_wait() above already checked the dump watermark, so no
+	 * separate check is needed here; vy_tx_prepare() only charges the
+	 * write set (its crossing of the watermark is picked up by the
+	 * next vy_quota_wait()).
+	 */
+	return vy_tx_prepare(tx);
 }
 
 static void
 vinyl_engine_commit(struct engine *engine, struct txn *txn)
 {
-	struct vy_env *env = vy_env(engine);
+	(void)engine;
 	struct vy_tx *tx = txn->engine_tx;
 	assert(tx != NULL);
 
 	/*
-	 * vy_tx_commit() may trigger an upsert squash.
-	 * If there is no memory for a created statement,
-	 * it silently fails. But if it succeeds, we
-	 * need to account the memory in the quota.
+	 * An upsert squash that commit may schedule charges and checks
+	 * the quota itself, in the background (see vy_squash_process);
+	 * commit itself charges nothing, so no watermark check is needed.
 	 */
-	size_t mem_used_before = lsregion_used(&env->mem_env.allocator);
-
 	vy_tx_commit(tx, txn->signature);
-
-	size_t mem_used_after = lsregion_used(&env->mem_env.allocator);
-	assert(mem_used_after >= mem_used_before);
-	/* We can't abort the transaction at this point, use force. */
-	vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_TX,
-			   mem_used_after - mem_used_before);
-	vy_regulator_check_dump_watermark(&env->regulator);
 
 	txn->engine_tx = NULL;
 }
@@ -2761,58 +2749,6 @@ vinyl_engine_switch_to_ro(struct engine *engine)
 /* }}} Public API of transaction control */
 
 /** {{{ Environment */
-
-static void
-vy_env_quota_exceeded_cb(struct vy_quota *quota)
-{
-	struct vy_env *env = container_of(quota, struct vy_env, quota);
-	vy_regulator_quota_exceeded(&env->regulator);
-}
-
-static int
-vy_env_trigger_dump_cb(struct vy_regulator *regulator)
-{
-	struct vy_env *env = container_of(regulator, struct vy_env, regulator);
-
-	if (lsregion_used(&env->mem_env.allocator) == 0) {
-		/*
-		 * The memory limit has been exceeded, but there's
-		 * nothing to dump. This may happen if all available
-		 * quota has been consumed by pending transactions.
-		 * There's nothing we can do about that.
-		 */
-		return -1;
-	}
-	vy_scheduler_trigger_dump(&env->scheduler);
-	return 0;
-}
-
-static void
-vy_env_dump_complete_cb(struct vy_scheduler *scheduler,
-			int64_t dump_generation, double dump_duration)
-{
-	struct vy_env *env = container_of(scheduler, struct vy_env, scheduler);
-
-	/* Free memory and release quota. */
-	struct lsregion *allocator = &env->mem_env.allocator;
-	struct vy_quota *quota = &env->quota;
-	size_t mem_used_before = lsregion_used(allocator);
-	lsregion_gc(allocator, dump_generation);
-	size_t mem_used_after = lsregion_used(allocator);
-	assert(mem_used_after <= mem_used_before);
-	size_t mem_dumped = mem_used_before - mem_used_after;
-	/*
-	 * In certain corner cases, vy_quota_release() may need
-	 * to trigger a new dump. Notify the regulator about dump
-	 * completion before releasing quota so that it can start
-	 * a new dump immediately.
-	 */
-	vy_regulator_dump_complete(&env->regulator, mem_dumped, dump_duration);
-	vy_quota_release(quota, mem_dumped);
-
-	vy_regulator_update_rate_limit(&env->regulator, &scheduler->stat,
-				       scheduler->compaction_pool.size);
-}
 
 static struct vy_squash_queue *
 vy_squash_queue_new(void);
@@ -2865,9 +2801,10 @@ vy_env_new(const char *path, size_t memory,
 		goto error_squash_queue;
 
 	vy_stmt_env_create(&e->stmt_env);
-	vy_mem_env_create(&e->mem_env, memory, e->xm);
+	vy_quota_create(&e->quota, &e->scheduler, memory);
+	vy_mem_env_create(&e->mem_env, memory, &e->quota.acct, e->xm);
 	vy_scheduler_create(&e->scheduler, write_threads,
-			    vy_env_dump_complete_cb,
+			    &e->mem_env.allocator,
 			    &e->run_env, &e->xm->read_views,
 			    &e->quota);
 
@@ -2877,10 +2814,6 @@ vy_env_new(const char *path, size_t memory,
 			      vy_squash_schedule, e,
 			      vy_env_compaction_trigger, e) != 0)
 		goto error_lsm_env;
-
-	vy_quota_create(&e->quota, memory, vy_env_quota_exceeded_cb);
-	vy_regulator_create(&e->regulator, &e->quota,
-			    vy_env_trigger_dump_cb);
 
 	struct slab_cache *slab_cache = cord_slab_cache();
 	mempool_create(&e->iterator_pool, slab_cache,
@@ -2907,7 +2840,6 @@ error_path:
 static void
 vy_env_delete(struct vy_env *e)
 {
-	vy_regulator_destroy(&e->regulator);
 	vy_scheduler_destroy(&e->scheduler);
 	vy_squash_queue_delete(e->squash_queue);
 	vy_tx_manager_delete(e->xm);
@@ -2935,7 +2867,6 @@ vy_env_complete_recovery(struct vy_env *env)
 {
 	vy_scheduler_start(&env->scheduler);
 	vy_quota_enable(&env->quota);
-	vy_regulator_start(&env->regulator);
 }
 
 struct engine *
@@ -2971,12 +2902,12 @@ int
 vinyl_engine_set_memory(struct engine *engine, size_t size)
 {
 	struct vy_env *env = vy_env(engine);
-	if (size < env->quota.limit) {
+	if (size < env->quota.acct.size_limit) {
 		diag_set(ClientError, ER_CFG, "vinyl_memory",
 			 "cannot decrease memory size at runtime");
 		return -1;
 	}
-	vy_regulator_set_memory_limit(&env->regulator, size);
+	vy_quota_set_size_limit(&env->quota, size);
 	return 0;
 }
 
@@ -3017,7 +2948,7 @@ vinyl_engine_set_snap_io_rate_limit(struct engine *engine, double limit)
 	struct vy_env *env = vy_env(engine);
 	int64_t limit_in_bytes = limit * 1024 * 1024;
 	env->run_env.snap_io_rate_limit = limit_in_bytes;
-	vy_regulator_reset_dump_bandwidth(&env->regulator, limit_in_bytes);
+	vy_quota_set_dump_bandwidth(&env->quota, limit_in_bytes);
 }
 
 /** }}} Environment */
@@ -3035,7 +2966,7 @@ vinyl_engine_begin_checkpoint(struct engine *engine, bool is_scheduled)
 	 * To avoid starting the threads for nothing, do not wake it
 	 * up if Vinyl is not used.
 	 */
-	if (lsregion_used(&env->mem_env.allocator) == 0)
+	if (env->quota.acct.used == 0)
 		return 0;
 	if (vy_scheduler_begin_checkpoint(&env->scheduler, is_scheduled) != 0)
 		return -1;
@@ -3719,16 +3650,16 @@ vy_squash_process(struct vy_squash *squash)
 	lsm->stat.upsert.squashed++;
 
 	/*
-	 * Insert the resulting REPLACE statement to the mem
-	 * and adjust the quota.
+	 * Insert the resulting REPLACE statement to the mem.
+	 * vy_mem_insert charges the bytes and, since the REPLACE
+	 * displaces the committed UPSERT at the same (key, lsn),
+	 * reverses the displaced UPSERT's bytes in the same step.
 	 */
-	size_t mem_used_before = lsregion_used(&env->mem_env.allocator);
 	struct tuple *region_stmt = NULL;
-	int rc = vy_lsm_set(lsm, mem, result, &region_stmt, NULL);
+	int rc = vy_lsm_set(lsm, mem, result, &region_stmt,
+			    VY_QUOTA_CONSUMER_TX, NULL);
 	tuple_unref(result.stmt);
 	result.stmt = region_stmt;
-	size_t mem_used_after = lsregion_used(&env->mem_env.allocator);
-	assert(mem_used_after >= mem_used_before);
 	if (rc == 0) {
 		/*
 		 * We don't modify the resulting statement,
@@ -3736,16 +3667,10 @@ vy_squash_process(struct vy_squash *squash)
 		 */
 		vy_mem_commit_stmt(mem, result);
 		/*
-		 * The squash REPLACE displaced a committed UPSERT at
-		 * the same (key, lsn). commit_stmt just bumped rows
-		 * for it, but the BPS tree swap did not add a new slot;
-		 * cancel the stray bump to keep rows counting live tree
-		 * entries.
+		 * No quota throttle or watermark check here: the merged
+		 * REPLACE displaces a committed UPSERT (see above), so
+		 * squashing does not grow memory -- it is reclaim-side.
 		 */
-		vy_mem_unacct(mem);
-		vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_TX,
-				   mem_used_after - mem_used_before);
-		vy_regulator_check_dump_watermark(&env->regulator);
 	}
 	return rc;
 }
@@ -4270,7 +4195,7 @@ vy_build_insert_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 	vy_stmt_set_lsn(region_stmt, lsn);
 	struct vy_entry entry;
 	vy_stmt_foreach_entry(entry, region_stmt, lsm->cmp_def) {
-		if (vy_mem_insert(mem, entry, NULL) != 0)
+		if (vy_mem_insert(mem, entry, VY_QUOTA_CONSUMER_DDL, NULL) != 0)
 			return -1;
 		vy_mem_commit_stmt(mem, entry);
 	}
@@ -4347,17 +4272,14 @@ vy_build_insert_tuple(struct vy_env *env, struct vy_lsm *lsm,
 	mem = lsm->mem;
 
 	/* Insert the new tuple into the in-memory index. */
-	size_t mem_used_before = lsregion_used(&env->mem_env.allocator);
 	rc = vy_build_insert_stmt(lsm, mem, stmt, lsn);
 	tuple_unref(stmt);
 
-	/* Consume memory quota. Throttle if it is exceeded. */
-	size_t mem_used_after = lsregion_used(&env->mem_env.allocator);
-	assert(mem_used_after >= mem_used_before);
-	vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_DDL,
-			   mem_used_after - mem_used_before);
-	vy_regulator_check_dump_watermark(&env->regulator);
-	vy_quota_wait(&env->quota, VY_QUOTA_CONSUMER_DDL);
+	/*
+	 * vy_mem_insert already charged the bytes; vy_quota_wait() throttles
+	 * if over and checks the dump watermark itself.
+	 */
+	vy_quota_wait(&env->quota, VY_QUOTA_CONSUMER_DDL, TIMEOUT_INFINITY);
 	return rc;
 }
 
@@ -4369,8 +4291,8 @@ static int
 vy_build_recover_stmt(struct vy_lsm *lsm, struct vy_lsm *pk,
 		      struct vy_entry mem_entry)
 {
-	struct tuple *mem_stmt = mem_entry.stmt;
-	int64_t lsn = vy_stmt_lsn(mem_stmt);
+	struct tuple *region_stmt = mem_entry.stmt;
+	int64_t lsn = vy_stmt_lsn(region_stmt);
 	if (lsn <= lsm->dump_lsn)
 		return 0; /* statement was dumped, nothing to do */
 
@@ -4396,16 +4318,17 @@ vy_build_recover_stmt(struct vy_lsm *lsm, struct vy_lsm *pk,
 			return -1;
 		}
 	}
-	enum iproto_type type = vy_stmt_type(mem_stmt);
+	enum iproto_type type = vy_stmt_type(region_stmt);
 	if (type == IPROTO_REPLACE || type == IPROTO_INSERT) {
 		uint32_t data_len;
-		const char *data = tuple_data_range(mem_stmt, &data_len);
+		const char *data = tuple_data_range(region_stmt, &data_len);
 		insert = vy_stmt_new_insert(lsm->mem_format,
 					    data, data + data_len);
 		if (insert == NULL)
 			goto err;
 	} else if (type == IPROTO_UPSERT) {
-		struct tuple *new_tuple = vy_apply_upsert(mem_stmt, old_tuple,
+		struct tuple *new_tuple = vy_apply_upsert(region_stmt,
+							  old_tuple,
 							  pk->cmp_def, true);
 		if (new_tuple == NULL)
 			goto err;
@@ -4481,7 +4404,7 @@ vy_build_recover_mem(struct vy_lsm *lsm, struct vy_lsm *pk, struct vy_mem *mem)
  * level of the primary index.
  */
 static int
-vy_build_recover(struct vy_env *env, struct vy_lsm *lsm, struct vy_lsm *pk)
+vy_build_recover(struct vy_lsm *lsm, struct vy_lsm *pk)
 {
 	if (lsm->dump_lsn < 0) {
 		/*
@@ -4497,9 +4420,7 @@ vy_build_recover(struct vy_env *env, struct vy_lsm *lsm, struct vy_lsm *pk)
 
 	int rc = 0;
 	struct vy_mem *mem;
-	size_t mem_used_before, mem_used_after;
 
-	mem_used_before = lsregion_used(&env->mem_env.allocator);
 	rlist_foreach_entry_reverse(mem, &pk->sealed, in_sealed) {
 		rc = vy_build_recover_mem(lsm, pk, mem);
 		if (rc != 0)
@@ -4507,11 +4428,7 @@ vy_build_recover(struct vy_env *env, struct vy_lsm *lsm, struct vy_lsm *pk)
 	}
 	if (rc == 0)
 		rc = vy_build_recover_mem(lsm, pk, pk->mem);
-
-	mem_used_after = lsregion_used(&env->mem_env.allocator);
-	assert(mem_used_after >= mem_used_before);
-	vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_DDL,
-			   mem_used_after - mem_used_before);
+	/* vy_mem_insert charged the recovered bytes as they landed. */
 	return rc;
 }
 
@@ -4539,7 +4456,7 @@ vinyl_space_build_index(struct space *src_space, struct index *new_index,
 
 	if (env->status == VINYL_INITIAL_RECOVERY_LOCAL ||
 	    env->status == VINYL_FINAL_RECOVERY_LOCAL)
-		return vy_build_recover(env, new_lsm, pk);
+		return vy_build_recover(new_lsm, pk);
 
 	/*
 	 * Transactions started before the space alter request can't
@@ -4776,7 +4693,6 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 	/* Insert the deferred DELETE into secondary indexes. */
 	int rc = 0;
 	struct vy_env *env = vy_env(space->engine);
-	size_t mem_used_before = lsregion_used(&env->mem_env.allocator);
 	struct tuple *region_stmt = NULL;
 	for (uint32_t i = 1; i < space->index_count; i++) {
 		struct vy_lsm *lsm = vy_lsm(space->index[i]);
@@ -4786,12 +4702,11 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 		 * As usual, rotate the active in-memory index if
 		 * schema was changed or dump was triggered. Do it
 		 * only if processing the first statement, because
-		 * dump may be triggered by one of the statements
-		 * of this transaction (see vy_quota_force_use()
-		 * below), in which case we must not do rotation
-		 * as we want all statements to land in the same
-		 * in-memory index. This is safe, as long as we
-		 * don't yield between statements.
+		 * the bytes these statements charge to the quota may
+		 * push memory over the dump watermark, in which case
+		 * we must not do rotation as we want all statements to
+		 * land in the same in-memory index. This is safe, as
+		 * long as we don't yield between statements.
 		 */
 		struct vy_mem *mem = lsm->mem;
 		if (is_first_statement) {
@@ -4802,7 +4717,8 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 		}
 		struct vy_entry entry;
 		vy_stmt_foreach_entry(entry, delete, lsm->cmp_def) {
-			rc = vy_lsm_set(lsm, mem, entry, &region_stmt, NULL);
+			rc = vy_lsm_set(lsm, mem, entry, &region_stmt,
+					VY_QUOTA_CONSUMER_COMPACTION, NULL);
 			if (rc != 0)
 				break;
 			entry.stmt = region_stmt;
@@ -4844,12 +4760,13 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 		txn_on_commit(txn, on_commit);
 		txn_on_rollback(txn, on_rollback);
 	}
-	size_t mem_used_after = lsregion_used(&env->mem_env.allocator);
-	assert(mem_used_after >= mem_used_before);
-	vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_COMPACTION,
-			   mem_used_after - mem_used_before);
-	vy_regulator_check_dump_watermark(&env->regulator);
-
+	/*
+	 * No watermark check here: this trigger runs in the no-yield
+	 * window of the deferred-delete batch, whose processing fiber
+	 * already paid the quota up front via vy_quota_wait() (see
+	 * vy_deferred_delete_batch_process_f); per-batch granularity
+	 * is enough.
+	 */
 	tuple_unref(delete);
 	if (rc != 0)
 		return -1;

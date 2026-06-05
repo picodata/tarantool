@@ -44,6 +44,7 @@
 #include "vy_entry.h"
 #include "vy_cache.h"
 #include "vy_dict.h"
+#include "vy_quota_consumer.h"
 #include "vy_range.h"
 #include "vy_stat.h"
 #include "vy_read_set.h"
@@ -62,7 +63,6 @@ struct vy_recovery;
 struct vy_run;
 struct vy_run_env;
 struct mh_i64ptr_t;
-struct vy_scheduler_stat;
 typedef void
 (*vy_upsert_thresh_cb)(struct vy_lsm *lsm, struct vy_entry entry, void *arg);
 
@@ -775,6 +775,9 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
  * @param entry       Statement, allocated on malloc().
  * @param region_stmt NULL or the same statement, allocated on
  *                    lsregion.
+ * @param consumer    Operation class (TX, DDL, COMPACTION) the byte
+ *                    charge belongs to, so the shared vy_quota keeps
+ *                    its per-class rate limit accurate.
  * @param prev        If not NULL, set to the previous version
  *                    of the same key in mem (for WW conflict
  *                    detection).
@@ -785,7 +788,7 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
 int
 vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 	   struct vy_entry entry, struct tuple **region_stmt,
-	   struct vy_entry *prev);
+	   enum vy_quota_consumer_type consumer, struct vy_entry *prev);
 
 /**
  * Complete a dump task for @a lsm: check active snapshot TXs for
@@ -798,13 +801,15 @@ vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
  * @param dump_generation Generation selecting the mems to delete.
  * @param dump_time       Wall-clock seconds the dump took.
  * @param dump_output     On-disk statement counter of the new run.
- * @param sched_stat      Scheduler statistics to accumulate into.
+ *
+ * @return Dump input bytes for the scheduler to account (stats and
+ *         regulator) -- the primary index's, or 0 for a secondary
+ *         index.
  */
-void
+int64_t
 vy_lsm_complete_dump(struct vy_lsm *lsm, int64_t dump_lsn,
 		     int64_t dump_generation, double dump_time,
-		     const struct vy_disk_stmt_counter *dump_output,
-		     struct vy_scheduler_stat *sched_stat);
+		     const struct vy_disk_stmt_counter *dump_output);
 
 /**
  * Confirm that the statement stays in the in-memory index of

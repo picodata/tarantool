@@ -42,6 +42,7 @@
 #include "fiber.h"
 #include "say.h"
 #include "trivia/util.h"
+#include "vy_scheduler.h"
 
 /**
  * Quota timer period, in seconds.
@@ -51,6 +52,14 @@
  * Therefore use a relatively small period.
  */
 static const double VY_QUOTA_TIMER_PERIOD = 0.1;
+
+/** Schedule a memory dump if one is not already running. */
+static void
+vy_quota_trigger_dump(struct vy_quota *q);
+
+/** Trigger a dump once used memory reaches the dump watermark. */
+static void
+vy_quota_check_dump_watermark(struct vy_quota *q);
 
 /**
  * Bit mask of resources used by a particular consumer type.
@@ -81,11 +90,11 @@ vy_quota_consumer_resource_map[] = {
 	 * Since DDL is triggered by the admin, it can be deliberately
 	 * initiated when the workload is known to be low. Throttling
 	 * it along with DML requests would only cause exasperation in
-	 * this case. So we don't apply disk-based rate limit to DDL.
-	 * This should be fine, because the disk-based limit is set
+	 * this case. So we don't apply the disk rate limit to DDL.
+	 * This should be fine, because the disk rate limit is set
 	 * rather strictly to let the workload some space to grow, see
-	 * vy_regulator_update_rate_limit(), and in contrast to the
-	 * memory-based limit, exceeding the disk-based limit doesn't
+	 * vy_regulator_disk_rate_limit(), and in contrast to the
+	 * memory rate limit, exceeding the disk rate limit doesn't
 	 * result in abrupt stalls - it may only lead to a gradual
 	 * accumulation of disk space usage and read latency.
 	 */
@@ -105,25 +114,40 @@ vy_rate_limit_is_applicable(enum vy_quota_consumer_type consumer_type,
 }
 
 /**
- * Return true if the requested amount of memory may be consumed
- * right now, false if consumers have to wait.
- *
- * If the requested amount of memory cannot be consumed due to
- * the configured limit, invoke the registered callback so that
- * it can start memory reclaim immediately.
+ * Is the quota enabled? The periodic timer runs exactly between
+ * vy_quota_enable() and vy_quota_destroy(), so its active state is the
+ * enabled state.
  */
 static inline bool
-vy_quota_may_use(struct vy_quota *q, enum vy_quota_consumer_type type,
-		 size_t size)
+vy_quota_is_enabled(struct vy_quota *q)
 {
-	if (!q->is_enabled)
+	return ev_is_active(&q->timer);
+}
+
+/**
+ * Pure predicate: is there any quota left right now (used < the size
+ * limit and the rate limit is not exhausted)? Side-effect-free; callers
+ * that need to react to "no" kick the regulator explicitly at the moment
+ * a fiber actually fails to make progress (see vy_quota_wait's wait-queue
+ * path).
+ */
+static inline bool
+vy_quota_may_use(struct vy_quota *q, enum vy_quota_consumer_type type)
+{
+	if (!vy_quota_is_enabled(q))
 		return true;
-	if (q->used + size > q->limit) {
-		q->quota_exceeded_cb(q);
+	/*
+	 * Is the memory size limit reached? Admit only while used is
+	 * strictly below it, so vinyl_memory == 0 admits nothing. This is
+	 * the only condition a dump can relieve, so it -- and not the rate
+	 * limit -- is what gates the dump trigger when a fiber blocks (see
+	 * vy_quota_wait). The rate limit is a pacing knob replenished by
+	 * the timer, not a memory shortage.
+	 */
+	if (q->acct.used >= q->acct.size_limit)
 		return false;
-	}
 	for (int i = 0; i < vy_quota_resource_type_MAX; i++) {
-		struct vy_rate_limit *rl = &q->rate_limit[i];
+		struct vy_rate_limit *rl = &q->acct.rate_limit[i];
 		if (vy_rate_limit_is_applicable(type, i) &&
 		    !vy_rate_limit_may_use(rl))
 			return false;
@@ -132,50 +156,11 @@ vy_quota_may_use(struct vy_quota *q, enum vy_quota_consumer_type type,
 }
 
 /**
- * Consume the given amount of memory without checking the limit.
- */
-static inline void
-vy_quota_do_use(struct vy_quota *q, enum vy_quota_consumer_type type,
-		size_t size)
-{
-	q->used += size;
-	for (int i = 0; i < vy_quota_resource_type_MAX; i++) {
-		struct vy_rate_limit *rl = &q->rate_limit[i];
-		if (vy_rate_limit_is_applicable(type, i))
-			vy_rate_limit_use(rl, size);
-	}
-}
-
-/**
- * Return the given amount of memory without waking blocked fibers.
- * This function is an exact opposite of vy_quota_do_use().
- */
-static inline void
-vy_quota_do_unuse(struct vy_quota *q, enum vy_quota_consumer_type type,
-		  size_t size)
-{
-	assert(q->used >= size);
-	q->used -= size;
-	for (int i = 0; i < vy_quota_resource_type_MAX; i++) {
-		struct vy_rate_limit *rl = &q->rate_limit[i];
-		if (vy_rate_limit_is_applicable(type, i))
-			vy_rate_limit_unuse(rl, size);
-	}
-}
-
-/**
- * Invoke the registered callback in case memory usage exceeds
- * the configured limit.
- */
-static inline void
-vy_quota_check_limit(struct vy_quota *q)
-{
-	if (q->is_enabled && q->used > q->limit)
-		q->quota_exceeded_cb(q);
-}
-
-/**
- * Wake up the first consumer in the line waiting for quota.
+ * Wake up the first feasible consumer in the wait queue. Pure
+ * waiter-management: never advances the dump generation. Reclaim is
+ * triggered separately by vy_quota_check_dump_watermark, which runs
+ * on admission (vy_quota_wait), the periodic timer, and dump
+ * completion.
  */
 static void
 vy_quota_signal(struct vy_quota *q)
@@ -197,7 +182,7 @@ vy_quota_signal(struct vy_quota *q)
 		 * No need in waking up a consumer if it will have
 		 * to go back to sleep immediately.
 		 */
-		if (!vy_quota_may_use(q, i, n->size))
+		if (!vy_quota_may_use(q, i))
 			continue;
 
 		if (oldest == NULL || oldest->ticket > n->ticket)
@@ -215,26 +200,41 @@ vy_quota_timer_cb(ev_loop *loop, ev_timer *timer, int events)
 
 	struct vy_quota *q = timer->data;
 
-	for (int i = 0; i < vy_quota_resource_type_MAX; i++)
-		vy_rate_limit_refill(&q->rate_limit[i], VY_QUOTA_TIMER_PERIOD);
+	for (int i = 0; i < vy_quota_resource_type_MAX; i++) {
+		struct vy_rate_limit *rl = &q->acct.rate_limit[i];
+		vy_rate_limit_refill(rl, VY_QUOTA_TIMER_PERIOD);
+	}
 	vy_quota_signal(q);
+
+	/*
+	 * Drive the regulator's slower estimation cadence off this
+	 * timer: once every regulator period refresh the write-rate and
+	 * watermark estimate and re-check the watermark, so a dump still
+	 * starts when memory creeps up with no consumer actively blocking.
+	 */
+	int cadence = VY_REGULATOR_TIMER_PERIOD / VY_QUOTA_TIMER_PERIOD;
+	if (++q->tick_count % cadence == 0) {
+		vy_regulator_tick(&q->regulator, q->acct.used);
+		vy_quota_check_dump_watermark(q);
+	}
 }
 
 void
-vy_quota_create(struct vy_quota *q, size_t limit,
-		vy_quota_exceeded_f quota_exceeded_cb)
+vy_quota_create(struct vy_quota *q, struct vy_scheduler *scheduler,
+		size_t limit)
 {
-	q->is_enabled = false;
 	q->n_blocked = 0;
-	q->limit = limit;
-	q->used = 0;
+	q->acct.size_limit = limit;
+	q->acct.used = 0;
 	q->too_long_threshold = TIMEOUT_INFINITY;
-	q->quota_exceeded_cb = quota_exceeded_cb;
+	q->scheduler = scheduler;
+	q->tick_count = 0;
+	vy_regulator_create(&q->regulator, limit);
 	q->wait_ticket = 0;
 	for (int i = 0; i < vy_quota_consumer_type_MAX; i++)
 		rlist_create(&q->wait_queue[i]);
 	for (int i = 0; i < vy_quota_resource_type_MAX; i++)
-		vy_rate_limit_create(&q->rate_limit[i]);
+		vy_rate_limit_create(&q->acct.rate_limit[i]);
 	ev_timer_init(&q->timer, vy_quota_timer_cb, 0, VY_QUOTA_TIMER_PERIOD);
 	q->timer.data = q;
 }
@@ -242,31 +242,95 @@ vy_quota_create(struct vy_quota *q, size_t limit,
 void
 vy_quota_enable(struct vy_quota *q)
 {
-	assert(!q->is_enabled);
-	q->is_enabled = true;
+	assert(!vy_quota_is_enabled(q));
+	/*
+	 * Arm the initial memory rate limit before the first dump so it
+	 * runs in the background instead of stalling once the watermark
+	 * is hit.
+	 */
+	vy_regulator_start(&q->regulator, q->acct.used);
+	vy_rate_limit_set(&q->acct.rate_limit[VY_QUOTA_RESOURCE_MEMORY],
+			  q->regulator.dump_bandwidth);
 	ev_timer_start(loop(), &q->timer);
-	vy_quota_check_limit(q);
 }
 
 void
 vy_quota_destroy(struct vy_quota *q)
 {
 	ev_timer_stop(loop(), &q->timer);
+	vy_regulator_destroy(&q->regulator);
 }
 
 void
-vy_quota_set_limit(struct vy_quota *q, size_t limit)
+vy_quota_set_size_limit(struct vy_quota *q, size_t limit)
 {
-	q->limit = limit;
-	vy_quota_check_limit(q);
+	q->acct.size_limit = limit;
+	vy_regulator_set_size_limit(&q->regulator, limit);
 	vy_quota_signal(q);
 }
 
-void
-vy_quota_set_rate_limit(struct vy_quota *q, enum vy_quota_resource_type type,
-			size_t rate)
+/**
+ * Request a memory dump from the scheduler if one isn't already
+ * running. Installs the write throttle the regulator advises for
+ * the duration of the dump.
+ *
+ * Skip the request when nothing is in memory to dump. Normally
+ * used >= dump_watermark implies used > 0, but at vinyl_memory == 0
+ * the watermark is zero too, so the check fires at used == 0 -- and
+ * without this guard the scheduler would spin empty dump rounds.
+ */
+static void
+vy_quota_trigger_dump(struct vy_quota *q)
 {
-	vy_rate_limit_set(&q->rate_limit[type], rate);
+	if (q->acct.used == 0)
+		return;
+	if (vy_scheduler_dump_in_progress(q->scheduler))
+		return;
+	size_t rate = vy_regulator_dump_begin(&q->regulator, q->acct.used);
+	vy_rate_limit_set(&q->acct.rate_limit[VY_QUOTA_RESOURCE_MEMORY], rate);
+	vy_scheduler_trigger_dump(q->scheduler);
+}
+
+static void
+vy_quota_check_dump_watermark(struct vy_quota *q)
+{
+	if (q->acct.used >= q->regulator.dump_watermark)
+		vy_quota_trigger_dump(q);
+}
+
+void
+vy_quota_dump_complete(struct vy_quota *q, const struct vy_scheduler_stat *stat,
+		       int compaction_threads)
+{
+	/*
+	 * Refresh both rate-limit estimates from the round's data, then
+	 * install them. The memory rate is the dump bandwidth -- memory
+	 * must not fill faster than it can be dumped; the disk rate keeps
+	 * compaction able to keep up. A round without a fresh disk sample
+	 * leaves disk_rate_limit at its previous value.
+	 */
+	vy_regulator_dump_complete(&q->regulator, stat, compaction_threads);
+	vy_rate_limit_set(&q->acct.rate_limit[VY_QUOTA_RESOURCE_MEMORY],
+			  q->regulator.dump_bandwidth);
+	vy_rate_limit_set(&q->acct.rate_limit[VY_QUOTA_RESOURCE_DISK],
+			  q->regulator.disk_rate_limit);
+	/*
+	 * Wake the consumers the freed memory unblocked, then re-check
+	 * the watermark: writes that piled up while the dump ran may
+	 * already have put us back over it. A dump request is a standing
+	 * condition, not a one-shot edge -- any trigger raised mid-dump
+	 * was dropped, so re-evaluate here rather than wait for the timer.
+	 */
+	vy_quota_signal(q);
+	vy_quota_check_dump_watermark(q);
+}
+
+void
+vy_quota_set_dump_bandwidth(struct vy_quota *q, size_t max)
+{
+	vy_regulator_set_dump_bandwidth(&q->regulator, max);
+	vy_rate_limit_set(&q->acct.rate_limit[VY_QUOTA_RESOURCE_MEMORY],
+			  q->regulator.dump_bandwidth);
 }
 
 size_t
@@ -274,7 +338,7 @@ vy_quota_get_rate_limit(struct vy_quota *q, enum vy_quota_consumer_type type)
 {
 	size_t rate = SIZE_MAX;
 	for (int i = 0; i < vy_quota_resource_type_MAX; i++) {
-		struct vy_rate_limit *rl = &q->rate_limit[i];
+		struct vy_rate_limit *rl = &q->acct.rate_limit[i];
 		if (vy_rate_limit_is_applicable(type, i))
 			rate = MIN(rate, rl->rate);
 	}
@@ -282,58 +346,78 @@ vy_quota_get_rate_limit(struct vy_quota *q, enum vy_quota_consumer_type type)
 }
 
 void
-vy_quota_force_use(struct vy_quota *q, enum vy_quota_consumer_type type,
-		   size_t size)
+vy_quota_acct(struct vy_quota_acct *a, enum vy_quota_consumer_type type,
+	      size_t size)
 {
-	vy_quota_do_use(q, type, size);
-	vy_quota_check_limit(q);
+	a->used += size;
+	for (int i = 0; i < vy_quota_resource_type_MAX; i++) {
+		struct vy_rate_limit *rl = &a->rate_limit[i];
+		if (vy_rate_limit_is_applicable(type, i))
+			vy_rate_limit_use(rl, size);
+	}
 }
 
 void
-vy_quota_release(struct vy_quota *q, size_t size)
+vy_quota_unacct(struct vy_quota_acct *a, size_t size)
 {
 	/*
-	 * Don't use vy_quota_do_unuse(), because it affects
-	 * the rate limit state.
+	 * Rate limit state is intentionally untouched: a dump
+	 * completion must not snap the throttle back.
 	 */
-	assert(q->used >= size);
-	q->used -= size;
-	vy_quota_signal(q);
+	assert(a->used >= size);
+	a->used -= size;
 }
 
 int
-vy_quota_use(struct vy_quota *q, enum vy_quota_consumer_type type,
-	     size_t size, double timeout)
+vy_quota_wait(struct vy_quota *q, enum vy_quota_consumer_type type,
+	      double timeout)
 {
-	/*
-	 * Fail early if the configured memory limit never allows
-	 * us to commit the transaction.
-	 */
-	if (size > q->limit) {
-		diag_set(OutOfMemory, size, "lsregion", "vinyl transaction");
-		return -1;
-	}
-
 	q->n_blocked++;
 	ERROR_INJECT_YIELD(ERRINJ_VY_QUOTA_DELAY);
 	q->n_blocked--;
 
 	/*
-	 * Proceed only if there is enough quota available *and*
-	 * the wait queue is empty. The latter is necessary to ensure
-	 * fairness and avoid starvation among fibers queued earlier.
+	 * The size limit is not imposed until vy_quota_enable(); until
+	 * then there is no admission control, so let the consumer in.
 	 */
-	if (rlist_empty(&q->wait_queue[type]) &&
-	    vy_quota_may_use(q, type, size)) {
-		vy_quota_do_use(q, type, size);
+	if (!vy_quota_is_enabled(q))
 		return 0;
-	}
+
+	/*
+	 * Schedule a dump if memory is at or above the watermark. Doing
+	 * this on every admission attempt starts background reclaim early
+	 * and guarantees forward progress: a consumer about to block on a
+	 * full quota (used above the size limit, hence above the watermark)
+	 * schedules the dump that frees the memory and wakes it, so this
+	 * call eventually returns. A consumer blocked only by the rate
+	 * limit (used below the watermark) schedules nothing -- the timer
+	 * replenishes the rate.
+	 */
+	vy_quota_check_dump_watermark(q);
+
+	/*
+	 * Proceed only if there is quota left *and* the wait queue is
+	 * empty. The latter is necessary to ensure fairness and avoid
+	 * starvation among fibers queued earlier.
+	 */
+	if (rlist_empty(&q->wait_queue[type]) && vy_quota_may_use(q, type))
+		return 0;
+
+	/*
+	 * vinyl_memory == 0 grants no quota at all. Only a transaction is
+	 * admission-gated: it blocks below and times out, so no new writes
+	 * land. An index build and compaction's deferred deletes must
+	 * write for correctness -- their wait is only a pace, which at
+	 * limit 0 can never complete, so let them proceed and overshoot.
+	 * The scheduler dumps the overshoot.
+	 */
+	if (q->acct.size_limit == 0 && type != VY_QUOTA_CONSUMER_TX)
+		return 0;
 
 	/* Wait for quota. */
 	double wait_start = ev_monotonic_now(loop());
 	struct vy_quota_wait_node wait_node = {
 		.fiber = fiber(),
-		.size = size,
 		.ticket = ++q->wait_ticket,
 	};
 	rlist_add_tail_entry(&q->wait_queue[type], &wait_node, in_wait_queue);
@@ -349,32 +433,14 @@ vy_quota_use(struct vy_quota *q, enum vy_quota_consumer_type type,
 
 	double wait_time = ev_monotonic_now(loop()) - wait_start;
 	if (wait_time > q->too_long_threshold) {
-		say_warn_ratelimited("waited for %zu bytes of vinyl memory "
-				     "quota for too long: %.3f sec", size,
-				     wait_time);
+		say_warn_ratelimited("waited for vinyl memory quota for "
+				     "too long: %.3f sec", wait_time);
 	}
 
-	vy_quota_do_use(q, type, size);
 	/*
-	 * Blocked consumers are awaken one by one to preserve
-	 * the order they were put to sleep. It's a responsibility
-	 * of a consumer that managed to acquire the requested
-	 * amount of quota to wake up the next one in the line.
+	 * We were admitted; a fiber queued behind us may be admissible
+	 * now too. Hand the baton on so waiters wake in order.
 	 */
 	vy_quota_signal(q);
 	return 0;
-}
-
-void
-vy_quota_adjust(struct vy_quota *q, enum vy_quota_consumer_type type,
-		size_t reserved, size_t used)
-{
-	if (reserved > used) {
-		vy_quota_do_unuse(q, type, reserved - used);
-		vy_quota_signal(q);
-	}
-	if (reserved < used) {
-		vy_quota_do_use(q, type, used - reserved);
-		vy_quota_check_limit(q);
-	}
 }

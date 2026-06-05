@@ -56,10 +56,13 @@
 #include "vy_mem.h"
 #include "vy_quota.h"
 #include "vy_range.h"
+#include "vy_regulator.h"
 #include "vy_run.h"
 #include "vy_stmt.h"
 #include "vy_write_iterator.h"
 #include "trivia/util.h"
+
+#include <small/lsregion.h>
 
 /* Min and max values for vy_scheduler::timeout. */
 #define VY_SCHEDULER_TIMEOUT_MIN	1
@@ -423,13 +426,13 @@ vy_worker_pool_put(struct vy_worker *worker)
 
 void
 vy_scheduler_create(struct vy_scheduler *scheduler, int write_threads,
-		    vy_scheduler_dump_complete_f dump_complete_cb,
+		    struct lsregion *mem_lsregion,
 		    struct vy_run_env *run_env, struct rlist *read_views,
 		    struct vy_quota *quota)
 {
 	memset(scheduler, 0, sizeof(*scheduler));
 
-	scheduler->dump_complete_cb = dump_complete_cb;
+	scheduler->mem_lsregion = mem_lsregion;
 	scheduler->read_views = read_views;
 	scheduler->run_env = run_env;
 	scheduler->quota = quota;
@@ -687,16 +690,39 @@ vy_scheduler_complete_dump(struct vy_scheduler *scheduler)
 
 	/*
 	 * The oldest LSM tree data is newer than @dump_generation,
-	 * so the current dump round has been finished. Notify about
-	 * dump completion.
+	 * so the current dump round has been finished.
 	 */
 	double now = ev_monotonic_now(loop());
 	double dump_duration = now - scheduler->dump_start;
 	scheduler->dump_start = now;
 	scheduler->dump_generation = min_generation;
 	scheduler->stat.dump_count++;
-	scheduler->dump_complete_cb(scheduler,
-			min_generation - 1, dump_duration);
+
+	/*
+	 * Free the dumped generation's lsregion memory in bulk; the
+	 * logical bytes already went back to the quota as vy_mem_delete
+	 * retired the mems. mem_dumped is the amount freed, for the
+	 * throughput log below.
+	 */
+	size_t mem_used_before = lsregion_used(scheduler->mem_lsregion);
+	lsregion_gc(scheduler->mem_lsregion, min_generation - 1);
+	size_t mem_used_after = lsregion_used(scheduler->mem_lsregion);
+	assert(mem_used_after <= mem_used_before);
+	size_t mem_dumped = mem_used_before - mem_used_after;
+	/*
+	 * The dumped mems already returned their bytes to the quota.
+	 * vy_quota_dump_complete refreshes the rate limits, wakes the
+	 * consumers that were waiting on those bytes, and re-arms the
+	 * next dump if we are still over the watermark.
+	 */
+	vy_quota_dump_complete(scheduler->quota, &scheduler->stat,
+			       scheduler->compaction_pool.size);
+
+	if (dump_duration > 0) {
+		say_info("dumped %zu bytes in %.1f s, rate %.1f MB/s",
+			 mem_dumped, dump_duration,
+			 mem_dumped / dump_duration / 1024 / 1024);
+	}
 	fiber_cond_broadcast(&scheduler->dump_cond);
 }
 
@@ -956,7 +982,8 @@ vy_deferred_delete_batch_process_f(struct cmsg *cmsg)
 	 * Wait for memory quota if necessary before starting to
 	 * process the batch (we can't yield between statements).
 	 */
-	vy_quota_wait(task->scheduler->quota, VY_QUOTA_CONSUMER_COMPACTION);
+	vy_quota_wait(task->scheduler->quota, VY_QUOTA_CONSUMER_COMPACTION,
+		      TIMEOUT_INFINITY);
 
 	struct vy_lsm *pk = task->lsm;
 	assert(pk->index_id == 0);
@@ -1183,6 +1210,26 @@ vy_task_dump_execute(struct vy_task *task)
 	return vy_task_write_run(task);
 }
 
+/** Add a dump task's input/output/time to the scheduler statistics. */
+static void
+vy_scheduler_acct_dump(struct vy_scheduler *scheduler, int64_t input,
+		       int64_t output, double time)
+{
+	scheduler->stat.dump_input += input;
+	scheduler->stat.dump_output += output;
+	scheduler->stat.dump_time += time;
+}
+
+/** Add a compaction task's input/output/time to the scheduler statistics. */
+static void
+vy_scheduler_acct_compaction(struct vy_scheduler *scheduler, int64_t input,
+			     int64_t output, double time)
+{
+	scheduler->stat.compaction_input += input;
+	scheduler->stat.compaction_output += output;
+	scheduler->stat.compaction_time += time;
+}
+
 static int
 vy_task_dump_complete(struct vy_task *task)
 {
@@ -1194,6 +1241,7 @@ vy_task_dump_complete(struct vy_task *task)
 	struct vy_disk_stmt_counter dump_output = new_run->count;
 	struct vy_slice **new_slices, *slice;
 	struct vy_range *range, *begin_range, *end_range;
+	int64_t dump_input;
 	int i;
 
 	assert(lsm->is_dumping);
@@ -1314,8 +1362,13 @@ vy_task_dump_complete(struct vy_task *task)
 	free(new_slices);
 
 delete_mems:
-	vy_lsm_complete_dump(lsm, dump_lsn, scheduler->dump_generation,
-			     dump_time, &dump_output, &scheduler->stat);
+	dump_input = vy_lsm_complete_dump(lsm, dump_lsn,
+					  scheduler->dump_generation, dump_time,
+					  &dump_output);
+	vy_scheduler_acct_dump(scheduler, dump_input, dump_output.bytes,
+			       dump_time);
+	vy_regulator_acct_dump(&scheduler->quota->regulator,
+			       dump_input, dump_time);
 
 	/* The iterator has been cleaned up in a worker thread. */
 	task->wi->iface->close(task->wi);
@@ -1684,9 +1737,8 @@ vy_task_compaction_complete(struct vy_task *task)
 	}
 	vy_lsm_acct_compaction(lsm, compaction_time,
 			       &compaction_input, &compaction_output);
-	scheduler->stat.compaction_input += compaction_input.bytes;
-	scheduler->stat.compaction_output += compaction_output.bytes;
-	scheduler->stat.compaction_time += compaction_time;
+	vy_scheduler_acct_compaction(scheduler, compaction_input.bytes,
+				     compaction_output.bytes, compaction_time);
 out:
 	/* The iterator has been cleaned up in worker. */
 	task->wi->iface->close(task->wi);

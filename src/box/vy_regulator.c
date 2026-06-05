@@ -35,20 +35,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <tarantool_ev.h>
 
-#include "fiber.h"
 #include "histogram.h"
 #include "say.h"
 #include "trivia/util.h"
 
-#include "vy_quota.h"
 #include "vy_stat.h"
-
-/**
- * Regulator timer period, in seconds.
- */
-static const double VY_REGULATOR_TIMER_PERIOD = 1;
 
 /**
  * Time window over which the write rate is averaged,
@@ -83,51 +75,41 @@ static const size_t VY_DUMP_SIZE_ACCT_MIN = 1024 * 1024;
  */
 static const int VY_RECENT_DUMP_COUNT = 100;
 
-static void
-vy_regulator_trigger_dump(struct vy_regulator *regulator)
+size_t
+vy_regulator_dump_begin(struct vy_regulator *regulator, size_t used)
 {
-	if (regulator->dump_in_progress)
-		return;
-
-	if (regulator->trigger_dump_cb(regulator) != 0)
-		return;
-
-	regulator->dump_in_progress = true;
-
 	/*
 	 * To avoid unpredictably long stalls, we must limit
 	 * the write rate when a dump is in progress so that
-	 * we don't hit the hard limit before the dump has
+	 * we don't hit the size limit before the dump has
 	 * completed, i.e.
 	 *
 	 *    mem_left        mem_used
 	 *   ---------- >= --------------
 	 *   write_rate    dump_bandwidth
 	 */
-	struct vy_quota *quota = regulator->quota;
-	size_t mem_left = (quota->used < quota->limit ?
-			   quota->limit - quota->used : 0);
-	size_t mem_used = quota->used;
-	size_t max_write_rate = (double)mem_left / (mem_used + 1) *
+	size_t mem_left = (used < regulator->size_limit ?
+			   regulator->size_limit - used : 0);
+	size_t max_write_rate = (double)mem_left / (used + 1) *
 					regulator->dump_bandwidth;
 	max_write_rate = MIN(max_write_rate, regulator->dump_bandwidth);
-	vy_quota_set_rate_limit(quota, VY_QUOTA_RESOURCE_MEMORY,
-				max_write_rate);
 
 	say_info("dumping %zu bytes, expected rate %.1f MB/s, "
 		 "ETA %.1f s, write rate (avg/max) %.1f/%.1f MB/s",
-		 quota->used, (double)regulator->dump_bandwidth / 1024 / 1024,
-		 (double)quota->used / (regulator->dump_bandwidth + 1),
+		 used, (double)regulator->dump_bandwidth / 1024 / 1024,
+		 (double)used / (regulator->dump_bandwidth + 1),
 		 (double)regulator->write_rate / 1024 / 1024,
 		 (double)regulator->write_rate_max / 1024 / 1024);
 
 	regulator->write_rate_max = regulator->write_rate;
+	return max_write_rate;
 }
 
+/** Update the moving-average write rate from a memory-usage sample. */
 static void
-vy_regulator_update_write_rate(struct vy_regulator *regulator)
+vy_regulator_update_write_rate(struct vy_regulator *regulator, size_t used)
 {
-	size_t used_curr = regulator->quota->used;
+	size_t used_curr = used;
 	size_t used_last = regulator->quota_used_last;
 
 	/*
@@ -157,14 +139,12 @@ vy_regulator_update_write_rate(struct vy_regulator *regulator)
 static void
 vy_regulator_update_dump_watermark(struct vy_regulator *regulator)
 {
-	struct vy_quota *quota = regulator->quota;
-
+	size_t limit = regulator->size_limit;
 	/*
-	 * Due to log structured nature of the lsregion allocator,
-	 * which is used for allocating statements, we cannot free
-	 * memory in chunks, only all at once. Therefore we should
+	 * A dump returns a whole generation's memory to the quota
+	 * at once on completion, not gradually as it runs. So we
 	 * configure the watermark so that by the time we hit the
-	 * limit, all memory have been dumped, i.e.
+	 * size limit, a dump has completed, i.e.
 	 *
 	 *   limit - watermark      watermark
 	 *   ----------------- = --------------
@@ -178,33 +158,25 @@ vy_regulator_update_dump_watermark(struct vy_regulator *regulator)
 	 */
 	size_t write_rate = regulator->write_rate_max * 3 / 2;
 	regulator->dump_watermark =
-			(double)quota->limit * regulator->dump_bandwidth /
+			(double)limit * regulator->dump_bandwidth /
 			(regulator->dump_bandwidth + write_rate + 1);
 	/*
 	 * It doesn't make sense to set the watermark below 50%
-	 * of the memory limit because the write rate can exceed
+	 * of the memory size limit because the write rate can exceed
 	 * the dump bandwidth under no circumstances.
 	 */
-	regulator->dump_watermark = MAX(regulator->dump_watermark,
-					quota->limit / 2);
-}
-
-static void
-vy_regulator_timer_cb(ev_loop *loop, ev_timer *timer, int events)
-{
-	(void)loop;
-	(void)events;
-
-	struct vy_regulator *regulator = timer->data;
-
-	vy_regulator_update_write_rate(regulator);
-	vy_regulator_update_dump_watermark(regulator);
-	vy_regulator_check_dump_watermark(regulator);
+	regulator->dump_watermark = MAX(regulator->dump_watermark, limit / 2);
 }
 
 void
-vy_regulator_create(struct vy_regulator *regulator, struct vy_quota *quota,
-		    vy_trigger_dump_f trigger_dump_cb)
+vy_regulator_tick(struct vy_regulator *regulator, size_t used)
+{
+	vy_regulator_update_write_rate(regulator, used);
+	vy_regulator_update_dump_watermark(regulator);
+}
+
+void
+vy_regulator_create(struct vy_regulator *regulator, size_t limit)
 {
 	enum { KB = 1024, MB = KB * KB };
 	static int64_t dump_bandwidth_buckets[] = {
@@ -223,97 +195,78 @@ vy_regulator_create(struct vy_regulator *regulator, struct vy_quota *quota,
 	if (regulator->dump_bandwidth_hist == NULL)
 		panic("failed to allocate dump bandwidth histogram");
 
-	regulator->quota = quota;
-	regulator->trigger_dump_cb = trigger_dump_cb;
-	ev_timer_init(&regulator->timer, vy_regulator_timer_cb, 0,
-		      VY_REGULATOR_TIMER_PERIOD);
-	regulator->timer.data = regulator;
+	regulator->size_limit = limit;
 	regulator->dump_bandwidth = VY_DUMP_BANDWIDTH_DEFAULT;
 	regulator->dump_watermark = SIZE_MAX;
+	regulator->disk_rate_limit = SIZE_MAX;
 }
 
 void
-vy_regulator_start(struct vy_regulator *regulator)
+vy_regulator_start(struct vy_regulator *regulator, size_t used)
 {
-	regulator->quota_used_last = regulator->quota->used;
-	vy_quota_set_rate_limit(regulator->quota, VY_QUOTA_RESOURCE_MEMORY,
-				regulator->dump_bandwidth);
-	ev_timer_start(loop(), &regulator->timer);
+	regulator->quota_used_last = used;
 }
 
 void
 vy_regulator_destroy(struct vy_regulator *regulator)
 {
-	ev_timer_stop(loop(), &regulator->timer);
 	histogram_delete(regulator->dump_bandwidth_hist);
 }
 
 void
-vy_regulator_quota_exceeded(struct vy_regulator *regulator)
+vy_regulator_acct_dump(struct vy_regulator *regulator,
+		       size_t bytes, double time)
 {
-	vy_regulator_trigger_dump(regulator);
+	if (bytes < VY_DUMP_SIZE_ACCT_MIN || time <= 0)
+		return;
+	histogram_collect(regulator->dump_bandwidth_hist, bytes / time);
 }
 
-void
-vy_regulator_check_dump_watermark(struct vy_regulator *regulator)
-{
-	if (regulator->quota->used >= regulator->dump_watermark)
-		vy_regulator_trigger_dump(regulator);
-}
+/** Revise the disk (compaction) rate limit from a round's scheduler stats. */
+static void
+vy_regulator_update_disk_rate_limit(struct vy_regulator *regulator,
+				    const struct vy_scheduler_stat *stat,
+				    int compaction_threads);
 
 void
 vy_regulator_dump_complete(struct vy_regulator *regulator,
-			   size_t mem_dumped, double dump_duration)
+			   const struct vy_scheduler_stat *stat,
+			   int compaction_threads)
 {
-	regulator->dump_in_progress = false;
-
-	if (mem_dumped >= VY_DUMP_SIZE_ACCT_MIN && dump_duration > 0) {
-		histogram_collect(regulator->dump_bandwidth_hist,
-				  mem_dumped / dump_duration);
-		/*
-		 * To avoid unpredictably long stalls caused by
-		 * mispredicting dump time duration, we need to
-		 * know the worst (smallest) dump bandwidth so
-		 * use a lower-bound percentile estimate.
-		 */
-		regulator->dump_bandwidth = histogram_percentile_lower(
-			regulator->dump_bandwidth_hist, VY_DUMP_BANDWIDTH_PCT);
-	}
-
 	/*
-	 * Reset the rate limit.
+	 * Refresh the dump bandwidth estimate from samples folded in
+	 * by vy_regulator_acct_dump over the round. We need the
+	 * worst (smallest) dump bandwidth to avoid unpredictably long
+	 * stalls caused by overestimating throughput, so use a
+	 * lower-bound percentile estimate.
 	 *
-	 * It doesn't make sense to allow to consume memory at
-	 * a higher rate than it can be dumped so we set the rate
-	 * limit to the dump bandwidth rather than disabling it
-	 * completely.
+	 * The memory rate limit is reset to this bandwidth: it makes no
+	 * sense to let memory fill faster than it can be dumped.
 	 */
-	vy_quota_set_rate_limit(regulator->quota, VY_QUOTA_RESOURCE_MEMORY,
-				regulator->dump_bandwidth);
-
-	if (dump_duration > 0) {
-		say_info("dumped %zu bytes in %.1f s, rate %.1f MB/s",
-			 mem_dumped, dump_duration,
-			 mem_dumped / dump_duration / 1024 / 1024);
-	}
+	regulator->dump_bandwidth = histogram_percentile_lower(
+		regulator->dump_bandwidth_hist, VY_DUMP_BANDWIDTH_PCT);
+	/*
+	 * Revise the disk (compaction) rate limit from the same round's
+	 * scheduler statistics, if they hold a fresh enough sample.
+	 */
+	vy_regulator_update_disk_rate_limit(regulator, stat,
+					    compaction_threads);
 }
 
 void
-vy_regulator_set_memory_limit(struct vy_regulator *regulator, size_t limit)
+vy_regulator_set_size_limit(struct vy_regulator *regulator, size_t limit)
 {
-	vy_quota_set_limit(regulator->quota, limit);
+	regulator->size_limit = limit;
 	vy_regulator_update_dump_watermark(regulator);
 }
 
 void
-vy_regulator_reset_dump_bandwidth(struct vy_regulator *regulator, size_t max)
+vy_regulator_set_dump_bandwidth(struct vy_regulator *regulator, size_t max)
 {
 	histogram_reset(regulator->dump_bandwidth_hist);
 	regulator->dump_bandwidth = VY_DUMP_BANDWIDTH_DEFAULT;
 	if (max > 0 && regulator->dump_bandwidth > max)
 		regulator->dump_bandwidth = max;
-	vy_quota_set_rate_limit(regulator->quota, VY_QUOTA_RESOURCE_MEMORY,
-				regulator->dump_bandwidth);
 }
 
 void
@@ -332,17 +285,17 @@ vy_regulator_reset_stat(struct vy_regulator *regulator)
  * run_count_per_level, since different spaces or different indexes
  * within a space can have different configuration settings. The
  * workload can also vary significantly from space to space. So,
- * when setting the limit, we have to consider dump and compaction
- * activities of the database as a whole.
+ * when setting the disk rate limit, we have to consider dump and
+ * compaction activities of the database as a whole.
  *
  * To this end, we keep track of compaction bandwidth and write
  * amplification of the entire database, across all LSM trees.
  * The idea is simple: observe the current write amplification
  * and compaction bandwidth, and set maximal write rate to a value
- * somewhat below the implied limit, so as to make room for
+ * somewhat below the implied rate, so as to make room for
  * compaction to do more work if necessary.
  *
- * We use the following metrics to calculate the limit:
+ * We use the following metrics to calculate the disk rate limit:
  *  - dump_output - number of bytes dumped to disk over the last
  *    observation period. The period itself is measured in dumps,
  *    not seconds, and is defined by constant VY_RECENT_DUMP_COUNT.
@@ -409,10 +362,10 @@ vy_regulator_reset_stat(struct vy_regulator *regulator)
  * enough disk bandwidth to keep LSM trees in optimal shape
  * compaction speed becomes stable, as does write amplification.
  */
-void
-vy_regulator_update_rate_limit(struct vy_regulator *regulator,
-			       const struct vy_scheduler_stat *stat,
-			       int compaction_threads)
+static void
+vy_regulator_update_disk_rate_limit(struct vy_regulator *regulator,
+				    const struct vy_scheduler_stat *stat,
+				    int compaction_threads)
 {
 	struct vy_scheduler_stat *last = &regulator->sched_stat_last;
 	struct vy_scheduler_stat *recent = &regulator->sched_stat_recent;
@@ -445,8 +398,7 @@ vy_regulator_update_rate_limit(struct vy_regulator *regulator,
 		rate64 = rate;
 	else
 		rate64 = UINT64_MAX;
-	vy_quota_set_rate_limit(regulator->quota, VY_QUOTA_RESOURCE_DISK,
-				(size_t)MIN(rate64, SIZE_MAX));
+	regulator->disk_rate_limit = (size_t)MIN(rate64, SIZE_MAX);
 
 	/*
 	 * Periodically rotate statistics for quicker adaptation
