@@ -66,20 +66,29 @@ static_assert(VY_UPSERT_THRESHOLD <= UINT8_MAX, "n_upserts max value");
 static_assert(VY_UPSERT_INF == VY_UPSERT_THRESHOLD + 1,
 	      "inf must be threshold + 1");
 
+struct vy_mem_env;
+
 /** Vinyl statement environment. */
 struct vy_stmt_env {
 	/** Vinyl statement vtable. */
 	struct tuple_format_vtab tuple_format_vtab;
+	/**
+	 * Mem env whose drain queue is poked on every TX-thread tuple
+	 * allocation. vy_stmt_env_create leaves it NULL; the engine
+	 * (and the unit-test helper) wire it before allocating any
+	 * tuple, so a main-thread allocation always finds it set.
+	 */
+	struct vy_mem_env *mem_env;
 	/**
 	 * Max tuple size
 	 * @see box.cfg.vinyl_max_tuple_size
 	 */
 	size_t max_tuple_size;
 	/**
-	 * Slab allocator for vinyl tuples in the TX thread.
-	 * Backed by cord()->slabc (shared with the runtime
-	 * allocator), but tracked separately for vinyl-specific
-	 * memory stats via small_stats().
+	 * Slab allocator for vinyl tuples in the TX thread. Backed
+	 * by the mem env's slab cache -- the same dedicated vinyl
+	 * arena that holds the in-memory tree extents -- so vinyl
+	 * tuple memory is isolated from the runtime allocator.
 	 */
 	struct small_alloc tx_alloc;
 	/**
@@ -96,7 +105,7 @@ struct vy_stmt_env {
 
 /** Initialize a vinyl statement environment. */
 void
-vy_stmt_env_create(struct vy_stmt_env *env);
+vy_stmt_env_create(struct vy_stmt_env *env, struct vy_mem_env *mem_env);
 
 /** Destroy a vinyl statement environment. */
 void
@@ -339,12 +348,11 @@ vy_entry_is_exclusive(struct vy_entry entry)
 
 /**
  * Get upserts count of the vinyl statement.
- * Only for UPSERT statements allocated on lsregion.
+ * Only meaningful for UPSERT statements sitting in a mem tree.
  */
 static inline uint8_t
 vy_stmt_n_upserts(struct tuple *stmt)
 {
-	assert(tuple_is_unreferenced(stmt));
 	assert(vy_stmt_type(stmt) == IPROTO_UPSERT);
 	return ((struct vy_stmt *)stmt)->n_upserts;
 }
@@ -431,32 +439,44 @@ vy_stmt_is_exact_key(struct tuple *stmt, struct key_def *cmp_def,
 struct tuple *
 vy_stmt_dup(struct tuple *stmt);
 
-struct lsregion;
-
 /**
- * Duplicate the statement, using the lsregion as allocator.
- * @param stmt      Statement to duplicate.
- * @param lsregion  Allocator.
- * @param alloc_id  Allocation identifier for the lsregion.
- *
- * @retval not NULL The new statement with the same data.
- * @retval     NULL Memory error.
- */
-struct tuple *
-vy_stmt_dup_lsregion(struct tuple *stmt, struct lsregion *lsregion,
-		     int64_t alloc_id);
-
-/**
- * Return true if @a stmt can be referenced. Now to be not refable
- * it must be allocated on lsregion.
+ * Return true if @a stmt can be referenced on the current cord.
+ * Tx-local tuples (TUPLE_TX_LOCAL) carry a non-atomic refcount
+ * that may only be touched on the tx (main) cord; worker cords
+ * (dump / compaction / reader) hold them alive via their sealed
+ * mem's +1 instead. Tuples allocated by a worker cord stay
+ * private to the allocating cord and are always refable there.
  * @param stmt a statement
- * @retval true if @a stmt was allocated on lsregion
+ * @retval true if @a stmt's refcount may be mutated here
  * @retval false otherwise
  */
 static inline bool
 vy_stmt_is_refable(struct tuple *stmt)
 {
-	return !tuple_is_unreferenced(stmt);
+	return !tuple_has_flag(stmt, TUPLE_TX_LOCAL) ||
+	       cord_is_main_dont_create();
+}
+
+/**
+ * Bump @a stmt's refcount, asserting the current cord is allowed
+ * to touch it. Use this in place of plain tuple_ref() on any
+ * vinyl statement: the assert documents the cord contract and
+ * fires loudly the day a caller is wired up from a worker cord
+ * holding a TUPLE_TX_LOCAL stmt.
+ */
+static inline void
+vy_stmt_ref(struct tuple *stmt)
+{
+	assert(vy_stmt_is_refable(stmt));
+	tuple_ref(stmt);
+}
+
+/** Mirror of vy_stmt_ref. */
+static inline void
+vy_stmt_unref(struct tuple *stmt)
+{
+	assert(vy_stmt_is_refable(stmt));
+	tuple_unref(stmt);
 }
 
 /**

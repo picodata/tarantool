@@ -5,6 +5,7 @@
 #include "say.h"
 #include "small/mempool.h"
 #include "tt_uuid.h"
+#include "trivia/util.h"
 
 struct tt_uuid INSTANCE_UUID;
 
@@ -45,11 +46,11 @@ vy_iterator_C_test_init(size_t cache_size)
 	memory_init();
 	fiber_init(fiber_c_invoke);
 	tuple_init(NULL);
-	vy_stmt_env_create(&stmt_env);
-	vy_cache_env_create(&cache_env, cord_slab_cache());
-	vy_cache_env_set_quota(&cache_env, cache_size);
 	size_t mem_size = 64 * 1024 * 1024;
 	vy_mem_env_create(&mem_env, mem_size, &mem_quota_acct, NULL);
+	vy_stmt_env_create(&stmt_env, &mem_env);
+	vy_cache_env_create(&cache_env, cord_slab_cache());
+	vy_cache_env_set_quota(&cache_env, cache_size);
 	mempool_create(&history_node_pool, cord_slab_cache(),
 		       sizeof(struct vy_history_node));
 }
@@ -58,9 +59,9 @@ void
 vy_iterator_C_test_finish()
 {
 	mempool_destroy(&history_node_pool);
+	vy_stmt_env_destroy(&stmt_env);
 	vy_mem_env_destroy(&mem_env);
 	vy_cache_env_destroy(&cache_env);
-	vy_stmt_env_destroy(&stmt_env);
 	tuple_free();
 	fiber_free();
 	memory_free();
@@ -167,16 +168,17 @@ vy_mem_insert_template(struct vy_mem *mem, const struct vy_stmt_template *templ)
 {
 	struct vy_entry entry = vy_new_simple_stmt(mem->format,
 						   mem->cmp_def, templ);
-	struct tuple *mem_stmt = vy_stmt_dup_lsregion(entry.stmt,
-						      &mem->env->allocator,
-						      mem->generation);
-	assert(mem_stmt != NULL);
-	tuple_unref(entry.stmt);
-	entry.stmt = mem_stmt;
 	if (templ->type == IPROTO_UPSERT)
 		vy_mem_insert_upsert(mem, entry, VY_QUOTA_CONSUMER_TX, NULL);
 	else
 		vy_mem_insert(mem, entry, VY_QUOTA_CONSUMER_TX, NULL);
+	/*
+	 * vy_mem_insert took its own ref on the tree entry; drop
+	 * the ref returned by vy_new_simple_stmt. The returned
+	 * entry still points at the slab-backed tuple which is
+	 * kept alive by the mem.
+	 */
+	tuple_unref(entry.stmt);
 	return entry;
 }
 

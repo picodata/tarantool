@@ -257,6 +257,9 @@ txv_delete(struct txv *v)
 	xm->write_set_size -= tuple_size(v->entry.stmt);
 	vy_stmt_counter_unacct_tuple(&v->lsm->stat.txw.count, v->entry.stmt);
 	tuple_unref(v->entry.stmt);
+	/* Drop the txv's own ref on the mem-held tuple. */
+	if (v->mem_stmt != NULL)
+		vy_stmt_unref(v->mem_stmt);
 	vy_lsm_unref(v->lsm);
 	mempool_free(&xm->txv_mempool, v);
 }
@@ -996,9 +999,14 @@ vy_tx_prepare(struct vy_tx *tx)
 	/*
 	 * Flush transactional changes to the LSM tree.
 	 * Sic: the loop below must not yield after recovery.
+	 *
+	 * pk_has_repsert tracks whether the current space's pk
+	 * already received a REPLACE/UPSERT in this tx -- the sks
+	 * use it to decide when their INSERT must be turned into
+	 * REPLACE. Reset when we cross into the next space (signaled
+	 * by lsm->index_id == 0).
 	 */
-	/* repsert - REPLACE/UPSERT */
-	struct tuple *delete = NULL, *repsert = NULL;
+	bool pk_has_repsert = false;
 	MAYBE_UNUSED uint32_t current_space_id = 0;
 	bool check_ww = vy_tx_is_in_snapshot(tx);
 	struct txv *v;
@@ -1010,8 +1018,7 @@ vy_tx_prepare(struct vy_tx *tx)
 		if (lsm->index_id == 0) {
 			/* The beginning of the new txn_stmt is met. */
 			current_space_id = lsm->space_id;
-			repsert = NULL;
-			delete = NULL;
+			pk_has_repsert = false;
 			if (check_ww)
 				p_prev = &prev;
 		} else if (lsm->opts.is_unique && check_ww) {
@@ -1021,7 +1028,7 @@ vy_tx_prepare(struct vy_tx *tx)
 
 		enum iproto_type type = vy_stmt_type(v->entry.stmt);
 
-		if (lsm->index_id > 0 && repsert == NULL &&
+		if (lsm->index_id > 0 && !pk_has_repsert &&
 		    type != IPROTO_DELETE) {
 			/*
 			 * With deferred DELETEs enabled, a REPLACE that was
@@ -1040,6 +1047,36 @@ vy_tx_prepare(struct vy_tx *tx)
 		/* Optimize out INSERT + DELETE for the same key. */
 		if (v->is_first_insert && type == IPROTO_DELETE)
 			continue;
+
+		/*
+		 * The type-flip below mutates v->entry.stmt in place,
+		 * so confirm the stmt belongs to this lsm's format (or
+		 * the key format for surrogate DELETEs). A mismatch
+		 * would mean a tuple from a different space leaked in
+		 * and we'd corrupt its owner's view.
+		 */
+		assert(vy_stmt_is_key(v->entry.stmt) ||
+		       tuple_format_id(tuple_format(v->entry.stmt)) ==
+		       tuple_format_id(lsm->mem_format));
+
+		/*
+		 * v->entry.stmt is shared between the pk txv and every
+		 * sk txv; with slab-in-tree the mem holds that same
+		 * pointer. The pk flip is load-bearing -- its post-flip
+		 * type must reach the sk mems too. An sk flip, however,
+		 * would retroactively rewrite the pk's mem-held type,
+		 * so when an sk needs to flip we duplicate the stmt
+		 * first and mutate the private copy.
+		 */
+		if (lsm->index_id > 0 &&
+		    ((v->is_first_insert && type == IPROTO_REPLACE) ||
+		     (!v->is_first_insert && type == IPROTO_INSERT))) {
+			struct tuple *dup = vy_stmt_dup(v->entry.stmt);
+			if (dup == NULL)
+				return -1;
+			vy_stmt_unref(v->entry.stmt);
+			v->entry.stmt = dup;
+		}
 
 		if (v->is_first_insert && type == IPROTO_REPLACE) {
 			/*
@@ -1084,8 +1121,7 @@ vy_tx_prepare(struct vy_tx *tx)
 
 		/* In secondary indexes only REPLACE/DELETE can be written. */
 		vy_stmt_set_lsn(v->entry.stmt, MAX_LSN + tx->psn);
-		struct tuple **mem_stmt =
-			(type == IPROTO_DELETE) ? &delete : &repsert;
+		struct vy_entry mem_stmt;
 		/*
 		 * Check unique SK conflicts before inserting
 		 * into vy_mem, so we don't find our own entry.
@@ -1093,10 +1129,18 @@ vy_tx_prepare(struct vy_tx *tx)
 		if (uniq != NULL &&
 		    vy_tx_check_unique_secondary(tx, v, uniq) != 0)
 			return -1;
-		if (vy_lsm_set(lsm, v->mem, v->entry, mem_stmt,
+		if (vy_lsm_set(lsm, v->mem, v->entry, &mem_stmt,
 			       VY_QUOTA_CONSUMER_TX, p_prev) != 0)
 			return -1;
-		v->mem_stmt = *mem_stmt;
+		/*
+		 * The txv takes its own ref so mem_stmt stays alive
+		 * for the commit-time LSN stamp, independent of the
+		 * mem's own ref.
+		 */
+		vy_stmt_ref(mem_stmt.stmt);
+		v->mem_stmt = mem_stmt.stmt;
+		if (lsm->index_id == 0 && type != IPROTO_DELETE)
+			pk_has_repsert = true;
 		if (p_prev != NULL &&
 		    vy_tx_check_primary(tx, lsm, v->entry, prev) != 0)
 			return -1;

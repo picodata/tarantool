@@ -35,8 +35,10 @@
 #include <stdbool.h>
 
 #include <small/rlist.h>
-#include <small/lsregion.h>
 #include <small/slab_arena.h>
+#include <small/slab_cache.h>
+#include <small/mempool.h>
+#include <small/matras.h>
 #include <small/quota.h>
 
 #include "fiber_cond.h"
@@ -55,28 +57,7 @@ struct vy_history;
 
 struct vy_tx_manager;
 
-/** Vinyl memory environment. */
-struct vy_mem_env {
-	struct lsregion allocator;
-	struct slab_arena arena;
-	struct quota quota;
-	/** Size of memory used for storing tree extents. */
-	size_t tree_extent_size;
-	/** TX manager, used for conflict detection on mem seal. */
-	struct vy_tx_manager *xm;
-	/**
-	 * Pure-accounting half of the vinyl quota: holding the acct
-	 * pointer, not the full vy_quota, keeps the hot insert/delete
-	 * paths structurally unable to reach the wait queue or regulator.
-	 */
-	struct vy_quota_acct *quota_acct;
-	/**
-	 * Sum of lsm->stat.memory across every LSM, kept current by
-	 * vy_mem_acct/unacct so the engine memory stat can be read
-	 * without walking the LSM list.
-	 */
-	struct vy_mem_stat stat;
-};
+struct vy_mem_env;
 
 /**
  * Initialize a vinyl memory environment.
@@ -161,6 +142,77 @@ vy_mem_tree_cmp_key(struct vy_entry entry, struct vy_mem_tree_key *key,
 /** @endcond false */
 
 /**
+ * Lazy drain state owned by vy_mem_env. Mems sealed by dump are
+ * enqueued here so the scheduler fiber can free their tuples in
+ * byte-budgeted batches (vy_mem_drain_step) without walking every
+ * tree at dump-complete time. Readers that observed the pre-drain
+ * mem_list_version restart on their next version check before
+ * touching tuples here, so the queued mems are safely
+ * single-owner.
+ */
+struct vy_mem_drain {
+	/** FIFO of mems in state DRAINING; head is currently drained. */
+	struct rlist queue;
+	/**
+	 * Position into the head of @a queue. Invalid both before
+	 * the head opens and after it is exhausted, so the same
+	 * predicate (vy_mem_tree_iterator_is_invalid) covers "open
+	 * me" and "head finished, pop and move on".
+	 */
+	struct vy_mem_tree_iterator pos;
+};
+
+/**
+ * Drain up to @a bytes worth of tuples from @a drain. The
+ * byte-based budget (vs a tuple count) is what guarantees
+ * steady-state convergence: drain 2x the freshly allocated bytes
+ * and the queue shrinks monotonically regardless of tuple size.
+ */
+void
+vy_mem_drain_step(struct vy_mem_drain *drain, size_t bytes);
+
+/** Vinyl memory environment. */
+struct vy_mem_env {
+	struct slab_arena arena;
+	struct quota quota;
+	struct slab_cache cache;
+	struct mempool tree_extent_pool;
+	/**
+	 * Shared by every mem's BPS tree -- stateless apart from the
+	 * extent reserve list, which we want pooled across mems
+	 * rather than stranded on a draining one.
+	 */
+	struct matras_allocator matras_allocator;
+	/** TX manager, used for conflict detection on mem seal. */
+	struct vy_tx_manager *xm;
+	/**
+	 * Pure-accounting half of the vinyl quota: holding the acct
+	 * pointer, not the full vy_quota, keeps the hot insert/delete
+	 * paths structurally unable to reach the wait queue or regulator.
+	 */
+	struct vy_quota_acct *quota_acct;
+	/** Lazy-drain queue + iterator; see vy_mem_drain. */
+	struct vy_mem_drain drain;
+	/**
+	 * Sum of lsm->stat.memory across every LSM, kept current by
+	 * vy_mem_acct/unacct so the engine memory stat can be read
+	 * without walking the LSM list.
+	 */
+	struct vy_mem_stat stat;
+};
+
+/**
+ * Lifecycle state of a vy_mem. Monotonic ACTIVE -> SEALED ->
+ * DRAINING. Names the current rlist membership (none, lsm->sealed,
+ * env->drain.queue) and gates legal transitions.
+ */
+enum vy_mem_state {
+	VY_MEM_ACTIVE,
+	VY_MEM_SEALED,
+	VY_MEM_DRAINING,
+};
+
+/**
  * vy_mem is an in-memory container for tuples in a single vinyl
  * range.
  * Internally it uses bps_tree to store tuples, which are ordered
@@ -186,16 +238,17 @@ struct vy_mem {
 	 */
 	struct vy_mem_stat *lsm_stat;
 	/**
+	 * Lifecycle state; selects which list in_mems links into.
+	 * See enum vy_mem_state.
+	 */
+	enum vy_mem_state state;
+	/**
 	 * Link by which the mem hangs on its current list; empty
 	 * when it is on none.
 	 */
 	struct rlist in_mems;
 	/** BPS tree */
 	struct vy_mem_tree tree;
-	/* The matras allocator used by the tree. */
-	struct matras_allocator matras_allocator;
-	/** Size of memory used for storing tree extents. */
-	size_t tree_extent_size;
 	/** Number of statements. */
 	struct vy_stmt_counter count;
 	/**
@@ -226,8 +279,9 @@ struct vy_mem {
 	/** Data dictionary cache version at the time of creation. */
 	uint32_t space_cache_version;
 	/**
-	 * Generation of statements stored in the tree.
-	 * Used as lsregion allocator identifier.
+	 * Generation of statements stored in the tree. Used by the
+	 * dump scheduler to decide which mems belong to the current
+	 * dump round.
 	 */
 	int64_t generation;
 	/**
@@ -308,10 +362,27 @@ vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
 	   int64_t generation, uint32_t space_cache_version, uint32_t iid);
 
 /**
- * Delete in-memory level.
+ * Retire the mem: hand it to the per-env drain queue for lazy
+ * per-tuple cleanup, so neither dump completion nor LSM teardown
+ * has to walk whole trees synchronously. The mem's bytes return to
+ * the quota right away, so throttling sees them freed immediately
+ * even though the slab slots are reclaimed later.
+ *
+ * A SEALED mem (already dumped) is unlinked from its LSM's sealed
+ * list here. A mem is retired while still ACTIVE only when its
+ * whole LSM goes away -- on drop, or on a failed create -- taking
+ * its current mem with it; a mem in normal service is sealed and
+ * dumped, never deleted while active.
  */
 void
 vy_mem_delete(struct vy_mem *index);
+
+/**
+ * Final teardown of a fully-drained mem: destroy its BPS tree and
+ * free the struct. Called once the drain has released every tuple.
+ */
+void
+vy_mem_destroy(struct vy_mem *index);
 
 /*
  * Return the older statement for the given one.
@@ -373,8 +444,8 @@ vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry);
 /**
  * Remove a statement from the in-memory level. If the entry is
  * still present in the tree (no later insert displaced it),
- * reverses the insert-time vy_mem_acct. No-op if @a entry is no
- * longer in @a mem.
+ * decrements row/byte counters and drops the tree's ref. No-op
+ * if @a entry is no longer in @a mem.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
  */

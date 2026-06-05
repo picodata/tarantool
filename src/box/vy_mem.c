@@ -33,11 +33,13 @@
 #include <stdlib.h>
 
 #include <trivia/util.h>
-#include <small/lsregion.h>
 #include <small/slab_arena.h>
+#include <small/slab_cache.h>
+#include <small/mempool.h>
 #include <small/quota.h>
 
 #include "diag.h"
+#include "fiber_cond.h"
 #include "tuple.h"
 #include "vy_history.h"
 #include "vy_quota.h"
@@ -45,61 +47,133 @@
 /** {{{ vy_mem_env */
 
 enum {
-	/** Slab size for tuple arena. */
-	SLAB_SIZE = 16 * 1024 * 1024
+	/** Slab size for vinyl's tuple and tree-extent arena. */
+	SLAB_SIZE = 4 * 1024 * 1024
 };
 
-void
-vy_mem_env_create(struct vy_mem_env *env, size_t memory,
-		  struct vy_quota_acct *quota_acct, struct vy_tx_manager *xm)
-{
-	/* Vinyl memory is limited by vy_quota. */
-	quota_init(&env->quota, QUOTA_MAX);
-	tuple_arena_create(&env->arena, &env->quota, memory,
-			   SLAB_SIZE, false, "vinyl");
-	lsregion_create(&env->allocator, &env->arena);
-	env->tree_extent_size = 0;
-	env->quota_acct = quota_acct;
-	env->xm = xm;
-}
-
-void
-vy_mem_env_destroy(struct vy_mem_env *env)
-{
-	lsregion_destroy(&env->allocator);
-	tuple_arena_destroy(&env->arena);
-}
-
-/* }}} vy_mem_env */
-
-/** {{{ vy_mem */
-
+/** Allocate a BPS tree extent from the mem env's tree-extent pool. */
 static void *
 vy_mem_tree_extent_alloc(struct matras_allocator *allocator)
 {
-	struct vy_mem *mem = container_of(allocator, struct vy_mem,
-					  matras_allocator);
-	struct vy_mem_env *env = mem->env;
-	void *ret = lsregion_aligned_alloc(&env->allocator,
-					   VY_MEM_TREE_EXTENT_SIZE,
-					   alignof(void *), mem->generation);
-	if (ret == NULL) {
+	struct vy_mem_env *env = container_of(allocator, struct vy_mem_env,
+					      matras_allocator);
+	void *ret = mempool_alloc(&env->tree_extent_pool);
+	if (ret == NULL)
 		diag_set(OutOfMemory, VY_MEM_TREE_EXTENT_SIZE,
-			 "lsregion_aligned_alloc", "ret");
-		return NULL;
-	}
-	mem->tree_extent_size += VY_MEM_TREE_EXTENT_SIZE;
-	env->tree_extent_size += VY_MEM_TREE_EXTENT_SIZE;
+			 "mempool_alloc", "tree_extent_pool");
+	/*
+	 * BPS tree extents are intentionally not charged to vy_quota.
+	 * A draining mem frees its extents only when it is finally
+	 * torn down, so counting them would let the not-yet-freed
+	 * backlog pin the quota above its limit and spin the dump
+	 * scheduler. They stay bounded indirectly: extent count
+	 * tracks tuple count, and tuples are quota-throttled.
+	 */
 	return ret;
 }
 
 static void
 vy_mem_tree_extent_free(struct matras_allocator *allocator, void *p)
 {
-	/* Can't free part of region allocated memory. */
-	(void)allocator;
-	(void)p;
+	struct vy_mem_env *env = container_of(allocator, struct vy_mem_env,
+					      matras_allocator);
+	mempool_free(&env->tree_extent_pool, p);
 }
+
+/** Initialize a lazy-drain queue: empty FIFO, iterator parked invalid. */
+static inline void
+vy_mem_drain_create(struct vy_mem_drain *drain)
+{
+	rlist_create(&drain->queue);
+	drain->pos = vy_mem_tree_invalid_iterator();
+}
+
+void
+vy_mem_drain_step(struct vy_mem_drain *drain, size_t bytes)
+{
+	size_t drained = 0;
+	while (bytes > drained && !rlist_empty(&drain->queue)) {
+		struct vy_mem *mem =
+			rlist_first_entry(&drain->queue,
+					  struct vy_mem, in_mems);
+		assert(mem->state == VY_MEM_DRAINING);
+		/*
+		 * Lazy open: the iterator is invalid both when the
+		 * queue head has just rotated and when the previous
+		 * head was exhausted -- the same predicate covers
+		 * both transitions.
+		 */
+		if (vy_mem_tree_iterator_is_invalid(&drain->pos))
+			drain->pos = vy_mem_tree_first(&mem->tree);
+		while (bytes > drained &&
+		       !vy_mem_tree_iterator_is_invalid(&drain->pos)) {
+			struct vy_entry *elem =
+				vy_mem_tree_iterator_get_elem(&mem->tree,
+							      &drain->pos);
+			/*
+			 * get_elem() returns NULL at the end; is_invalid()
+			 * flips to true automatically then.
+			 */
+			if (elem == NULL)
+				break;
+			size_t size = tuple_size(elem->stmt);
+			vy_stmt_unref(elem->stmt);
+			vy_mem_tree_iterator_next(&mem->tree, &drain->pos);
+			drained += size;
+		}
+		if (vy_mem_tree_iterator_is_invalid(&drain->pos)) {
+			rlist_del_entry(mem, in_mems);
+			vy_mem_destroy(mem);
+		}
+	}
+}
+
+void
+vy_mem_env_create(struct vy_mem_env *env, size_t memory,
+		  struct vy_quota_acct *quota_acct, struct vy_tx_manager *xm)
+{
+	/*
+	 * The arena holds vinyl tuples and the in-memory tree extents.
+	 * vinyl_memory is only its prealloc: the arena quota is left
+	 * unbounded because vy_quota does the limiting logically, and
+	 * that limit is soft -- it may overshoot vinyl_memory a little,
+	 * so the arena must stay free to grow past the prealloc.
+	 */
+	quota_init(&env->quota, QUOTA_MAX);
+	tuple_arena_create(&env->arena, &env->quota, memory,
+			   SLAB_SIZE, false, "vinyl");
+	slab_cache_create(&env->cache, &env->arena);
+	mempool_create(&env->tree_extent_pool, &env->cache,
+		       VY_MEM_TREE_EXTENT_SIZE);
+	matras_allocator_create(&env->matras_allocator,
+				VY_MEM_TREE_EXTENT_SIZE,
+				vy_mem_tree_extent_alloc,
+				vy_mem_tree_extent_free);
+	env->quota_acct = quota_acct;
+	env->xm = xm;
+	vy_mem_drain_create(&env->drain);
+}
+
+void
+vy_mem_env_destroy(struct vy_mem_env *env)
+{
+	/*
+	 * Called only at process shutdown, after which the OS reclaims
+	 * everything. Spaces are not dropped on shutdown (schema_free()
+	 * is disabled), so live mems never reach vy_mem_delete; their
+	 * tuples (and the tuple cache's) stay allocated in the arena.
+	 * Leak the arena rather than destroy it -- like memtx, which
+	 * never destroys its tuple arena -- because tuple_arena_destroy
+	 * would assert that every slab has been returned.
+	 */
+	matras_allocator_destroy(&env->matras_allocator);
+	mempool_destroy(&env->tree_extent_pool);
+	slab_cache_destroy(&env->cache);
+}
+
+/* }}} vy_mem_env */
+
+/** {{{ vy_mem */
 
 struct vy_mem *
 vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
@@ -120,12 +194,9 @@ vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
 	index->space_cache_version = space_cache_version;
 	index->format = format;
 	tuple_format_ref(format);
-	matras_allocator_create(&index->matras_allocator,
-				VY_MEM_TREE_EXTENT_SIZE,
-				vy_mem_tree_extent_alloc,
-				vy_mem_tree_extent_free);
 	vy_mem_tree_create(&index->tree, cmp_def,
-			   &index->matras_allocator);
+			   &env->matras_allocator);
+	index->state = VY_MEM_ACTIVE;
 	rlist_create(&index->in_mems);
 	fiber_cond_create(&index->pin_cond);
 	return index;
@@ -134,23 +205,24 @@ vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
 void
 vy_mem_delete(struct vy_mem *index)
 {
-	index->env->tree_extent_size -= index->tree_extent_size;
+	assert(index->state != VY_MEM_DRAINING);
+	if (index->state == VY_MEM_SEALED)
+		rlist_del_entry(index, in_mems);
+	index->state = VY_MEM_DRAINING;
+	rlist_add_tail_entry(&index->env->drain.queue, index, in_mems);
 	/*
-	 * Settle accounting: return the mem's bytes to the quota and
-	 * subtract its counters from the per-LSM and engine-wide sums.
-	 * The lsregion memory itself is freed in bulk by the dump
-	 * scheduler's lsregion_gc; releasing here only lets throttling
-	 * see the bytes freed at dump-complete time.
+	 * Bytes are freed from the write-path perspective the moment
+	 * the mem is detached; the slab slots stay occupied until
+	 * vy_mem_drain_step visits each tuple.
 	 */
 	assert(index->count.bytes >= 0);
 	vy_mem_unacct(index, index->count.rows, (size_t)index->count.bytes);
-	/*
-	 * It would be expected to destroy the index->matras_allocator and
-	 * the index->tree here, but they simply free allocated and reserved
-	 * memory blocks, and the lsregion used for allocation of the memory
-	 * does not support freeing arbitrary blocks, so they're effectively
-	 * no-ops. Let's omit them.
-	 */
+}
+
+void
+vy_mem_destroy(struct vy_mem *index)
+{
+	vy_mem_tree_destroy(&index->tree);
 	tuple_format_unref(index->format);
 	fiber_cond_destroy(&index->pin_cond);
 	TRASH(index);
@@ -295,8 +367,6 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 	assert(vy_stmt_type(entry.stmt) == IPROTO_UPSERT);
 	/* Check if the statement can be inserted in the vy_mem. */
 	assert(entry.stmt->format_id == tuple_format_id(mem->format));
-	/* The statement must be from a lsregion. */
-	assert(!vy_stmt_is_refable(entry.stmt));
 	struct vy_entry replaced = vy_entry_none();
 	struct vy_mem_tree_iterator at;
 	if (vy_mem_tree_insert_get_iterator(&mem->tree, entry, &replaced,
@@ -312,6 +382,7 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 	 * REPLACE (not an UPSERT) and goes through vy_mem_insert.
 	 */
 	assert(replaced.stmt == NULL);
+	vy_stmt_ref(entry.stmt);
 	vy_mem_acct(mem, 1, tuple_size(entry.stmt), consumer);
 	vy_mem_set_counted_flag(mem, entry, &at);
 	/*
@@ -374,13 +445,12 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 	/* Check if the statement can be inserted in the vy_mem. */
 	assert(vy_stmt_is_key(entry.stmt) ||
 	       entry.stmt->format_id == tuple_format_id(mem->format));
-	/* The statement must be from a lsregion. */
-	assert(!vy_stmt_is_refable(entry.stmt));
 	struct vy_entry replaced = vy_entry_none();
 	struct vy_mem_tree_iterator at;
 	if (vy_mem_tree_insert_get_iterator(&mem->tree, entry, &replaced,
 					    &at) != 0)
 		return -1;
+	vy_stmt_ref(entry.stmt);
 	vy_mem_acct(mem, 1, tuple_size(entry.stmt), consumer);
 	mem->version++;
 	if (replaced.stmt != NULL) {
@@ -394,6 +464,7 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 		       (vy_stmt_type(entry.stmt) == IPROTO_REPLACE &&
 			vy_stmt_type(replaced.stmt) == IPROTO_UPSERT));
 		vy_mem_unacct(mem, 1, tuple_size(replaced.stmt));
+		vy_stmt_unref(replaced.stmt);
 		if (prev != NULL)
 			*prev = vy_entry_none();
 		return 0;
@@ -419,15 +490,13 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 void
 vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry)
 {
-	/* The statement must be from a lsregion. */
-	assert(!vy_stmt_is_refable(entry.stmt));
 	int64_t lsn = vy_stmt_lsn(entry.stmt);
 	/*
 	 * Normally statement LSN grows monotonically,
 	 * but not in case of building an index on an
 	 * existing non-empty space. Hence use of MAX
 	 * here.
-         */
+	 */
 	mem->dump_lsn = MAX(mem->dump_lsn, lsn);
 	/*
 	 * If we don't bump mem version after assigning LSN to
@@ -449,17 +518,15 @@ vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry)
 void
 vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry)
 {
-	/* The statement must be from a lsregion. */
-	assert(!vy_stmt_is_refable(entry.stmt));
 	/*
-	 * A later vy_mem_insert may have already displaced this entry
-	 * (and reversed its accounting); skip the decrement in that
-	 * case. The lsregion storage stays put until the mem is
-	 * retired -- only the accounting is undone here.
+	 * A later vy_mem_insert may have already displaced this
+	 * entry and dropped our ref; skip the decrement / unref in
+	 * that case so we don't double-free.
 	 */
 	if (vy_mem_tree_delete(&mem->tree, entry) == 0) {
 		mem->version++;
 		vy_mem_unacct(mem, 1, tuple_size(entry.stmt));
+		vy_stmt_unref(entry.stmt);
 	}
 }
 

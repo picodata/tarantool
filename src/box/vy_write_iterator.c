@@ -939,11 +939,17 @@ vy_read_view_merge(struct vy_write_iterator *stream, struct vy_entry prev,
 	uint8_t flags = vy_stmt_flags(rv->entry.stmt);
 	if ((flags & VY_STMT_DEFERRED_DELETE) != 0 &&
 	    !vy_entry_is_equal(rv->entry, stream->deferred_delete)) {
-		if (!vy_stmt_is_refable(rv->entry.stmt)) {
-			rv->entry.stmt = vy_stmt_dup(rv->entry.stmt);
-			if (rv->entry.stmt == NULL)
-				return -1;
-		}
+		/*
+		 * A multikey index backs one entry per array value off
+		 * the same tuple, so clearing the flag in place strips
+		 * it from the sibling entries too and their deferred
+		 * DELETEs are lost at a later compaction. Dup first.
+		 */
+		struct tuple *copy = vy_stmt_dup(rv->entry.stmt);
+		if (copy == NULL)
+			return -1;
+		vy_stmt_unref_if_possible(rv->entry.stmt);
+		rv->entry.stmt = copy;
 		vy_stmt_del_flag(rv->entry.stmt, VY_STMT_DEFERRED_DELETE);
 	}
 	if (prev.stmt != NULL) {

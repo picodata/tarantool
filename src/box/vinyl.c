@@ -51,7 +51,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <small/lsregion.h>
 #include <small/region.h>
 #include <small/mempool.h>
 
@@ -296,7 +295,18 @@ vy_info_append_memory(struct vy_env *env, struct info_handler *h)
 	info_table_begin(h, "memory");
 	info_append_int(h, "tx", vy_tx_manager_mem_used(env->xm));
 	info_append_int(h, "level0", env->quota.acct.used);
-	info_append_int(h, "tuple", vy_stmt_tuple_memory_used(&env->stmt_env));
+	/*
+	 * memory.tuple is the gross footprint of the slab allocator
+	 * that backs vinyl tuples on the TX thread: mem tuples,
+	 * tx-pending statements, read-path and Lua-pinned tuples, and
+	 * the not-yet-reclaimed mem drain backlog. It can't be split
+	 * into those by subtracting mem byte counters -- a tuple
+	 * shared by a primary and N secondary mems is counted N+1
+	 * times there -- so report the slab figure as is. It overlaps
+	 * memory.level0, which counts the same mem tuples logically.
+	 */
+	info_append_int(h, "tuple",
+			vy_stmt_tuple_memory_used(&env->stmt_env));
 	info_append_int(h, "tuple_cache", env->cache_env.mem_used);
 	info_append_int(h, "page_index", env->lsm_env.page_index_size);
 	info_append_int(h, "bloom_filter", env->lsm_env.bloom_size);
@@ -551,7 +561,7 @@ vinyl_engine_memory_stat(struct engine *engine, struct engine_memory_stat *stat)
 	struct vy_env *env = vy_env(engine);
 
 	stat->data += env->mem_env.stat.count.bytes;
-	stat->index += env->mem_env.tree_extent_size;
+	stat->index += mempool_used(&env->mem_env.tree_extent_pool);
 	stat->index += env->lsm_env.bloom_size;
 	stat->index += env->lsm_env.page_index_size;
 	stat->cache += env->cache_env.mem_used;
@@ -2800,11 +2810,14 @@ vy_env_new(const char *path, size_t memory,
 	if (e->squash_queue == NULL)
 		goto error_squash_queue;
 
-	vy_stmt_env_create(&e->stmt_env);
 	vy_quota_create(&e->quota, &e->scheduler, memory);
 	vy_mem_env_create(&e->mem_env, memory, &e->quota.acct, e->xm);
+	/*
+	 * Create the statement env after the mem env: vinyl tuples are
+	 * allocated from the mem env's arena, so it must exist first.
+	 */
+	vy_stmt_env_create(&e->stmt_env, &e->mem_env);
 	vy_scheduler_create(&e->scheduler, write_threads,
-			    &e->mem_env.allocator,
 			    &e->run_env, &e->xm->read_views,
 			    &e->quota);
 
@@ -2825,8 +2838,13 @@ vy_env_new(const char *path, size_t memory,
 	return e;
 
 error_lsm_env:
-	vy_mem_env_destroy(&e->mem_env);
+	/*
+	 * Tuple allocators draw from the mem env's arena, so stop the
+	 * worker cords and tear down the statement env before the arena.
+	 */
 	vy_scheduler_destroy(&e->scheduler);
+	vy_stmt_env_destroy(&e->stmt_env);
+	vy_mem_env_destroy(&e->mem_env);
 	vy_squash_queue_delete(e->squash_queue);
 error_squash_queue:
 	vy_tx_manager_delete(e->xm);
@@ -2847,9 +2865,16 @@ vy_env_delete(struct vy_env *e)
 	mempool_destroy(&e->iterator_pool);
 	vy_run_env_destroy(&e->run_env);
 	vy_lsm_env_destroy(&e->lsm_env);
+	/*
+	 * Tear down the statement env before the mem env: the TX
+	 * thread's tuple allocator draws from the mem env's arena.
+	 * Worker and reader cords have already dropped their tuple
+	 * caches as they stopped in vy_scheduler_destroy and
+	 * vy_run_env_destroy above.
+	 */
+	vy_stmt_env_destroy(&e->stmt_env);
 	vy_mem_env_destroy(&e->mem_env);
 	vy_cache_env_destroy(&e->cache_env);
-	vy_stmt_env_destroy(&e->stmt_env);
 	vy_quota_destroy(&e->quota);
 	if (e->recovery != NULL)
 		vy_recovery_delete(e->recovery);
@@ -3655,23 +3680,22 @@ vy_squash_process(struct vy_squash *squash)
 	 * displaces the committed UPSERT at the same (key, lsn),
 	 * reverses the displaced UPSERT's bytes in the same step.
 	 */
-	struct tuple *mem_stmt = NULL;
+	struct vy_entry mem_stmt;
 	int rc = vy_lsm_set(lsm, mem, result, &mem_stmt,
 			    VY_QUOTA_CONSUMER_TX, NULL);
-	tuple_unref(result.stmt);
-	result.stmt = mem_stmt;
 	if (rc == 0) {
 		/*
 		 * We don't modify the resulting statement,
 		 * so there's no need in invalidating the cache.
 		 */
-		vy_mem_commit_stmt(mem, result);
+		vy_mem_commit_stmt(mem, mem_stmt);
 		/*
 		 * No quota throttle or watermark check here: the merged
 		 * REPLACE displaces a committed UPSERT (see above), so
 		 * squashing does not grow memory -- it is reclaim-side.
 		 */
 	}
+	vy_stmt_unref(result.stmt);
 	return rc;
 }
 
@@ -4188,14 +4212,9 @@ static int
 vy_build_insert_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 		     struct tuple *stmt, int64_t lsn)
 {
-	struct tuple *mem_stmt = vy_stmt_dup_lsregion(stmt,
-						      &mem->env->allocator,
-						      mem->generation);
-	if (mem_stmt == NULL)
-		return -1;
-	vy_stmt_set_lsn(mem_stmt, lsn);
+	vy_stmt_set_lsn(stmt, lsn);
 	struct vy_entry entry;
-	vy_stmt_foreach_entry(entry, mem_stmt, lsm->cmp_def) {
+	vy_stmt_foreach_entry(entry, stmt, lsm->cmp_def) {
 		if (vy_mem_insert(mem, entry, VY_QUOTA_CONSUMER_DDL, NULL) != 0)
 			return -1;
 		vy_mem_commit_stmt(mem, entry);
@@ -4694,7 +4713,6 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 	/* Insert the deferred DELETE into secondary indexes. */
 	int rc = 0;
 	struct vy_env *env = vy_env(space->engine);
-	struct tuple *mem_stmt = NULL;
 	for (uint32_t i = 1; i < space->index_count; i++) {
 		struct vy_lsm *lsm = vy_lsm(space->index[i]);
 		if (vy_is_committed(env, lsm))
@@ -4718,12 +4736,12 @@ vy_deferred_delete_on_replace(struct trigger *trigger, void *event)
 		}
 		struct vy_entry entry;
 		vy_stmt_foreach_entry(entry, delete, lsm->cmp_def) {
+			struct vy_entry mem_stmt;
 			rc = vy_lsm_set(lsm, mem, entry, &mem_stmt,
 					VY_QUOTA_CONSUMER_COMPACTION, NULL);
 			if (rc != 0)
 				break;
-			entry.stmt = mem_stmt;
-			vy_lsm_commit_stmt(lsm, mem, entry);
+			vy_lsm_commit_stmt(lsm, mem, mem_stmt);
 		}
 		if (rc != 0)
 			break;

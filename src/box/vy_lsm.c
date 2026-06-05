@@ -247,9 +247,9 @@ size_t
 vy_lsm_mem_tree_size(struct vy_lsm *lsm)
 {
 	struct vy_mem *mem;
-	size_t size = lsm->mem->tree_extent_size;
+	size_t size = vy_mem_tree_mem_used(&lsm->mem->tree);
 	rlist_foreach_entry(mem, &lsm->sealed, in_mems)
-		size += mem->tree_extent_size;
+		size += vy_mem_tree_mem_used(&mem->tree);
 	return size;
 }
 
@@ -1228,6 +1228,8 @@ vy_lsm_rotate_mem(struct vy_lsm *lsm)
 	if (mem == NULL)
 		return -1;
 
+	assert(lsm->mem->state == VY_MEM_ACTIVE);
+	lsm->mem->state = VY_MEM_SEALED;
 	rlist_add_entry(&lsm->sealed, lsm->mem, in_mems);
 	lsm->mem = mem;
 	lsm->mem_list_version++;
@@ -1248,8 +1250,7 @@ vy_lsm_rotate_mem_if_required(struct vy_lsm *lsm)
 void
 vy_lsm_delete_mem(struct vy_lsm *lsm, struct vy_mem *mem)
 {
-	assert(!rlist_empty(&mem->in_mems));
-	rlist_del_entry(mem, in_mems);
+	assert(mem->state == VY_MEM_SEALED);
 	vy_mem_delete(mem);
 	lsm->mem_list_version++;
 }
@@ -1290,13 +1291,10 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt)
 
 int
 vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
-	   struct vy_entry entry, struct tuple **mem_stmt,
+	   struct vy_entry entry, struct vy_entry *mem_stmt,
 	   enum vy_quota_consumer_type consumer, struct vy_entry *prev)
 {
 	uint32_t format_id = entry.stmt->format_id;
-
-	assert(vy_stmt_is_refable(entry.stmt));
-	assert(*mem_stmt == NULL || !vy_stmt_is_refable(*mem_stmt));
 
 	/* Abort transaction if format was changed by DDL */
 	if (!vy_stmt_is_key(entry.stmt) &&
@@ -1315,7 +1313,7 @@ vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 	 * In such a case the UPSERT, applied to the cached statement,
 	 * can be inserted instead of the original UPSERT.
 	 */
-	bool need_unref = false;
+	struct vy_entry insert = entry;
 	if (deleted.stmt != NULL &&
 	    vy_stmt_type(entry.stmt) == IPROTO_UPSERT) {
 		struct vy_entry applied = vy_entry_apply_upsert(
@@ -1324,37 +1322,27 @@ vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
 		 * Ignore a memory error, because it is not critical
 		 * to apply the optimization.
 		 */
-		if (applied.stmt != NULL) {
-			entry = applied;
-			need_unref = true;
-		}
+		if (applied.stmt != NULL)
+			insert = applied;
 	}
 	if (deleted.stmt != NULL)
-		tuple_unref(deleted.stmt);
+		vy_stmt_unref(deleted.stmt);
 
-	/*
-	 * Allocate mem_stmt on demand.
-	 *
-	 * Also, reallocate mem_stmt if it uses a different tuple
-	 * format. This may happen during ALTER, when the LSM tree
-	 * that is currently being built uses the new space format
-	 * while other LSM trees still use the old space format.
-	 */
-	if (*mem_stmt == NULL || (*mem_stmt)->format_id != format_id) {
-		*mem_stmt = vy_stmt_dup_lsregion(entry.stmt,
-						 &mem->env->allocator,
-						 mem->generation);
-	}
-	if (need_unref)
-		tuple_unref(entry.stmt);
-	if (*mem_stmt == NULL)
-		return -1;
-
-	entry.stmt = *mem_stmt;
-	if (vy_stmt_type(*mem_stmt) != IPROTO_UPSERT)
-		return vy_mem_insert(mem, entry, consumer, prev);
+	int rc;
+	if (vy_stmt_type(insert.stmt) != IPROTO_UPSERT)
+		rc = vy_mem_insert(mem, insert, consumer, prev);
 	else
-		return vy_mem_insert_upsert(mem, entry, consumer, prev);
+		rc = vy_mem_insert_upsert(mem, insert, consumer, prev);
+	/*
+	 * If we folded the UPSERT, the merged REPLACE carries our
+	 * creation ref and the mem took its own -- drop ours. The
+	 * original entry's ref belongs to the caller.
+	 */
+	if (insert.stmt != entry.stmt)
+		vy_stmt_unref(insert.stmt);
+	if (rc == 0)
+		*mem_stmt = insert;
+	return rc;
 }
 
 int64_t

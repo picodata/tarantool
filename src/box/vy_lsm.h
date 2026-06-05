@@ -764,17 +764,25 @@ void
 vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
 
 /**
- * Insert a statement into the in-memory index of an LSM tree. If
- * the mem_stmt is NULL and the statement is successfully inserted
- * then the new lsregion statement is returned via @a mem_stmt.
+ * Insert a statement into the in-memory index of an LSM tree.
  * Either vy_lsm_commit_stmt() or vy_lsm_rollback_stmt() must
  * be called on success.
  *
+ * If an UPSERT is folded with a cached terminal statement, the
+ * actual tuple inserted into the mem is the freshly-allocated
+ * REPLACE produced by the merge, not @a entry. Return that tuple
+ * via @a mem_stmt so that the caller can set the final commit LSN
+ * on the tree-held statement at commit time. In all other cases
+ * *@a mem_stmt is set to @a entry.
+ *
+ * The mem holds its own reference to @a mem_stmt; a caller that
+ * uses it past the mem's lifetime must reference it too.
+ *
  * @param lsm         LSM tree the statement is for.
  * @param mem         In-memory tree to insert the statement into.
- * @param entry       Statement, allocated on malloc().
- * @param mem_stmt NULL or the same statement, allocated on
- *                    lsregion.
+ * @param entry       Refable slab-allocated statement.
+ * @param[out] mem_stmt The statement that actually ended up in
+ *                    the mem tree.
  * @param consumer    Operation class (TX, DDL, COMPACTION) the byte
  *                    charge belongs to, so the shared vy_quota keeps
  *                    its per-class rate limit accurate.
@@ -787,7 +795,7 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt);
  */
 int
 vy_lsm_set(struct vy_lsm *lsm, struct vy_mem *mem,
-	   struct vy_entry entry, struct tuple **mem_stmt,
+	   struct vy_entry entry, struct vy_entry *mem_stmt,
 	   enum vy_quota_consumer_type consumer, struct vy_entry *prev);
 
 /**

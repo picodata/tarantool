@@ -52,15 +52,7 @@ vy_history_append_stmt(struct vy_history *history, struct vy_entry entry)
 			 "struct vy_history_node");
 		return -1;
 	}
-	if (vy_stmt_is_refable(entry.stmt)) {
-		tuple_ref(entry.stmt);
-	} else {
-		entry.stmt = vy_stmt_dup(entry.stmt);
-		if (entry.stmt == NULL) {
-			mempool_free(history->pool, node);
-			return -1;
-		}
-	}
+	vy_stmt_ref(entry.stmt);
 	node->entry = entry;
 	rlist_add_tail_entry(&history->stmts, node, link);
 	return 0;
@@ -71,7 +63,7 @@ vy_history_cleanup(struct vy_history *history)
 {
 	struct vy_history_node *node, *tmp;
 	rlist_foreach_entry_safe(node, &history->stmts, link, tmp) {
-		tuple_unref(node->entry.stmt);
+		vy_stmt_unref(node->entry.stmt);
 		mempool_free(history->pool, node);
 	}
 	rlist_create(&history->stmts);

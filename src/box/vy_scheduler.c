@@ -62,8 +62,6 @@
 #include "vy_write_iterator.h"
 #include "trivia/util.h"
 
-#include <small/lsregion.h>
-
 /* Min and max values for vy_scheduler::timeout. */
 #define VY_SCHEDULER_TIMEOUT_MIN	1
 #define VY_SCHEDULER_TIMEOUT_MAX	60
@@ -426,13 +424,11 @@ vy_worker_pool_put(struct vy_worker *worker)
 
 void
 vy_scheduler_create(struct vy_scheduler *scheduler, int write_threads,
-		    struct lsregion *mem_lsregion,
 		    struct vy_run_env *run_env, struct rlist *read_views,
 		    struct vy_quota *quota)
 {
 	memset(scheduler, 0, sizeof(*scheduler));
 
-	scheduler->mem_lsregion = mem_lsregion;
 	scheduler->read_views = read_views;
 	scheduler->run_env = run_env;
 	scheduler->quota = quota;
@@ -515,6 +511,7 @@ vy_scheduler_reset_stat(struct vy_scheduler *scheduler)
 	stat->compaction_time = 0;
 	stat->compaction_input = 0;
 	stat->compaction_output = 0;
+	scheduler->dump_input_last = 0;
 }
 
 static int
@@ -690,7 +687,8 @@ vy_scheduler_complete_dump(struct vy_scheduler *scheduler)
 
 	/*
 	 * The oldest LSM tree data is newer than @dump_generation,
-	 * so the current dump round has been finished.
+	 * so the current dump round has been finished. Notify about
+	 * dump completion.
 	 */
 	double now = ev_monotonic_now(loop());
 	double dump_duration = now - scheduler->dump_start;
@@ -699,16 +697,17 @@ vy_scheduler_complete_dump(struct vy_scheduler *scheduler)
 	scheduler->stat.dump_count++;
 
 	/*
-	 * Free the dumped generation's lsregion memory in bulk; the
-	 * logical bytes already went back to the quota as vy_mem_delete
-	 * retired the mems. mem_dumped is the amount freed, for the
-	 * throughput log below.
+	 * Bytes dumped this round: the in-memory footprint read by the
+	 * round's dump tasks (stat.dump_input) since the previous round.
+	 * The slab frees these lazily through the drain, so this is the
+	 * dumped size, not the amount freed on the spot the old lsregion
+	 * gc reported.
 	 */
-	size_t mem_used_before = lsregion_used(scheduler->mem_lsregion);
-	lsregion_gc(scheduler->mem_lsregion, min_generation - 1);
-	size_t mem_used_after = lsregion_used(scheduler->mem_lsregion);
-	assert(mem_used_after <= mem_used_before);
-	size_t mem_dumped = mem_used_before - mem_used_after;
+	size_t mem_dumped = 0;
+	if (scheduler->stat.dump_input > scheduler->dump_input_last)
+		mem_dumped = scheduler->stat.dump_input -
+			     scheduler->dump_input_last;
+	scheduler->dump_input_last = scheduler->stat.dump_input;
 	/*
 	 * The dumped mems already returned their bytes to the quota.
 	 * vy_quota_dump_complete refreshes the rate limits, wakes the

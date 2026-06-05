@@ -45,6 +45,7 @@
 #include "tuple_format.h"
 #include "xrow.h"
 #include "fiber.h"
+#include "vy_mem.h"
 
 /**
  * Per-cord slab allocator for vinyl tuples.  Set once at cord
@@ -54,6 +55,22 @@
  *    (set by vy_stmt_init_thread_alloc)
  */
 static __thread struct small_alloc *vy_tuple_alloc;
+
+/**
+ * The shared arena backing every per-cord vinyl tuple allocator (and
+ * the in-memory tree extents). Tuples live in vinyl's own arena, not
+ * the runtime one, so their footprint is isolated and the vinyl_memory
+ * prealloc backs them. Set by vy_stmt_env_create before any background
+ * cord starts; read when each cord builds its tuple slab cache.
+ */
+static struct slab_arena *vy_tuple_arena;
+
+/**
+ * Per-cord slab cache a background cord's tuple allocator draws from.
+ * The TX thread reuses the mem env's cache instead; see
+ * vy_stmt_env_create.
+ */
+static __thread struct slab_cache vy_tuple_cache;
 
 /**
  * Statement metadata keys.
@@ -106,15 +123,20 @@ vy_tuple_new(struct tuple_format *format, const char *data, const char *end)
 
 /**
  * Initialize the per-thread slab allocator for vinyl tuples.
- * Called once per worker cord before any tuple allocations.
+ * Called once per worker cord before any tuple allocations. The
+ * allocator draws from a per-cord slab cache on vinyl's shared tuple
+ * arena, so background-cord tuples land in the same arena as the TX
+ * thread's.
  */
 void
 vy_stmt_init_thread_alloc(struct small_alloc *alloc)
 {
 	assert(!cord_is_main());
 	assert(vy_tuple_alloc == NULL);
+	assert(vy_tuple_arena != NULL);
+	slab_cache_create(&vy_tuple_cache, vy_tuple_arena);
 	float actual_alloc_factor;
-	small_alloc_create(alloc, &cord()->slabc,
+	small_alloc_create(alloc, &vy_tuple_cache,
 			   sizeof(intptr_t), sizeof(intptr_t), ALLOC_FACTOR,
 			   &actual_alloc_factor);
 	vy_tuple_alloc = alloc;
@@ -130,6 +152,7 @@ vy_stmt_destroy_thread_alloc(struct small_alloc *alloc)
 	assert(vy_tuple_alloc != NULL);
 	assert(vy_tuple_alloc == alloc);
 	small_alloc_destroy(alloc);
+	slab_cache_destroy(&vy_tuple_cache);
 	vy_tuple_alloc = NULL;
 }
 
@@ -152,14 +175,21 @@ vy_tuple_delete(struct tuple_format *format, struct tuple *tuple)
 }
 
 void
-vy_stmt_env_create(struct vy_stmt_env *env)
+vy_stmt_env_create(struct vy_stmt_env *env, struct vy_mem_env *mem_env)
 {
 	env->tuple_format_vtab.tuple_new = vy_tuple_new;
 	env->tuple_format_vtab.tuple_delete = vy_tuple_delete;
+	env->mem_env = mem_env;
 	env->max_tuple_size = 1024 * 1024;
 
+	/*
+	 * Publish the mem env's arena so background cords back their
+	 * tuple allocators with it. The TX thread shares the mem env's
+	 * slab cache directly, alongside the tree extents.
+	 */
+	vy_tuple_arena = &mem_env->arena;
 	float actual_alloc_factor;
-	small_alloc_create(&env->tx_alloc, &cord()->slabc,
+	small_alloc_create(&env->tx_alloc, &mem_env->cache,
 			   sizeof(intptr_t), sizeof(intptr_t), ALLOC_FACTOR,
 			   &actual_alloc_factor);
 	vy_tuple_alloc = &env->tx_alloc;
@@ -183,6 +213,8 @@ vy_stmt_env_destroy(struct vy_stmt_env *env)
 {
 	tuple_format_unref(env->key_format);
 	small_alloc_destroy(&env->tx_alloc);
+	vy_tuple_alloc = NULL;
+	vy_tuple_arena = NULL;
 }
 
 struct tuple_format *
@@ -271,6 +303,16 @@ vy_stmt_alloc(struct tuple_format *format, uint32_t data_offset, uint32_t bsize)
 			 "vinyl statement allocate");
 		return NULL;
 	});
+	/*
+	 * Amortise mem cleanup: drain twice the about-to-allocate
+	 * bytes from the env's drain queue so the slab can reuse
+	 * what's coming free. Main-thread only -- worker tuples
+	 * live in a different slab and don't touch the queue.
+	 */
+	if (cord_is_main()) {
+		assert(env->mem_env != NULL);
+		vy_mem_drain_step(&env->mem_env->drain, total_size * 2);
+	}
 	struct tuple *tuple = smalloc(vy_tuple_alloc, total_size);
 	if (unlikely(tuple == NULL)) {
 		diag_set(OutOfMemory, total_size, "malloc", "struct vy_stmt");
@@ -307,41 +349,6 @@ vy_stmt_dup(struct tuple *stmt)
 	memcpy((char *)res + base, (char *)stmt + base,
 	       tuple_size(stmt) - base);
 	return res;
-}
-
-struct tuple *
-vy_stmt_dup_lsregion(struct tuple *stmt, struct lsregion *lsregion,
-		     int64_t alloc_id)
-{
-	size_t size = tuple_size(stmt);
-	struct tuple *mem_stmt;
-	const size_t align = alignof(struct vy_stmt);
-	mem_stmt = lsregion_aligned_alloc(lsregion, size, align, alloc_id);
-	if (mem_stmt == NULL) {
-		diag_set(OutOfMemory, size, "lsregion_aligned_alloc",
-			 "mem_stmt");
-		return NULL;
-	}
-
-	memcpy(mem_stmt, stmt, size);
-
-	/*
-	 * Region allocated statements can't be referenced or unreferenced
-	 * because they are located in monolithic memory region. Referencing has
-	 * sense only for separately allocated memory blocks.
-	 * The reference count here is set to 0 for an assertion if somebody
-	 * will try to unreference this statement.
-	 */
-	tuple_ref_init(mem_stmt, 0);
-	return mem_stmt;
-
-	/*
-	 * Since n_upserts is only used in statements allocated by lsregion,
-	 * we should initialize it here. But since n_upserts is zero
-	 * by default it must be already set to zero by `memcpy` above.
-	 */
-	assert(vy_stmt_type(stmt) != IPROTO_UPSERT ||
-	       vy_stmt_n_upserts(mem_stmt) == 0);
 }
 
 struct tuple *

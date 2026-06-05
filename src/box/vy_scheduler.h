@@ -48,7 +48,6 @@ extern "C" {
 #endif /* defined(__cplusplus) */
 
 struct fiber;
-struct lsregion;
 struct vy_lsm;
 struct vy_quota;
 struct vy_run_env;
@@ -136,15 +135,16 @@ struct vy_scheduler {
 	int dump_task_count;
 	/** Time when the current dump round started. */
 	double dump_start;
+	/**
+	 * Value of stat.dump_input at the previous dump-round
+	 * completion. The delta to the current value is how many
+	 * in-memory bytes the round just dumped, reported in the log.
+	 */
+	int64_t dump_input_last;
 	/** Signaled on dump round completion. */
 	struct fiber_cond dump_cond;
 	/** Scheduler statistics. */
 	struct vy_scheduler_stat stat;
-	/**
-	 * Mem-tree allocator. lsregion_gc on dump-round completion
-	 * needs it. Transient: removed with the slab/drain transition.
-	 */
-	struct lsregion *mem_lsregion;
 	/** List of read views, see vy_tx_manager::read_views. */
 	struct rlist *read_views;
 	/** Context needed for writing runs. */
@@ -182,7 +182,6 @@ vy_scheduler_is_idle(struct vy_scheduler *scheduler);
  */
 void
 vy_scheduler_create(struct vy_scheduler *scheduler, int write_threads,
-		    struct lsregion *mem_lsregion,
 		    struct vy_run_env *run_env, struct rlist *read_views,
 		    struct vy_quota *quota);
 

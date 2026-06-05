@@ -86,7 +86,17 @@ struct txv {
 	struct vy_mem *mem;
 	/** Statement of this operation. */
 	struct vy_entry entry;
-	/** Statement allocated on vy_mem->allocator. */
+	/**
+	 * Tuple actually inserted into the mem tree. Set by
+	 * vy_tx_prepare() after vy_lsm_set() succeeds; NULL for txvs
+	 * that prepare skipped (is_overwritten / is_nop /
+	 * INSERT+DELETE annihilation) or never reached on partial
+	 * prepare failure. Equal to entry.stmt for the common case;
+	 * differs only when vy_lsm_set() folded an UPSERT into a
+	 * cached terminal REPLACE -- then the merged REPLACE is what
+	 * landed in the mem and is what commit must stamp with the
+	 * final LSN.
+	 */
 	struct tuple *mem_stmt;
 	/** Next in the transaction log. */
 	struct stailq_entry next_in_log;
