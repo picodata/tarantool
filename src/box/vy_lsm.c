@@ -353,7 +353,7 @@ vy_lsm_new(struct vy_lsm_env *lsm_env, struct vy_cache_env *cache_env,
 	if (lsm->run_hist == NULL)
 		goto fail_run_hist;
 
-	lsm->mem = vy_mem_new(mem_env, cmp_def, format,
+	lsm->mem = vy_mem_new(mem_env, &lsm->stat.memory, cmp_def, format,
 			      *lsm->env->p_generation,
 			      space_cache_version,
 			      index_def->iid);
@@ -1222,9 +1222,9 @@ vy_lsm_rotate_mem(struct vy_lsm *lsm)
 	struct vy_mem *mem;
 
 	assert(lsm->mem != NULL);
-	mem = vy_mem_new(lsm->mem->env, lsm->cmp_def, lsm->mem_format,
-			 *lsm->env->p_generation, space_cache_version,
-			 lsm->index_id);
+	mem = vy_mem_new(lsm->mem->env, &lsm->stat.memory, lsm->cmp_def,
+			 lsm->mem_format, *lsm->env->p_generation,
+			 space_cache_version, lsm->index_id);
 	if (mem == NULL)
 		return -1;
 
@@ -1251,6 +1251,7 @@ vy_lsm_delete_mem(struct vy_lsm *lsm, struct vy_mem *mem)
 	assert(!rlist_empty(&mem->in_sealed));
 	rlist_del_entry(mem, in_sealed);
 	vy_stmt_counter_sub(&lsm->stat.memory.count, &mem->count);
+	vy_stmt_counter_sub(&mem->env->stat.count, &mem->count);
 	vy_mem_delete(mem);
 	lsm->mem_list_version++;
 }
@@ -1473,7 +1474,7 @@ void
 vy_lsm_commit_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 		   struct vy_entry entry)
 {
-	vy_mem_commit_stmt(mem, entry, &lsm->stat.memory);
+	vy_mem_commit_stmt(mem, entry);
 
 	if (vy_stmt_type(entry.stmt) == IPROTO_UPSERT)
 		vy_lsm_commit_upsert(lsm, mem, entry);

@@ -100,9 +100,9 @@ vy_mem_tree_extent_free(struct matras_allocator *allocator, void *p)
 }
 
 struct vy_mem *
-vy_mem_new(struct vy_mem_env *env, struct key_def *cmp_def,
-	   struct tuple_format *format, int64_t generation,
-	   uint32_t space_cache_version, uint32_t iid)
+vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
+	   struct key_def *cmp_def, struct tuple_format *format,
+	   int64_t generation, uint32_t space_cache_version, uint32_t iid)
 {
 	size_t size = sizeof(struct vy_mem);
 	if (iid == 0)
@@ -111,6 +111,7 @@ vy_mem_new(struct vy_mem_env *env, struct key_def *cmp_def,
 	if (iid == 0)
 		index->stmt = (struct vy_stmt_stat *)(index + 1);
 	index->env = env;
+	index->lsm_stat = lsm_stat;
 	index->dump_lsn = -1;
 	index->cmp_def = cmp_def;
 	index->generation = generation;
@@ -216,19 +217,21 @@ vy_mem_stmt_is_counted(enum iproto_type type, struct vy_entry older)
 }
 
 /**
- * Account a committed entry against mem/lsm row/byte counters.
- * The per-type stat is separately bumped (gated by VY_STMT_COUNTED)
- * at the end of vy_mem_commit_stmt.
+ * Account a committed entry against the mem, its owning LSM's
+ * memory stat (mem->lsm_stat) and the engine-wide sum
+ * (mem->env->stat). The per-type stat is separately bumped (gated
+ * by VY_STMT_COUNTED) at the end of vy_mem_commit_stmt.
  */
 static inline void
-vy_mem_acct(struct vy_mem *mem, struct vy_entry entry,
-	    struct vy_mem_stat *stat)
+vy_mem_acct(struct vy_mem *mem, struct vy_entry entry)
 {
 	mem->count.rows++;
-	stat->count.rows++;
+	mem->lsm_stat->count.rows++;
+	mem->env->stat.count.rows++;
 	size_t size = tuple_size(entry.stmt);
 	mem->count.bytes += size;
-	stat->count.bytes += size;
+	mem->lsm_stat->count.bytes += size;
+	mem->env->stat.count.bytes += size;
 }
 
 /**
@@ -238,10 +241,11 @@ vy_mem_acct(struct vy_mem *mem, struct vy_entry entry,
  * displaces a committed UPSERT at the same (key, lsn).
  */
 void
-vy_mem_unacct(struct vy_mem *mem, struct vy_mem_stat *stat)
+vy_mem_unacct(struct vy_mem *mem)
 {
 	mem->count.rows--;
-	stat->count.rows--;
+	mem->lsm_stat->count.rows--;
+	mem->env->stat.count.rows--;
 }
 
 /**
@@ -403,8 +407,7 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 }
 
 void
-vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry,
-		   struct vy_mem_stat *stat)
+vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry)
 {
 	/* The statement must be from a lsregion. */
 	assert(!vy_stmt_is_refable(entry.stmt));
@@ -423,7 +426,7 @@ vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry,
 	 * yield finishes and return a stale tuple.
 	 */
 	mem->version++;
-	vy_mem_acct(mem, entry, stat);
+	vy_mem_acct(mem, entry);
 	/*
 	 * The flag is cached on the statement, which is shared across
 	 * the primary and secondary mems; gate on mem->stmt so only the

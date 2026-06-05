@@ -551,8 +551,7 @@ vinyl_engine_memory_stat(struct engine *engine, struct engine_memory_stat *stat)
 {
 	struct vy_env *env = vy_env(engine);
 
-	stat->data += lsregion_used(&env->mem_env.allocator) -
-				env->mem_env.tree_extent_size;
+	stat->data += env->mem_env.stat.count.bytes;
 	stat->index += env->mem_env.tree_extent_size;
 	stat->index += env->lsm_env.bloom_size;
 	stat->index += env->lsm_env.page_index_size;
@@ -3735,7 +3734,7 @@ vy_squash_process(struct vy_squash *squash)
 		 * We don't modify the resulting statement,
 		 * so there's no need in invalidating the cache.
 		 */
-		vy_mem_commit_stmt(mem, result, &lsm->stat.memory);
+		vy_mem_commit_stmt(mem, result);
 		/*
 		 * The squash REPLACE displaced a committed UPSERT at
 		 * the same (key, lsn). commit_stmt just bumped rows
@@ -3743,7 +3742,7 @@ vy_squash_process(struct vy_squash *squash)
 		 * cancel the stray bump to keep rows counting live tree
 		 * entries.
 		 */
-		vy_mem_unacct(mem, &lsm->stat.memory);
+		vy_mem_unacct(mem);
 		vy_quota_force_use(&env->quota, VY_QUOTA_CONSUMER_TX,
 				   mem_used_after - mem_used_before);
 		vy_regulator_check_dump_watermark(&env->regulator);
@@ -4273,7 +4272,7 @@ vy_build_insert_stmt(struct vy_lsm *lsm, struct vy_mem *mem,
 	vy_stmt_foreach_entry(entry, region_stmt, lsm->cmp_def) {
 		if (vy_mem_insert(mem, entry, NULL) != 0)
 			return -1;
-		vy_mem_commit_stmt(mem, entry, &lsm->stat.memory);
+		vy_mem_commit_stmt(mem, entry);
 	}
 	return 0;
 }

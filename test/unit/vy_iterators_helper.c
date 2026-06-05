@@ -214,7 +214,8 @@ create_test_mem(struct key_def *def)
 	fail_if(format == NULL);
 
 	/* Create mem: tests treat it as a primary-index mem (iid=0). */
-	struct vy_mem *mem = vy_mem_new(&mem_env, def, format, 1, 0, 0);
+	struct vy_mem *mem = vy_mem_new(&mem_env, &dummy_stat, def, format,
+					1, 0, 0);
 	fail_if(mem == NULL);
 	return mem;
 }

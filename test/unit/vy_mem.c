@@ -24,7 +24,7 @@ test_basic(void)
 	/* Check dump lsn */
 	struct vy_entry entry = vy_mem_insert_template(mem, &stmts[0]);
 	is(mem->dump_lsn, -1, "mem->dump_lsn after prepare");
-	vy_mem_commit_stmt(mem, entry, &dummy_stat);
+	vy_mem_commit_stmt(mem, entry);
 	is(mem->dump_lsn, 100, "mem->dump_lsn after commit");
 
 	/* Check vy_mem_older_lsn */
@@ -34,7 +34,7 @@ test_basic(void)
 	   "vy_mem_older_lsn 1");
 	ok(vy_entry_is_equal(vy_mem_older_lsn(mem, older), vy_entry_none()),
 	   "vy_mem_older_lsn 2");
-	vy_mem_commit_stmt(mem, entry, &dummy_stat);
+	vy_mem_commit_stmt(mem, entry);
 
 	/* Check rollback  */
 	struct vy_entry olderolder = entry;
@@ -49,7 +49,7 @@ test_basic(void)
 	/* Check version  */
 	entry = vy_mem_insert_template(mem, &stmts[4]);
 	is(mem->version, 8, "vy_mem->version");
-	vy_mem_commit_stmt(mem, entry, &dummy_stat);
+	vy_mem_commit_stmt(mem, entry);
 	is(mem->version, 9, "vy_mem->version");
 
 	/* Clean up */

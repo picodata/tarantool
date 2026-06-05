@@ -63,6 +63,12 @@ struct vy_mem_env {
 	size_t tree_extent_size;
 	/** TX manager, used for conflict detection on mem seal. */
 	struct vy_tx_manager *xm;
+	/**
+	 * Sum of lsm->stat.memory across every LSM, kept current by
+	 * vy_mem_acct/unacct so the engine memory stat can be read
+	 * without walking the LSM list.
+	 */
+	struct vy_mem_stat stat;
 };
 
 /**
@@ -163,6 +169,13 @@ vy_mem_tree_cmp_key(struct vy_entry entry, struct vy_mem_tree_key *key,
 struct vy_mem {
 	/** Vinyl memory environment. */
 	struct vy_mem_env *env;
+	/**
+	 * The owning LSM's in-memory accounting stat. The mem updates
+	 * it in place as statements come and go. Safe to hold as a bare
+	 * pointer: the stat lives inside the owning LSM, which is always
+	 * alive while the mem touches it.
+	 */
+	struct vy_mem_stat *lsm_stat;
 	/** Link in range->sealed list. */
 	struct rlist in_sealed;
 	/** BPS tree */
@@ -266,6 +279,8 @@ vy_mem_wait_pinned(struct vy_mem *mem)
  * Instantiate a new in-memory level.
  *
  * @param env Vinyl memory environment.
+ * @param lsm_stat Memory stat of the owning LSM (&lsm->stat.memory),
+ *        stored in the mem and updated by the accounting path.
  * @param key_def key definition.
  * @param format Format for REPLACE and DELETE tuples.
  * @param generation Generation of statements stored in the tree.
@@ -276,9 +291,9 @@ vy_mem_wait_pinned(struct vy_mem *mem)
  * @retval NULL on error, check diag.
  */
 struct vy_mem *
-vy_mem_new(struct vy_mem_env *env, struct key_def *cmp_def,
-	   struct tuple_format *format, int64_t generation,
-	   uint32_t space_cache_version, uint32_t iid);
+vy_mem_new(struct vy_mem_env *env, struct vy_mem_stat *lsm_stat,
+	   struct key_def *cmp_def, struct tuple_format *format,
+	   int64_t generation, uint32_t space_cache_version, uint32_t iid);
 
 /**
  * Delete in-memory level.
@@ -332,11 +347,9 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
  * insert time.
  * @param mem        vy_mem.
  * @param entry      Vinyl statement.
- * @param stat       LSM memory stat to update.
  */
 void
-vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry,
-		   struct vy_mem_stat *stat);
+vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry);
 
 /**
  * Remove a statement from the in-memory level. Counters advance
@@ -353,7 +366,7 @@ vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry);
  * upsert squash after its commit_stmt. Bytes stay (lsregion).
  */
 void
-vy_mem_unacct(struct vy_mem *mem, struct vy_mem_stat *stat);
+vy_mem_unacct(struct vy_mem *mem);
 
 /**
  * Iterator for in-memory level.
