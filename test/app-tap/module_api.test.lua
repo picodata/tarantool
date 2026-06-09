@@ -507,6 +507,14 @@ local function test_box_session_id_matches(test, module)
             'same value')
 end
 
+local function test_box_session_user_name_matches(test, module)
+    test:plan(1)
+
+    test:ok(module.box_session_user_name_matches(box.session.user()),
+        'verify that Lua/C current session user APIs return the ' ..
+        'same value')
+end
+
 -- Basic test of `box_iproto_send` correctness: main functional testing is done
 -- in test/box-luatest/gh_7897_sending_arbitrary_iproto_packets_test.lua.
 local function test_box_iproto_send(test, module)
@@ -746,7 +754,7 @@ local function test_box_access_check_space(test)
 end
 
 require('tap').test("module_api", function(test)
-    test:plan(58)
+    test:plan(59)
     local status, module = pcall(require, 'module_api')
     test:is(status, true, "module")
     test:ok(status, "module is loaded")
@@ -781,6 +789,7 @@ require('tap').test("module_api", function(test)
     test:test("isdecimal", test_isdecimal, module)
     test:test("box_schema_version_matches", test_box_schema_version_matches, module)
     test:test("box_session_id_matches", test_box_session_id_matches, module)
+    test:test("box_session_user_name_matches", test_box_session_user_name_matches, module)
     test:test("box_iproto_send", test_box_iproto_send, module)
     test:test("box_iproto_override", test_box_iproto_override, module)
     test:test("box_access_check_space", test_box_access_check_space)

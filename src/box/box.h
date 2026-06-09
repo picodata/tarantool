@@ -726,6 +726,16 @@ API_EXPORT int
 box_session_user_id(uint32_t *uid);
 
 /**
+ * Return the current session user name.
+ * Session user can be changed with box_session_su()
+ * or setuid functions.
+ * \retval NULL on error (check box_error_last())
+ * \retval pointer to user name on success
+ */
+API_EXPORT const char *
+box_session_user_name(void);
+
+/**
  * Return the effective user identifier. Effective
  * user is **not** affected by box_session_su()
  * or setuid functions.

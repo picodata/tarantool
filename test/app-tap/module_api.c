@@ -3114,6 +3114,23 @@ test_box_session_id(struct lua_State *L)
 	return 1;
 }
 
+static int
+test_box_session_user_name(struct lua_State *L)
+{
+	fail_unless(lua_gettop(L) == 1);
+	fail_unless(lua_isstring(L, 1));
+
+	size_t length = 0;
+	const char *lua_name = luaT_tolstring(L, 1, &length);
+	fail_unless(lua_name != NULL);
+
+	const char *c_name = box_session_user_name();
+	fail_unless(c_name != NULL);
+
+	lua_pushboolean(L, strcmp(c_name, lua_name) == 0);
+	return 1;
+}
+
 /* }}} Helpers for current session identifier Lua/C API test cases */
 
 static int
@@ -3741,6 +3758,7 @@ luaopen_module_api(lua_State *L)
 		{"isdecimal_ptr", test_isdecimal_ptr},
 		{"box_schema_version_matches", test_box_schema_version},
 		{"box_session_id_matches", test_box_session_id},
+		{"box_session_user_name_matches", test_box_session_user_name},
 		{"box_iproto_send", test_box_iproto_send},
 		{"box_iproto_override_set", test_box_iproto_override_set},
 		{"box_iproto_override_reset", test_box_iproto_override_reset},

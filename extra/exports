@@ -128,6 +128,7 @@ box_session_id
 box_session_push
 box_session_su
 box_session_user_id
+box_session_user_name
 box_space_id_by_name
 box_truncate
 box_tuple_bsize
