@@ -3434,6 +3434,16 @@ box_return_tuple(box_function_ctx_t *ctx, box_tuple_t *tuple)
 }
 
 API_EXPORT int
+box_tuple_check_size(uint32_t space_id, const char *data, const char *end)
+{
+	struct space *space = space_cache_find(space_id);
+	if (space == NULL)
+		return -1;
+	return engine_check_tuple_size(space->engine, space->format,
+				       end - data);
+}
+
+API_EXPORT int
 box_return_mp(box_function_ctx_t *ctx, const char *mp, const char *mp_end)
 {
 	return port_c_add_mp(ctx->port, mp, mp_end);

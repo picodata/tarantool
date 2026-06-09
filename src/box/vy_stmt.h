@@ -107,6 +107,20 @@ size_t
 vy_stmt_tuple_memory_used(struct vy_stmt_env *env);
 
 /**
+ * Constant-time check whether a statement of the given format holding
+ * tuple_len bytes of MessagePack data would fit within the environment's
+ * max_tuple_size. Uses the format's field_map_size_max instead of walking
+ * the fields; the bound is exact unless the format has a multikey index.
+ * Sets the diag on overflow.
+ *
+ * @retval 0  the statement fits
+ * @retval -1 the statement is too large (diag is set)
+ */
+int
+vy_stmt_check_size(struct vy_stmt_env *env, struct tuple_format *format,
+		   size_t tuple_len);
+
+/**
  * Initialize the per-thread slab allocator for vinyl tuples.
  * Must be called in each background cord before any tuple allocations.
  */

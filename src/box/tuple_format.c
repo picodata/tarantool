@@ -479,6 +479,7 @@ tuple_format_create(struct tuple_format *format, struct key_def *const *keys,
 					     field_count);
 	if (tuple_format_field_count(format) == 0) {
 		format->field_map_size = 0;
+		format->field_map_size_max = 0;
 		goto out;
 	}
 	/* Initialize defined fields */
@@ -580,6 +581,7 @@ tuple_format_create(struct tuple_format *format, struct key_def *const *keys,
 	}
 	struct tuple_field *field;
 	uint32_t *required_fields = format->required_fields;
+	bool is_multikey = false;
 	json_tree_foreach_entry_preorder(field, &format->fields.root,
 					 struct tuple_field, token) {
 		/*
@@ -597,6 +599,7 @@ tuple_format_create(struct tuple_format *format, struct key_def *const *keys,
 		 * bitmap for multikey index subtree.
 		 */
 		if (field->token.type == JSON_TOKEN_ANY) {
+			is_multikey = true;
 			assert(required_fields == format->required_fields);
 			assert(field->multikey_required_fields == NULL);
 			void *multikey_required_fields =
@@ -619,6 +622,14 @@ tuple_format_create(struct tuple_format *format, struct key_def *const *keys,
 		    !tuple_field_is_nullable(field))
 			bit_set(required_fields, field->id);
 	}
+	/*
+	 * A multikey tuple's field map carries a variable number of
+	 * offset slots, so its size is not known from the format
+	 * alone; fall back to the data_offset limit as a safe upper
+	 * bound. Without multikey indexes field_map_size is exact.
+	 */
+	format->field_map_size_max = is_multikey ? INT16_MAX :
+				     format->field_map_size;
 out:
 	format->constraint_count = constraint_count;
 	format->constraint = tuple_constraint_array_new(constraint_def,

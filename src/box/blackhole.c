@@ -201,6 +201,7 @@ static const struct engine_vtab blackhole_engine_vtab = {
 	/* .memory_stat = */ generic_engine_memory_stat,
 	/* .reset_stat = */ generic_engine_reset_stat,
 	/* .check_space_def = */ generic_engine_check_space_def,
+	/* .check_tuple_size = */ generic_engine_check_tuple_size,
 };
 
 struct engine *

@@ -448,6 +448,16 @@ generic_engine_reset_stat(struct engine *engine)
 }
 
 int
+generic_engine_check_tuple_size(struct engine *engine,
+				struct tuple_format *format, size_t tuple_len)
+{
+	(void)engine;
+	(void)format;
+	(void)tuple_len;
+	return 0;
+}
+
+int
 generic_engine_check_space_def(struct space_def *def)
 {
 	(void)def;

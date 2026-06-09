@@ -226,6 +226,19 @@ vy_stmt_is_exact_key(struct tuple *stmt, struct key_def *cmp_def,
 	return true;
 }
 
+int
+vy_stmt_check_size(struct vy_stmt_env *env, struct tuple_format *format,
+		   size_t tuple_len)
+{
+	size_t total = sizeof(struct vy_stmt) + format->field_map_size_max +
+		       tuple_len;
+	if (unlikely(total > env->max_tuple_size)) {
+		diag_set(ClientError, ER_VINYL_MAX_TUPLE_SIZE, (unsigned)total);
+		return -1;
+	}
+	return 0;
+}
+
 /**
  * Allocate a vinyl statement object on base of the struct tuple
  * with malloc() and the reference counter equal to 1.

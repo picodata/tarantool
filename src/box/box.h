@@ -503,6 +503,25 @@ API_EXPORT int
 box_return_tuple(box_function_ctx_t *ctx, box_tuple_t *tuple);
 
 /**
+ * Check whether a tuple of the given MsgPack data would fit within the
+ * configured max_tuple_size of the space's engine. The check is
+ * constant-time: it adds the engine's per-tuple header and the format's
+ * field map size to the data length, without allocating the tuple or
+ * walking its fields. The result is exact, except for a space with a
+ * multikey index, where the field map size is bounded conservatively
+ * and a tuple close to the limit may be reported as oversized.
+ *
+ * \param space_id space identifier
+ * \param data start of MsgPack-encoded tuple array
+ * \param end end of MsgPack-encoded tuple array
+ * \retval 0  on success (tuple fits)
+ * \retval -1 on error (oversized, unknown space, or unsupported engine,
+ *            use box_error_last() to retrieve the error)
+ */
+API_EXPORT int
+box_tuple_check_size(uint32_t space_id, const char *data, const char *end);
+
+/**
  * Return MessagePack from a stored C procedure. The MessagePack
  * is copied, so it is safe to free/reuse the passed arguments
  * after the call.

@@ -47,6 +47,7 @@ struct txn_stmt;
 struct read_view_opts;
 struct space;
 struct space_def;
+struct tuple_format;
 struct vclock;
 struct xstream;
 struct engine_join_ctx;
@@ -252,6 +253,13 @@ struct engine_vtab {
 	 * spaces.
 	 */
 	int (*check_space_def)(struct space_def *);
+	/**
+	 * Check whether a tuple of the given format and MsgPack data
+	 * length would fit within the configured max_tuple_size of the
+	 * space's engine, without building the tuple's field map.
+	 */
+	int (*check_tuple_size)(struct engine *engine,
+				struct tuple_format *format, size_t tuple_len);
 };
 
 enum {
@@ -406,6 +414,13 @@ engine_check_space_def(struct engine *engine, struct space_def *def)
 	return engine->vtab->check_space_def(def);
 }
 
+static inline int
+engine_check_tuple_size(struct engine *engine, struct tuple_format *format,
+			size_t tuple_len)
+{
+	return engine->vtab->check_tuple_size(engine, format, tuple_len);
+}
+
 static inline void
 engine_read_view_delete(struct engine_read_view *rv)
 {
@@ -522,6 +537,8 @@ int generic_engine_backup(struct engine *, const struct vclock *,
 void generic_engine_memory_stat(struct engine *, struct engine_memory_stat *);
 void generic_engine_reset_stat(struct engine *);
 int generic_engine_check_space_def(struct space_def *);
+int generic_engine_check_tuple_size(struct engine *, struct tuple_format *,
+				    size_t tuple_len);
 
 #if defined(__cplusplus)
 } /* extern "C" */

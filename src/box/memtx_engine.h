@@ -270,6 +270,16 @@ memtx_engine_set_system_memory(struct memtx_engine *memtx, size_t size);
 void
 memtx_engine_set_max_tuple_size(struct memtx_engine *memtx, size_t max_size);
 
+/**
+ * Check whether a tuple of the given format and MessagePack data
+ * length would fit within memtx's max_tuple_size.
+ *
+ * See box_tuple_check_size().
+ */
+int
+memtx_engine_check_tuple_size(struct engine *engine,
+			      struct tuple_format *format, size_t tuple_len);
+
 /** Tuple format vtab for memtx engine. */
 extern struct tuple_format_vtab memtx_tuple_format_vtab;
 

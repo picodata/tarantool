@@ -2986,6 +2986,14 @@ vinyl_engine_set_max_tuple_size(struct engine *engine, size_t max_size)
 	env->stmt_env.max_tuple_size = max_size;
 }
 
+int
+vinyl_engine_check_tuple_size(struct engine *engine,
+			      struct tuple_format *format, size_t tuple_len)
+{
+	struct vy_env *env = vy_env(engine);
+	return vy_stmt_check_size(&env->stmt_env, format, tuple_len);
+}
+
 void
 vinyl_engine_set_timeout(struct engine *engine, double timeout)
 {
@@ -4879,6 +4887,7 @@ static const struct engine_vtab vinyl_engine_vtab = {
 	/* .memory_stat = */ vinyl_engine_memory_stat,
 	/* .reset_stat = */ vinyl_engine_reset_stat,
 	/* .check_space_def = */ vinyl_engine_check_space_def,
+	/* .check_tuple_size = */ vinyl_engine_check_tuple_size,
 };
 
 static const struct space_vtab vinyl_space_vtab = {

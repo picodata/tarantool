@@ -1561,6 +1561,7 @@ static const struct engine_vtab memtx_engine_vtab = {
 	/* .memory_stat = */ memtx_engine_memory_stat,
 	/* .reset_stat = */ generic_engine_reset_stat,
 	/* .check_space_def = */ generic_engine_check_space_def,
+	/* .check_tuple_size = */ memtx_engine_check_tuple_size,
 };
 
 /**
@@ -1980,6 +1981,20 @@ void
 memtx_engine_set_max_tuple_size(struct memtx_engine *memtx, size_t max_size)
 {
 	memtx->max_tuple_size = max_size;
+}
+
+int
+memtx_engine_check_tuple_size(struct engine *engine,
+			      struct tuple_format *format, size_t tuple_len)
+{
+	struct memtx_engine *memtx = (struct memtx_engine *)engine;
+	size_t total = sizeof(struct tuple) + format->field_map_size_max +
+		       tuple_len;
+	if (unlikely(total > memtx->max_tuple_size)) {
+		diag_set(ClientError, ER_MEMTX_MAX_TUPLE_SIZE, total);
+		return -1;
+	}
+	return 0;
 }
 
 template<class ALLOC>

@@ -245,6 +245,16 @@ struct tuple_format {
 	 */
 	uint16_t field_map_size;
 	/**
+	 * Upper bound on the field map size of any tuple of this
+	 * format, used to check a tuple's total size without
+	 * building its field map. For a format without multikey
+	 * indexes this equals field_map_size and the bound is
+	 * exact; with a multikey index the real field map grows
+	 * with the tuple, so the bound is the data_offset limit
+	 * (INT16_MAX). \sa box_tuple_check_size()
+	 */
+	uint16_t field_map_size_max;
+	/**
 	 * If not set (== 0), any tuple in the space can have any number of
 	 * fields. If set, each tuple must have exactly this number of fields.
 	 */

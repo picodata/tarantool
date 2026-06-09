@@ -40,6 +40,7 @@ extern "C" {
 
 struct info_handler;
 struct engine;
+struct tuple_format;
 
 struct engine *
 vinyl_engine_new(const char *dir, size_t memory,
@@ -68,6 +69,16 @@ vinyl_engine_set_memory(struct engine *engine, size_t size);
  */
 void
 vinyl_engine_set_max_tuple_size(struct engine *engine, size_t max_size);
+
+/**
+ * Check whether a tuple of the given format and MessagePack data
+ * length would fit within vinyl's max_tuple_size.
+ *
+ * See box_tuple_check_size().
+ */
+int
+vinyl_engine_check_tuple_size(struct engine *engine,
+			      struct tuple_format *format, size_t tuple_len);
 
 /**
  * Update query timeout.
