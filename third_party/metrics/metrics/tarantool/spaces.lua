@@ -8,8 +8,6 @@ local function update_spaces_metrics()
         return
     end
 
-    local include_vinyl_count = rawget(_G, 'include_vinyl_count') or false
-
     local new_spaces = {}
     for _, s in box.space._space:pairs() do
         local total = 0
@@ -71,16 +69,13 @@ local function update_spaces_metrics()
 
             spaces[space_name] = nil
         else
-            if include_vinyl_count then
-                labels.engine = 'vinyl'
-                local count = sp:count()
-                collectors_list.vinyl_tuples =
-                    utils.set_gauge('vinyl_tuples', 'Vinyl space tuples count', count, labels,
-                        nil, {default = true})
-                new_spaces[space_name].vinyl_labels = labels
+            labels.engine = 'vinyl'
+            collectors_list.space_len =
+                utils.set_gauge('space_len', 'Space length', sp:len(), labels,
+                    nil, {default = true})
+            new_spaces[space_name].vinyl_labels = labels
+            spaces[space_name] = nil
 
-                spaces[space_name] = nil
-            end
         end
 
         ::continue::
@@ -96,7 +91,7 @@ local function update_spaces_metrics()
             collectors_list.space_total_bsize:remove(space.memtx_labels)
         end
         if space.vinyl_labels ~= nil then
-            collectors_list.vinyl_tuples:remove(space.vinyl_labels)
+            collectors_list.space_len:remove(space.vinyl_labels)
         end
     end
     spaces = new_spaces
