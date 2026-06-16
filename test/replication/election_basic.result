@@ -145,6 +145,18 @@ is_r2_leader = nil
 is_r3_leader = nil
  | ---
  | ...
+-- Declare the leader-id globals up front so they can be assigned from
+-- within the wait_cond closures below (strict mode forbids assigning to
+-- an undeclared global inside a function).
+r1_leader = nil
+ | ---
+ | ...
+r2_leader = nil
+ | ---
+ | ...
+r3_leader = nil
+ | ---
+ | ...
 is_leader_cmd = 'return box.info.election.state == \'leader\''
  | ---
  | ...
@@ -155,7 +167,10 @@ test_run:wait_cond(function()                                                   
     is_r1_leader = test_run:eval('election_replica1', is_leader_cmd)[1]         \
     is_r2_leader = test_run:eval('election_replica2', is_leader_cmd)[1]         \
     is_r3_leader = test_run:eval('election_replica3', is_leader_cmd)[1]         \
-    return is_r1_leader or is_r2_leader or is_r3_leader                         \
+    r1_leader = test_run:eval('election_replica1', leader_id_cmd)[1]            \
+    r2_leader = test_run:eval('election_replica2', leader_id_cmd)[1]            \
+    r3_leader = test_run:eval('election_replica3', leader_id_cmd)[1]            \
+    return r1_leader ~= 0 and r1_leader == r2_leader and r1_leader == r3_leader \
 end)
  | ---
  | - true
@@ -174,15 +189,6 @@ assert(leader_count == 1)
  | - true
  | ...
 -- All nodes have the same leader.
-r1_leader = test_run:eval('election_replica1', leader_id_cmd)[1]
- | ---
- | ...
-r2_leader = test_run:eval('election_replica2', leader_id_cmd)[1]
- | ---
- | ...
-r3_leader = test_run:eval('election_replica3', leader_id_cmd)[1]
- | ---
- | ...
 assert(r1_leader ~= 0)
  | ---
  | - true
@@ -254,18 +260,12 @@ test_run:cmd(string.format('stop server %s', leader_name))
  | - true
  | ...
 test_run:wait_cond(function()                                                   \
-    is_r1_leader = test_run:eval(nonleader1_name, is_leader_cmd)[1]             \
-    is_r2_leader = test_run:eval(nonleader2_name, is_leader_cmd)[1]             \
-    return is_r1_leader or is_r2_leader                                         \
+    r1_leader = test_run:eval(nonleader1_name, leader_id_cmd)[1]                \
+    r2_leader = test_run:eval(nonleader2_name, leader_id_cmd)[1]                \
+    return r1_leader ~= 0 and r1_leader == r2_leader                            \
 end)
  | ---
  | - true
- | ...
-r1_leader = test_run:eval(nonleader1_name, leader_id_cmd)[1]
- | ---
- | ...
-r2_leader = test_run:eval(nonleader2_name, leader_id_cmd)[1]
- | ---
  | ...
 assert(r1_leader ~= 0)
  | ---
