@@ -4,20 +4,101 @@ local replica_set = require('luatest.replica_set')
 
 local g = t.group()
 
-g.test_wal_ext_not_dynamic = function()
-        -- first configure with wal_ext = nil
+g.test_wal_ext_dynamic = function()
+    -- Boot with wal_ext = nil.
     g.server = server:new({ alias = 'master', box_cfg = { wal_ext = nil } })
     g.server:start()
 
     g.server:exec(function()
-        -- then try to change it
-        local res, err = pcall(function()
-            box.cfg { wal_ext = { new_old = true } }
-        end)
+        local fio = require('fio')
+        local xlog = require('xlog').pairs
 
-        -- verify that tarantool refuses to change it
-        t.assert(res == false)
-        t.assert(err:match("Can't set option 'wal_ext' dynamically"))
+        -- Create a space *before* enabling wal_ext; the dynamic
+        -- handler is responsible for re-binding its cached
+        -- wal_ext pointer.
+        local s = box.schema.space.create('test')
+        s:create_index('pk')
+
+        -- Snapshot to anchor what follows in a fresh xlog.
+        box.snapshot()
+
+        -- Enable wal_ext dynamically. The handler must re-bind the
+        -- pre-existing space so its writes start carrying the
+        -- extension (it does not take a snapshot -- that is left to
+        -- the caller).
+        box.cfg { wal_ext = { new_old = true } }
+
+        -- Write into the pre-existing space and verify the WAL row
+        -- carries IPROTO_OLD_TUPLE on UPDATE.
+        s:replace{1, 'a'}
+        s:update({1}, {{'=', 2, 'b'}})
+
+        local last_xlog = fio.glob(
+            fio.pathjoin(box.cfg.wal_dir, '*.xlog'))
+        table.sort(last_xlog)
+        last_xlog = last_xlog[#last_xlog]
+        local rows = {}
+        for _, v in xlog(last_xlog) do
+            table.insert(rows, v)
+        end
+        local update_row
+        for _, v in ipairs(rows) do
+            if v.HEADER.type == 'UPDATE' and
+               v.BODY.space_id == s.id then
+                update_row = v
+                break
+            end
+        end
+        t.assert(update_row ~= nil, 'no UPDATE row in xlog')
+        t.assert(update_row.BODY.old_tuple ~= nil,
+                 'UPDATE row must carry old_tuple after wal_ext flip')
+
+        -- Disabling is also dynamic and must be accepted.
+        box.cfg { wal_ext = { new_old = false } }
+        -- Idempotent re-set.
+        box.cfg { wal_ext = { new_old = false } }
+
+        s:drop()
+    end)
+
+    g.server:stop()
+end
+
+-- A vinyl replace on a single-index space takes the blind-write path
+-- while wal_ext is off (the old tuple is not read). Enabling wal_ext
+-- must abort a transaction that is still open (not yet prepared) at the
+-- flip: otherwise it could commit afterwards with a WAL row that lacks
+-- old_tuple, leaving a hole that a later snapshot could not paper over.
+g.test_open_blind_write_aborted_by_enable = function()
+    g.server = server:new({ alias = 'master', box_cfg = { wal_ext = nil } })
+    g.server:start()
+
+    g.server:exec(function()
+        local fiber = require('fiber')
+        local s = box.schema.space.create('t', { engine = 'vinyl' })
+        s:create_index('pk')
+        s:replace{ 1, 'init' }
+
+        local ch = fiber.channel()
+        local res = {}
+        local f = fiber.new(function()
+            box.begin()
+            s:replace{ 1, 'blind' }    -- blind write: 1 index, wal_ext off
+            ch:put(true)               -- txn open, blind write done
+            ch:get()                   -- wait for the flip
+            res.ok = pcall(box.commit)
+            ch:put(true)
+        end)
+        f:set_joinable(true)
+
+        ch:get()                                  -- txn is open
+        box.cfg{ wal_ext = { new_old = true } }   -- flip: must abort it
+        ch:put(true)                              -- let it try to commit
+        ch:get()
+        f:join()
+
+        t.assert_equals(res.ok, false,
+            'an open blind-write txn must be aborted by enabling wal_ext')
     end)
 
     g.server:stop()

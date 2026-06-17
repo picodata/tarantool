@@ -506,6 +506,7 @@ local dynamic_cfg = {
     wal_dir_rescan_delay    = nop,
     wal_cleanup_delay       = private.cfg_set_wal_cleanup_delay,
     experimental_wal_retention_period = private.cfg_set_wal_retention_period,
+    wal_ext                 = ifdef_wal_ext(private.cfg_set_wal_ext),
     custom_proc_title       = function()
         require('title').update(box.cfg.custom_proc_title)
     end,
@@ -693,6 +694,12 @@ local dynamic_cfg_skip_at_load = {
     disable_guest           = ifdef_security(true),
     password_lifetime_days  = ifdef_security(true),
     experimental_wal_retention_period = ifdef_wal_retention_period(true),
+    -- The initial wal_ext value is wired into the engine from
+    -- main.cc:cfg_get_wal_ext()/wal_ext_set_cfg(), before any
+    -- spaces exist, so the dynamic handler has nothing to do at
+    -- boot: no spaces to re-bind and no in-flight writers to
+    -- quiesce.
+    wal_ext = ifdef_wal_ext(true),
 }
 
 -- Options that are not part of dynamic_cfg_modules and applied individually
