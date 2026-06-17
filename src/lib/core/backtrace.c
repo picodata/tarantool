@@ -281,7 +281,7 @@ backtrace_frame_resolve(const struct backtrace_frame *frame,
 	*offset = (uintptr_t)frame->ip - (uintptr_t)dli.dli_saddr;
 	const char *proc_name_buf = dli.dli_sname;
 #endif /* __APPLE__ */
-	const char *demangled_name = cxx_abi_demangle(proc_name_buf);
+	const char *demangled_name = tnt_abi_demangle(proc_name_buf);
 	proc_name_cache_insert(frame->ip, demangled_name, *offset);
 	return demangled_name;
 }

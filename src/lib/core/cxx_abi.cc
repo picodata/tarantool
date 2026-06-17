@@ -43,7 +43,7 @@ private:
 	~DemangleBuf() { std::free(buf); }
 };
 
-const char *
+static const char *
 cxx_abi_demangle(const char *mangled_name)
 {
 	int status;
@@ -70,4 +70,12 @@ cxx_abi_demangle(const char *mangled_name)
 	memcpy(DemangleBuf::instance().buf, mangled_name, len);
 	return DemangleBuf::instance().buf;
 }
+
+__attribute__((weak))
+const char *
+tnt_abi_demangle(const char *mangled_name)
+{
+	return cxx_abi_demangle(mangled_name);
+}
+
 #endif /* ENABLE_BACKTRACE */

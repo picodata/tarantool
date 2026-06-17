@@ -22,7 +22,7 @@ extern "C" {
  * On demangle failures just return mangled name.
  */
 const char *
-cxx_abi_demangle(const char *mangled_name);
+tnt_abi_demangle(const char *mangled_name);
 #ifdef __cplusplus
 } /* extern "C" */
 #endif /* __cplusplus */
