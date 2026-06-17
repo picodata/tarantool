@@ -29,6 +29,8 @@ g.before_each(function(cg)
 
         box.schema.space.create('s', {is_sync = true}):create_index('p')
         box.ctl.promote()
+        -- Wait until the limbo is actually claimed before writing to it.
+        box.ctl.wait_rw()
     end)
     cg.master:wait_for_downstream_to(cg.replica)
 end)
