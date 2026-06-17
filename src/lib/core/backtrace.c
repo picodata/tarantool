@@ -256,7 +256,7 @@ backtrace_frame_resolve(const struct backtrace_frame *frame,
 #ifndef __APPLE__
 	unw_accessors_t *acc = unw_get_accessors(unw_local_addr_space);
 	assert(acc->get_proc_name != NULL);
-	char proc_name_buf[128];
+	char proc_name_buf[1024];
 	unw_word_t unw_offset;
 	int rc = acc->get_proc_name(unw_local_addr_space, (unw_word_t)frame->ip,
 				    proc_name_buf, sizeof(proc_name_buf),
