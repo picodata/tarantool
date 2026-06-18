@@ -83,6 +83,19 @@ local check_symbols = {
     'space_bsize',
     'box_schema_version',
 
+    -- Trigger API (picodata connector)
+    'box_trigger_create',
+    'box_trigger_add',
+    'box_trigger_clear',
+    'box_space_on_replace',
+    'box_space_before_replace',
+    'box_txn_on_commit',
+    'box_txn_on_rollback',
+    'box_txn_on_wal_write',
+    'box_txn_current_stmt',
+    'box_txn_stmt_old_tuple',
+    'box_txn_stmt_new_tuple',
+
     'crypto_ERR_error_string',
     'crypto_ERR_get_error',
     'crypto_EVP_DigestInit_ex',

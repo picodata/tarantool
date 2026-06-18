@@ -208,6 +208,7 @@ set(box_sources
     txn_limbo.c
     raft.c
     box.cc
+    box_trigger.c
     gc.c
     checkpoint_schedule.c
     user_def.c
