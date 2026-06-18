@@ -39,10 +39,6 @@ g.test_unsupported = function(cg)
             "BITSET does not support nullable parts",
             s.create_index, s, 'sk',
             {type = 'bitset', parts = {{2, 'unsigned', exclude_null = true}}})
-        t.assert_error_msg_equals(
-            "RTREE does not support nullable parts",
-            s.create_index, s, 'sk',
-            {type = 'rtree', parts = {{2, 'array', exclude_null = true}}})
     end)
 end
 

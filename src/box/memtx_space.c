@@ -714,7 +714,7 @@ memtx_space_check_index_def(struct space *space, struct index_def *index_def)
 				 space_name(space));
 			return -1;
 		}
-		if (index_def->type != TREE) {
+		if (index_def->type != TREE && index_def->type != RTREE) {
 			diag_set(ClientError, ER_UNSUPPORTED,
 				 index_type_strs[index_def->type],
 				 "nullable parts");
@@ -774,6 +774,11 @@ memtx_space_check_index_def(struct space *space, struct index_def *index_def)
 			diag_set(ClientError, ER_MODIFY_INDEX,
 				 index_def->name, space_name(space),
 				 "RTREE index can not use a function");
+			return -1;
+		}
+		if (key_def->is_nullable != key_def->has_exclude_null) {
+			diag_set(ClientError, ER_ILLEGAL_PARAMS,
+				 "RTREE nullable parts require exclude_null=true");
 			return -1;
 		}
 		/* no furter checks of parts needed */

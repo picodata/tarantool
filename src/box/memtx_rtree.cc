@@ -264,19 +264,24 @@ memtx_rtree_index_replace(struct index *base, struct tuple *old_tuple,
 	/* RTREE index doesn't support ordering. */
 	*successor = NULL;
 
+	struct key_def *key_def = base->def->key_def;
 	struct rtree_rect rect;
-	if (new_tuple) {
+	if (new_tuple &&
+	    !tuple_key_is_excluded(new_tuple, key_def, MULTIKEY_NONE)) {
 		if (extract_rectangle(&rect, new_tuple, base->def) != 0)
 			return -1;
 		rtree_insert(&index->tree, &rect, new_tuple);
 	}
-	if (old_tuple) {
+	if (old_tuple &&
+	    !tuple_key_is_excluded(old_tuple, key_def, MULTIKEY_NONE)) {
 		if (extract_rectangle(&rect, old_tuple, base->def) != 0)
 			return -1;
 		if (!rtree_remove(&index->tree, &rect, old_tuple))
 			old_tuple = NULL;
+		*result = old_tuple;
+	} else {
+		*result = NULL;
 	}
-	*result = old_tuple;
 	return 0;
 }
 
