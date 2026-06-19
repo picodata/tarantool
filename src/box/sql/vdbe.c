@@ -402,6 +402,9 @@ int sqlVdbeExec(Vdbe *p)
 	assert(p->explain==0);
 	p->pResultSet = 0;
 
+	/* Currently, subprograms are only allowed to return one row. */
+	int nSubProgramReturnedRows = 0;
+
 	int64_t start_time = 0;
 	if (vdbe_yield_cb) {
 		start_time = clock_monotonic64();
@@ -1028,8 +1031,15 @@ case OP_ResultRow: {
 
 	if (pOp->p3 != 0) {
 		assert(pOp->p2 >= 1);
+		if (nSubProgramReturnedRows++ > 0) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "Expression subquery returned more than 1 row");
+			goto abort_due_to_error;
+		}
 		for (int i = 0; i < pOp->p2; i++) {
-			mem_copy(&p->aVar[pOp->p3 - 1 + i], &aMem[pOp->p1 + i]);
+			Mem *to = &p->aVar[pOp->p3 - 1 + i];
+			Mem *from = &aMem[pOp->p1 + i];
+			mem_copy(to, from);
 		}
 		break;
 	}
@@ -4041,6 +4051,12 @@ case OP_Program: {        /* jump */
 	VdbeFrame *pFrame;      /* New vdbe frame to execute in */
 	SubProgram *pProgram;   /* Sub-program to execute */
 	void *t;                /* Token identifying trigger */
+
+	/*
+	 * Reset the number of subprogram's returned rows.
+	 * This affects the checks in OP_ResultRow.
+	 */
+	nSubProgramReturnedRows = 0;
 
 	pProgram = pOp->p4.pProgram;
 	pRt = &aMem[pOp->p3];
