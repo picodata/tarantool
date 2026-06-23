@@ -1,5 +1,5 @@
 -- Vinyl keeps statements in the slab allocator and the in-memory
--- tree references them directly. Two consequences are exercised
+-- tree references them directly. Three consequences are exercised
 -- here:
 --
 --   reclaim -- when a key is overwritten or deleted, the memory its
@@ -12,6 +12,10 @@
 --     prepare may rewrite that tuple's INSERT/REPLACE type in place;
 --     a rewrite done for one index must not corrupt the tuple the
 --     other indexes already stored.
+--
+--   amplification -- because the indexes share one slab tuple, the
+--     in-memory quota must charge it once, not once per index, so a
+--     space's level0 does not grow with its secondary-index count.
 
 local server = require('luatest.server')
 local t = require('luatest')
@@ -582,3 +586,88 @@ gs.test_tx_delete_insert_same_value = function(cg)
 end
 
 -- }}} sharing
+
+-- {{{ amplification
+
+-- One committed statement is the SAME slab tuple in the primary key
+-- and in every secondary index, so the in-memory quota must charge it
+-- once, not once per index. box.stat.vinyl().memory.level0 is that
+-- quota -- the figure the regulator paces writes against. A space with
+-- N secondary indexes that inflated level0 ~(N+1)x for the same data
+-- would have the rate limiter throttle writes by that factor with no
+-- extra memory in use and no dump due.
+
+local ga = t.group('slab_stmt.amplification')
+
+ga.before_all(function(cg)
+    cg.server = server:new({
+        box_cfg = {
+            -- Large enough that the test never dumps, so level0 only
+            -- grows and the two per-batch deltas stay comparable.
+            vinyl_memory = 512 * 1024 * 1024,
+        },
+    })
+    cg.server:start()
+end)
+
+ga.after_all(function(cg)
+    cg.server:drop()
+end)
+
+-- level0 of a space with five secondary indexes must match that of a
+-- primary-key-only space holding the same tuples: the secondaries
+-- reference the shared tuple and add nothing to the quota.
+ga.test_level0_independent_of_secondary_index_count = function(cg)
+    cg.server:exec(function()
+        local function level0()
+            return box.stat.vinyl().memory.level0
+        end
+
+        -- Payload dominates the per-tuple size, so the comparison is
+        -- not swamped by fixed per-row overhead.
+        local ROWS = 1000
+        local rows = {}
+        for i = 1, ROWS do
+            rows[i] = {i, i, i, i, i, i, string.rep('x', 1024)}
+        end
+
+        local dump0 = box.stat.vinyl().scheduler.dump_count
+
+        -- A space indexed by the primary key only.
+        local pk_only = box.schema.space.create('pk_only', {engine = 'vinyl'})
+        pk_only:create_index('pk', {parts = {1, 'unsigned'}})
+        local before = level0()
+        for _, tuple in ipairs(rows) do pk_only:replace(tuple) end
+        local d_pk = level0() - before
+
+        -- The same tuples in a space that additionally has five
+        -- secondary indexes sharing the primary tuple.
+        local multi = box.schema.space.create('multi', {engine = 'vinyl'})
+        multi:create_index('pk', {parts = {1, 'unsigned'}})
+        for k = 2, 6 do
+            multi:create_index('sk' .. k,
+                               {unique = false, parts = {{k, 'unsigned'}}})
+        end
+        before = level0()
+        for _, tuple in ipairs(rows) do multi:replace(tuple) end
+        local d_multi = level0() - before
+
+        -- The deltas are comparable only if nothing was dumped.
+        t.assert_equals(box.stat.vinyl().scheduler.dump_count, dump0,
+                        'no dump during measurement')
+        t.assert_gt(d_pk, 0)
+
+        -- Per-mem accounting would charge the full tuple once per index,
+        -- inflating this ~6x; charging the shared tuple once keeps the
+        -- multi-index delta within noise of the pk-only delta.
+        t.assert_le(d_multi, d_pk * 1.5,
+                    string.format('level0 inflated by secondary indexes: ' ..
+                                  'pk-only delta=%d, multi-index delta=%d ' ..
+                                  '(%.1fx)', d_pk, d_multi, d_multi / d_pk))
+
+        pk_only:drop()
+        multi:drop()
+    end)
+end
+
+-- }}} amplification

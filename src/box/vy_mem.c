@@ -215,8 +215,16 @@ vy_mem_delete(struct vy_mem *index)
 	 * the mem is detached; the slab slots stay occupied until
 	 * vy_mem_drain_step visits each tuple.
 	 */
-	assert(index->count.bytes >= 0);
-	vy_mem_unacct(index, index->count.rows, (size_t)index->count.bytes);
+	assert(index->stat.count.bytes >= 0);
+	vy_mem_stat_sub(index->lsm_stat, &index->stat);
+	vy_mem_stat_sub(&index->env->stat, &index->stat);
+	/*
+	 * Return only what this mem charged (its uniq_bytes). Statements
+	 * shared with the primary were charged there, so a secondary's
+	 * uniq_bytes covers just its sole-owned statements; the primary's
+	 * covers everything it holds. The sum stays in step with the quota.
+	 */
+	vy_quota_unacct(index->env->quota_acct, index->stat.uniq_bytes);
 }
 
 void
@@ -300,34 +308,56 @@ vy_mem_stmt_is_counted(enum iproto_type type, struct vy_entry older)
 }
 
 /**
- * Single point that updates all four counters (mem, per-LSM,
- * engine-wide, vy_quota) so callers can't drift them apart.
- * Per-statement callers pass rows=1; vy_mem_delete passes
- * mem->count for the bulk release at deletion.
+ * Single point that updates the in-memory counters (per-mem, per-LSM,
+ * engine-wide) and the quota for one @a stmt entering @a mem, so
+ * callers can't drift them apart. vy_mem_delete releases a mem's whole
+ * contribution in bulk from its own stat.
  */
 static inline void
-vy_mem_acct(struct vy_mem *mem, int64_t rows, size_t bytes,
+vy_mem_acct(struct vy_mem *mem, struct tuple *stmt,
 	    enum vy_quota_consumer_type consumer)
 {
-	mem->count.rows += rows;
-	mem->count.bytes += bytes;
-	mem->lsm_stat->count.rows += rows;
-	mem->lsm_stat->count.bytes += bytes;
-	mem->env->stat.count.rows += rows;
-	mem->env->stat.count.bytes += bytes;
-	vy_quota_acct(mem->env->quota_acct, consumer, bytes);
+	vy_stmt_counter_acct_tuple(&mem->stat.count, stmt);
+	vy_stmt_counter_acct_tuple(&mem->lsm_stat->count, stmt);
+	vy_stmt_counter_acct_tuple(&mem->env->stat.count, stmt);
+	/*
+	 * Charge the quota once per distinct physical statement. VY_STMT_MEM
+	 * marks a statement already resident in some mem: a tuple shared
+	 * across the primary and secondary mems is charged by the first mem
+	 * it enters (the primary, inserted first on commit); the later
+	 * inserts of the same pointer find the flag set and skip the charge.
+	 * A sole-owned secondary statement -- a deferred-delete tombstone, a
+	 * build key -- has the flag unset, so it is charged in its own right,
+	 * which is what keeps it visible to the scheduler.
+	 */
+	if ((vy_stmt_flags(stmt) & VY_STMT_MEM) == 0) {
+		vy_stmt_add_flag(stmt, VY_STMT_MEM);
+		mem->stat.uniq_bytes += tuple_size(stmt);
+		mem->lsm_stat->uniq_bytes += tuple_size(stmt);
+		mem->env->stat.uniq_bytes += tuple_size(stmt);
+		vy_quota_acct(mem->env->quota_acct, consumer, tuple_size(stmt));
+	}
 }
 
-void
-vy_mem_unacct(struct vy_mem *mem, int64_t rows, size_t bytes)
+/*
+ * Only the count is adjusted; uniq_bytes is not. A statement can leave
+ * the tree before its mem is dumped -- an upsert squashed by a REPLACE,
+ * a multikey duplicate, a rolled-back write -- but its charge lives in
+ * the mem that first saw it, which is not necessarily this one: a tuple
+ * shared across the primary and secondary mems is charged by the
+ * primary, so when it leaves a secondary mem the charge is elsewhere
+ * and there is nothing here to release. Rather than track per-statement
+ * ownership, the charge is released in bulk at vy_mem_delete, which
+ * returns each mem's own uniq_bytes. The lag -- a charge outliving its
+ * statement until the dump -- only over-counts acct.used, firing a dump
+ * a little early, the safe direction.
+ */
+static void
+vy_mem_unacct(struct vy_mem *mem, struct tuple *stmt)
 {
-	mem->count.rows -= rows;
-	mem->count.bytes -= bytes;
-	mem->lsm_stat->count.rows -= rows;
-	mem->lsm_stat->count.bytes -= bytes;
-	mem->env->stat.count.rows -= rows;
-	mem->env->stat.count.bytes -= bytes;
-	vy_quota_unacct(mem->env->quota_acct, bytes);
+	vy_stmt_counter_unacct_tuple(&mem->stat.count, stmt);
+	vy_stmt_counter_unacct_tuple(&mem->lsm_stat->count, stmt);
+	vy_stmt_counter_unacct_tuple(&mem->env->stat.count, stmt);
 }
 
 /**
@@ -383,7 +413,7 @@ vy_mem_insert_upsert(struct vy_mem *mem, struct vy_entry entry,
 	 */
 	assert(replaced.stmt == NULL);
 	vy_stmt_ref(entry.stmt);
-	vy_mem_acct(mem, 1, tuple_size(entry.stmt), consumer);
+	vy_mem_acct(mem, entry.stmt, consumer);
 	vy_mem_set_counted_flag(mem, entry, &at);
 	/*
 	 * All iterators begin to see the new statement, and
@@ -451,7 +481,7 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 					    &at) != 0)
 		return -1;
 	vy_stmt_ref(entry.stmt);
-	vy_mem_acct(mem, 1, tuple_size(entry.stmt), consumer);
+	vy_mem_acct(mem, entry.stmt, consumer);
 	mem->version++;
 	if (replaced.stmt != NULL) {
 		/*
@@ -463,7 +493,7 @@ vy_mem_insert(struct vy_mem *mem, struct vy_entry entry,
 		assert(mem->stmt == NULL ||
 		       (vy_stmt_type(entry.stmt) == IPROTO_REPLACE &&
 			vy_stmt_type(replaced.stmt) == IPROTO_UPSERT));
-		vy_mem_unacct(mem, 1, tuple_size(replaced.stmt));
+		vy_mem_unacct(mem, replaced.stmt);
 		vy_stmt_unref(replaced.stmt);
 		if (prev != NULL)
 			*prev = vy_entry_none();
@@ -525,7 +555,7 @@ vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry)
 	 */
 	if (vy_mem_tree_delete(&mem->tree, entry) == 0) {
 		mem->version++;
-		vy_mem_unacct(mem, 1, tuple_size(entry.stmt));
+		vy_mem_unacct(mem, entry.stmt);
 		vy_stmt_unref(entry.stmt);
 	}
 }

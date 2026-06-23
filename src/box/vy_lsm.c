@@ -1365,7 +1365,7 @@ vy_lsm_complete_dump(struct vy_lsm *lsm, int64_t dump_lsn,
 	rlist_foreach_entry_safe(mem, &lsm->sealed, in_mems, next_mem) {
 		if (mem->generation > dump_generation)
 			continue;
-		vy_stmt_counter_add(&dump_input, &mem->count);
+		vy_stmt_counter_add(&dump_input, &mem->stat.count);
 		vy_lsm_delete_mem(lsm, mem);
 	}
 	vy_lsm_acct_dump(lsm, dump_time, &dump_input, dump_output);

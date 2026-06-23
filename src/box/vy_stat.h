@@ -170,6 +170,15 @@ struct vy_lsm_stat {
 	struct vy_mem_stat {
 		/** Number of statements stored in memory. */
 		struct vy_stmt_counter count;
+		/*
+		 * Unique in-memory bytes: count.bytes with each physical
+		 * statement counted once. A committed tuple is one slab
+		 * object shared by the primary and every secondary mem, so
+		 * count.bytes counts it once per index whereas uniq_bytes
+		 * counts it once. This is the figure charged to the memory
+		 * quota.
+		 */
+		int64_t uniq_bytes;
 		/** Memory iterator statistics. */
 		struct vy_mem_iterator_stat iterator;
 	} memory;
@@ -393,6 +402,18 @@ vy_stmt_counter_sub(struct vy_stmt_counter *c1,
 {
 	c1->rows -= c2->rows;
 	c1->bytes -= c2->bytes;
+}
+
+/*
+ * Subtract a mem's occupancy -- statement count and unique bytes --
+ * from @a s1, as when the mem is dumped. The iterator counters are
+ * cumulative and left untouched.
+ */
+static inline void
+vy_mem_stat_sub(struct vy_mem_stat *s1, const struct vy_mem_stat *s2)
+{
+	vy_stmt_counter_sub(&s1->count, &s2->count);
+	s1->uniq_bytes -= s2->uniq_bytes;
 }
 
 static inline void

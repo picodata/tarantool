@@ -210,6 +210,24 @@ enum {
 	 * VY_STMT_FLAGS_ALL.
 	 */
 	VY_STMT_STALE			= 1 << 5,
+	/**
+	 * The statement is resident in the in-memory level: its bytes
+	 * have been charged to the memory quota. A committed statement
+	 * is shared across the primary mem and every secondary mem of
+	 * its space (one slab tuple, many tree refs), so this marks the
+	 * first mem it enters and the charge is made once -- later
+	 * inserts of the same shared statement skip it. A sole-owned
+	 * secondary statement (a deferred-delete tombstone, a build key)
+	 * is a distinct object with the flag unset, so it is charged in
+	 * its own right, keeping it visible to the scheduler.
+	 *
+	 * Never cleared: vinyl always allocates a fresh statement for a
+	 * write (vy_tx_set and the surrogate/build/dup paths), so a
+	 * statement is never reused for a later write -- the flag dies
+	 * with the statement at refcount 0 and cannot go stale.
+	 * Transient: never persisted, not included in VY_STMT_FLAGS_ALL.
+	 */
+	VY_STMT_MEM			= 1 << 6,
 };
 
 /**

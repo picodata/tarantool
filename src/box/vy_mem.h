@@ -231,13 +231,6 @@ struct vy_mem {
 	/** Vinyl memory environment. */
 	struct vy_mem_env *env;
 	/**
-	 * The owning LSM's in-memory accounting stat. The mem updates
-	 * it in place as statements come and go. Safe to hold as a bare
-	 * pointer: the stat lives inside the owning LSM, which is always
-	 * alive while the mem touches it.
-	 */
-	struct vy_mem_stat *lsm_stat;
-	/**
 	 * Lifecycle state; selects which list in_mems links into.
 	 * See enum vy_mem_state.
 	 */
@@ -249,13 +242,31 @@ struct vy_mem {
 	struct rlist in_mems;
 	/** BPS tree */
 	struct vy_mem_tree tree;
-	/** Number of statements. */
-	struct vy_stmt_counter count;
+	/* In-memory accounting for the statements in the tree. {{{ */
+	/**
+	 * The owning LSM's in-memory accounting stat. The mem updates
+	 * it in place as statements come and go. Safe to hold as a bare
+	 * pointer: the stat lives inside the owning LSM, which is always
+	 * alive while the mem touches it.
+	 */
+	struct vy_mem_stat *lsm_stat;
+	/*
+	 * This mem's in-memory accounting: statement count and the
+	 * unique bytes (stat.uniq_bytes) it charged to the quota. A
+	 * statement is charged once, by the first mem it enters
+	 * (VY_STMT_MEM), so for a tuple shared across the primary and
+	 * secondary mems only the primary's uniq_bytes counts it -- the
+	 * subset of count.bytes this mem owns. Released verbatim on
+	 * deletion, keeping the quota symmetric without re-deriving
+	 * ownership per statement.
+	 */
+	struct vy_mem_stat stat;
 	/**
 	 * Per-type statement stats, consumed by space:len().
 	 * Non-NULL only for the primary index.
 	 */
 	struct vy_stmt_stat *stmt;
+	/* }}} */
 	/**
 	 * Max LSN covered by this in-memory tree.
 	 *
@@ -451,13 +462,6 @@ vy_mem_commit_stmt(struct vy_mem *mem, struct vy_entry entry);
  */
 void
 vy_mem_rollback_stmt(struct vy_mem *mem, struct vy_entry entry);
-
-/**
- * Reverse of vy_mem_acct: subtract @a rows and @a bytes from the
- * mem, its owning LSM's stat, the engine-wide stat, and the quota.
- */
-void
-vy_mem_unacct(struct vy_mem *mem, int64_t rows, size_t bytes);
 
 /**
  * Iterator for in-memory level.
