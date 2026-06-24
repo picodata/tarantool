@@ -1059,6 +1059,19 @@ key_def_can_merge(const struct key_def *key_def,
 	 * If both key_def and to_merge have the same field, then
 	 * we can merge to_merge into key_def only if its collation
 	 * may impose a strict order on otherwise equal keys.
+	 *
+	 * sort_order is intentionally not part of this decision. When the
+	 * fields coincide, to_merge is dropped and key_def's part is the one
+	 * that survives, regardless of either part's order. For a secondary
+	 * index cmp_def (key_def = secondary, to_merge = a primary key part)
+	 * this means the secondary's order wins on a shared field and the
+	 * primary key's order there is discarded. That is correct: the
+	 * appended primary key suffix only has to impose a consistent total
+	 * order -- to break ties between equal secondary keys and to locate
+	 * the primary tuple -- and pk_in_cmp_def, extracted back out of
+	 * cmp_def, is used only to read primary key field values, never to
+	 * compare against the primary index. So the dropped order is never
+	 * observed.
 	 */
 	return coll_can_merge(part->coll, to_merge->coll);
 }

@@ -164,3 +164,50 @@ gr.test_raw_index_insert = function(cg)
         end)
     end)
 end
+
+-- Changing a part's sort order changes physical order, so the index must be
+-- rebuilt rather than updated in place. This asserts the rebuild decision
+-- (not yet the resulting order, which the comparator does not honor here):
+-- the alter is observed to enter the build path via ERRINJ_BUILD_INDEX, while
+-- an alter that leaves sort order unchanged does not. Debug-build only.
+local grb = t.group('sort_order.rebuild', t.helpers.matrix({
+    engine = {'memtx', 'vinyl'},
+}))
+
+grb.before_all(function(cg)
+    t.tarantool.skip_if_not_debug()
+    cg.server = server:new()
+    cg.server:start()
+end)
+
+grb.after_all(function(cg)
+    cg.server:drop()
+end)
+
+grb.after_each(function(cg)
+    cg.server:exec(function()
+        if box.space.test ~= nil then box.space.test:drop() end
+    end)
+end)
+
+grb.test_alter_sort_order_requires_rebuild = function(cg)
+    cg.server:exec(function(engine)
+        local s = box.schema.space.create('test', {engine = engine})
+        s:create_index('pk', {parts = {{1, 'unsigned'}}})
+        local sk = s:create_index('sk', {unique = false,
+                                         parts = {{2, 'unsigned'}}})
+        for i = 1, 5 do s:insert({i, i}) end
+
+        -- ERRINJ_BUILD_INDEX fails the build of the index with this iid.
+        box.error.injection.set('ERRINJ_BUILD_INDEX', sk.id)
+        -- Flipping to desc requires a rebuild, so it enters the build path
+        -- and trips the injection.
+        t.assert_error_msg_contains('build index', function()
+            sk:alter({parts = {{2, 'unsigned', sort_order = 'desc'}}})
+        end)
+        -- Re-stating the same (asc) order changes nothing, so no rebuild is
+        -- triggered and the injection is never reached.
+        sk:alter({parts = {{2, 'unsigned', sort_order = 'asc'}}})
+        box.error.injection.set('ERRINJ_BUILD_INDEX', -1)
+    end, {cg.params.engine})
+end
