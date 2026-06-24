@@ -566,6 +566,9 @@ sqlAddPrimaryKey(struct Parse *pParse)
 		sqlTokenInit(&token, space->def->fields[iCol].name);
 		struct Expr *expr = sql_expr_new(TK_ID, &token);
 		list = sql_expr_list_append(NULL, expr);
+		/* Carry the constraint's sort order to the rebuilt column. */
+		sqlExprListSetSortOrder(list,
+					pParse->create_index_def.sort_order);
 		pParse->create_index_def.cols = list;
 		sql_create_index(pParse);
 	} else {
@@ -2309,17 +2312,16 @@ index_fill_def(struct Parse *parse, struct index *index,
 		} else {
 			sql_column_collation(space_def, fieldno, &coll_id);
 		}
-		/*
-		 * Tarantool: DESC indexes are not supported so
-		 * far.
-		 */
 		struct key_part_def *part = &key_parts[i];
 		part->fieldno = fieldno;
 		part->type = space_def->fields[fieldno].type;
 		part->nullable_action = space_def->fields[fieldno].nullable_action;
 		part->is_nullable = part->nullable_action == ON_CONFLICT_ACTION_NONE;
 		part->exclude_null = false;
-		part->sort_order = SORT_ORDER_ASC;
+		/* An unspecified order (undef) defaults to ascending. */
+		enum sort_order sort_order = expr_list->a[i].sort_order;
+		part->sort_order = sort_order == SORT_ORDER_UNDEF ?
+				   SORT_ORDER_ASC : sort_order;
 		part->coll_id = coll_id;
 		part->path = NULL;
 	}
