@@ -39,14 +39,19 @@
 #include "box/space.h"
 #include "box/session.h"
 
-int
-sql_stmt_compile(const char *zSql, int nBytes, struct Vdbe *pReprepare,
-		 sql_stmt **ppStmt, const char **pzTail)
+/**
+ * Compile an SQL statement with an optional RAW EXPLAIN hook provider.
+ */
+static int
+sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
+		      sql_stmt **ppStmt, const char **pzTail,
+		      const struct sql_raw_explain_provider *provider)
 {
 	int rc = 0;	/* Result code */
 	Parse sParse;		/* Parsing context */
 	sql_parser_create(&sParse, current_session()->sql_flags);
 	sParse.pReprepare = pReprepare;
+	sParse.raw_explain_provider = provider;
 	*ppStmt = NULL;
 
 	/* Check to verify that it is possible to get a read lock on all
@@ -164,9 +169,26 @@ sql_stmt_compile(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 }
 
 int
+sql_stmt_compile(const char *zSql, int nBytes, struct Vdbe *pReprepare,
+		 sql_stmt **ppStmt, const char **pzTail)
+{
+	return sql_stmt_compile_impl(zSql, nBytes, pReprepare, ppStmt, pzTail,
+				     NULL);
+}
+
+int
 sql_stmt_compile_wrapper(const char *sql, int bytes_count, sql_stmt **stmt)
 {
 	return sql_stmt_compile(sql, bytes_count, NULL, stmt, NULL);
+}
+
+int
+sql_stmt_compile_raw_explain(
+	const char *sql, int bytes_count,
+	const struct sql_raw_explain_provider *provider, sql_stmt **stmt)
+{
+	return sql_stmt_compile_impl(sql, bytes_count, NULL, stmt, NULL,
+				     provider);
 }
 
 /*

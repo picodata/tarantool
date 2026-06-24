@@ -358,6 +358,19 @@ sql_stmt_compile(const char *sql, int bytes_count, struct Vdbe *re_prepared,
 int
 sql_stmt_compile_wrapper(const char *sql, int bytes_count, sql_stmt **stmt);
 
+/**
+ * Compile an SQL statement with an optional provider for RAW EXPLAIN hooks.
+ *
+ * @param sql UTF-8 encoded SQL statement.
+ * @param sql_len Length of @sql in bytes.
+ * @param provider Provider used during VDBE construction. Can be NULL.
+ * @param[out] stmt A pointer to the compiled statement.
+ */
+int
+sql_stmt_compile_raw_explain(
+	const char *sql, int bytes_count,
+	const struct sql_raw_explain_provider *provider, sql_stmt **stmt);
+
 int
 sql_step(sql_stmt *);
 
@@ -2048,6 +2061,8 @@ struct Parse {
 	struct region region;
 	/** True, if error should be raised after parsing. */
 	bool is_aborted;
+	/** Optional provider for Picodata-specific RAW EXPLAIN rows. */
+	const struct sql_raw_explain_provider *raw_explain_provider;
 
   /**************************************************************************
   * Fields above must be initialized to zero.  The fields that follow,

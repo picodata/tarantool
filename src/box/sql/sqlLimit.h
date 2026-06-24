@@ -213,6 +213,46 @@ struct sql_insert_hook {
 	void *ctx;
 };
 
+/* Arguments for sql_explain_hook callback. */
+struct sql_explain_hook_args {
+	/* OP_Explain P1, exposed as the selectid column. */
+	int select_id;
+	/* OP_Explain P2, exposed as the order column. */
+	int order;
+	/* OP_Explain P3, exposed as the from column. */
+	int from;
+	/* Opaque context owned by the hook installer. */
+	void *ctx;
+};
+
+/* Callback for OP_Explain detail payloads. */
+typedef const char *
+(*sql_explain_hook_f)(struct sql_explain_hook_args *args);
+
+/* Optional detail payload for OP_Explain opcodes marked with P4_PTR. */
+struct sql_explain_hook {
+	/* Callback returning the detail column value. */
+	sql_explain_hook_f run;
+	/* Opaque context passed to the callback. */
+	void *ctx;
+};
+
+enum sql_raw_explain_event {
+	SQL_RAW_EXPLAIN_IDX_INSERT = 1,
+};
+
+/* Callback to resolve optional OP_Explain hook during VDBE construction. */
+typedef struct sql_explain_hook *
+(*sql_raw_explain_resolve_f)(enum sql_raw_explain_event event, void *ctx);
+
+/** Provider for optional RAW EXPLAIN hooks during VDBE construction. */
+struct sql_raw_explain_provider {
+	/* Callback returning a hook for the requested construction event. */
+	sql_raw_explain_resolve_f resolve;
+	/* Opaque context passed to the callback. */
+	void *ctx;
+};
+
 /*
  * The maximum number of arguments to an SQL function.
  */

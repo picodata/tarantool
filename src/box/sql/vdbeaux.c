@@ -1061,6 +1061,41 @@ displayP4(Op * pOp, char *zTemp, int nTemp)
 	return zP4;
 }
 
+/*
+ * Return a detail string for an OP_Explain opcode backed by
+ * struct sql_explain_hook.
+ */
+static const char *
+op_explain_hook_detail(Op *pOp)
+{
+	assert(pOp->opcode == OP_Explain);
+	assert(pOp->p4type == P4_PTR);
+	if (pOp->p4.p == NULL) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "SQL explain hook is not installed");
+		return NULL;
+	}
+	struct sql_explain_hook *hook = pOp->p4.p;
+	if (hook->run == NULL) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "SQL explain hook callback is not installed");
+		return NULL;
+	}
+	struct sql_explain_hook_args args = {
+		.select_id = pOp->p1,
+		.order = pOp->p2,
+		.from = pOp->p3,
+		.ctx = hook->ctx,
+	};
+	const char *detail = hook->run(&args);
+	if (detail == NULL) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "SQL explain hook callback returned NULL");
+		return NULL;
+	}
+	return detail;
+}
+
 
 #if defined(SQL_DEBUG)
 /*
@@ -1241,13 +1276,22 @@ sqlVdbeList(Vdbe * p)
 		mem_set_int(pMem, pOp->p3);
 		pMem++;
 
-		char *buf = sql_xmalloc(256);
-		zP4 = displayP4(pOp, buf, 256);
-		if (zP4 != buf) {
-			sql_xfree(buf);
+		char *buf = NULL;
+		if (p->explain == 2 && pOp->opcode == OP_Explain &&
+		    pOp->p4type == P4_PTR) {
+			zP4 = (char *)op_explain_hook_detail(pOp);
+			if (zP4 == NULL)
+				return -1;
 			mem_set_str0_ephemeral(pMem, zP4);
 		} else {
-			mem_set_str0_allocated(pMem, zP4);
+			buf = sql_xmalloc(256);
+			zP4 = displayP4(pOp, buf, 256);
+			if (zP4 != buf) {
+				sql_xfree(buf);
+				mem_set_str0_ephemeral(pMem, zP4);
+			} else {
+				mem_set_str0_allocated(pMem, zP4);
+			}
 		}
 		pMem++;
 

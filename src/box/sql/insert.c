@@ -937,6 +937,27 @@ process_index:  ;
 	}
 }
 
+/**
+ * Emit a Picodata-specific OP_Explain row next to the opcode being generated.
+ */
+static void
+vdbe_emit_raw_explain_hook(struct Vdbe *v, enum sql_raw_explain_event event)
+{
+	assert(v != NULL);
+	struct Parse *parse = v->pParse;
+	if (parse == NULL || parse->explain != 2)
+		return;
+	const struct sql_raw_explain_provider *provider =
+		parse->raw_explain_provider;
+	if (provider == NULL || provider->resolve == NULL)
+		return;
+	struct sql_explain_hook *hook = provider->resolve(event, provider->ctx);
+	if (hook == NULL)
+		return;
+	sqlVdbeAddOp4(v, OP_Explain, parse->iSelectId, 0, 0, (char *)hook,
+		      P4_PTR);
+}
+
 void
 vdbe_emit_insertion_completion(struct Vdbe *v, int space_reg,
 			       int raw_data_reg, uint32_t tuple_len,
@@ -951,6 +972,7 @@ vdbe_emit_insertion_completion(struct Vdbe *v, int space_reg,
 	sqlVdbeAddOp3(v, OP_IdxInsert, raw_data_reg + tuple_len, space_reg,
 		      autoinc_reg);
 	sqlVdbeChangeP5(v, pik_flags);
+	vdbe_emit_raw_explain_hook(v, SQL_RAW_EXPLAIN_IDX_INSERT);
 }
 
 /**

@@ -4600,8 +4600,11 @@ case OP_SetSession: {
 /*
  * The magic Explain opcode are only inserted when explain==2 (which
  * is to say when the EXPLAIN QUERY PLAN syntax is used.)
- * This opcode records information from the optimizer.  It is the
- * the same as a no-op.  This opcodesnever appears in a real VM program.
+ * This opcode records information from the optimizer. P1/P2/P3 are
+ * exposed as selectid/order/from. P4 is either the detail string or an
+ * optional pointer to struct sql_explain_hook when P4 is P4_PTR.
+ * It is the same as a no-op. This opcode never appears in a real VM
+ * program.
  */
 default: {          /* This is really OP_Noop and OP_Explain */
 	assert(pOp->opcode==OP_Noop || pOp->opcode==OP_Explain);
