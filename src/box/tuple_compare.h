@@ -70,6 +70,14 @@ typedef uint64_t hint_t;
 #define HINT_NONE ((hint_t)UINT64_MAX)
 
 /**
+ * Largest valid hint. A descending part reverses its hint with
+ * HINT_MAX - hint, an order-reversing map on [0, HINT_MAX]; it also maps
+ * HINT_NONE to itself (the subtraction wraps), so the sentinel is
+ * preserved.
+ */
+#define HINT_MAX ((hint_t)(UINT64_MAX - 1))
+
+/**
  * Compare two tuple hints.
  *
  * Returns:

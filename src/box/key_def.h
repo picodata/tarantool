@@ -212,6 +212,8 @@ struct key_def {
 	 * fields assumed to be MP_NIL.
 	 */
 	bool has_optional_parts;
+	/** True if at least one key part has descending sort order. */
+	bool has_desc;
 	/** Key fields mask. @sa column_mask.h for details. */
 	uint64_t column_mask;
 	/**

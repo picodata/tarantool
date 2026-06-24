@@ -42,6 +42,8 @@
 #include "fiber.h"
 
 const char *sort_order_strs[] = { "asc", "desc", "undef" };
+static_assert(lengthof(sort_order_strs) == sort_order_MAX,
+	      "each sort_order enum value must have a string");
 
 const struct key_part_def key_part_def_default = {
 	0,
@@ -266,6 +268,8 @@ key_def_set_part(struct key_def *def, uint32_t part_no, uint32_t fieldno,
 	def->parts[part_no].offset_slot_cache = offset_slot;
 	def->parts[part_no].format_epoch = format_epoch;
 	column_mask_set_fieldno(&def->column_mask, fieldno);
+	if (sort_order == SORT_ORDER_DESC)
+		def->has_desc = true;
 	return key_def_set_part_path(def, part_no, path, path_len, path_pool);
 }
 
@@ -313,6 +317,18 @@ key_def_new(const struct key_part_def *parts, uint32_t part_count,
 		if (def->has_json_paths) {
 			diag_set(ClientError, ER_UNSUPPORTED,
 				 "Functional index", "json paths");
+			goto error;
+		}
+		/**
+		 * A functional index orders by the function's output, so a
+		 * descending part is redundant -- the function can return the
+		 * desired order itself. The pk parts appended to the cmp_def
+		 * may still be descending, but that only affects the invisible
+		 * tie-break among equal keys, so the comparator ignores it.
+		 */
+		if (def->has_desc) {
+			diag_set(ClientError, ER_UNSUPPORTED,
+				 "Functional index", "descending sort order");
 			goto error;
 		}
 		if(!key_def_is_sequential(def) || parts->fieldno != 0) {
