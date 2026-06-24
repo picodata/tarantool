@@ -257,6 +257,11 @@ key_def_set_part(struct key_def *def, uint32_t part_no, uint32_t fieldno,
 	if (coll != NULL)
 		coll_ref(def->parts[part_no].coll);
 	def->parts[part_no].coll_id = coll_id;
+	/*
+	 * Bad orders are rejected at the DDL and Lua boundaries, so one
+	 * here is a caller bug, not user input -- assert, don't coerce.
+	 */
+	assert(sort_order == SORT_ORDER_ASC || sort_order == SORT_ORDER_DESC);
 	def->parts[part_no].sort_order = sort_order;
 	def->parts[part_no].offset_slot_cache = offset_slot;
 	def->parts[part_no].format_epoch = format_epoch;
@@ -338,6 +343,7 @@ key_def_dump_parts(const struct key_def *def, struct key_part_def *parts,
 		part_def->exclude_null = part->exclude_null;
 		part_def->nullable_action = part->nullable_action;
 		part_def->coll_id = part->coll_id;
+		part_def->sort_order = part->sort_order;
 		if (part->path != NULL) {
 			char *path = xregion_alloc(region, part->path_len + 1);
 			memcpy(path, part->path, part->path_len);
@@ -972,7 +978,8 @@ key_def_decode_parts(struct key_part_def *parts, uint32_t part_count,
 				      "nullable action properties");
 			return -1;
 		}
-		if (part->sort_order == sort_order_MAX) {
+		if (part->sort_order == sort_order_MAX ||
+		    part->sort_order == SORT_ORDER_UNDEF) {
 			key_def_error(i, "unknown sort order");
 			return -1;
 		}

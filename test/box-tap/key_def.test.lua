@@ -11,6 +11,7 @@ local usage_error = 'Bad params, use: key_def.new({' ..
                     '{fieldno = fieldno, type = type' ..
                     '[, is_nullable = <boolean>]' ..
                     '[, exclude_null = <boolean>]' ..
+                    '[, sort_order = <string>]' ..
                     '[, path = <string>]' ..
                     '[, collation_id = <number>]' ..
                     '[, collation = <string>]}, ...}'

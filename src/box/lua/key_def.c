@@ -54,6 +54,17 @@ luaT_push_key_def(struct lua_State *L, const struct key_def *key_def)
 		lua_pushnumber(L, part->fieldno + TUPLE_INDEX_BASE);
 		lua_setfield(L, -2, "fieldno");
 
+		/*
+		 * Emit sort_order only when it is descending. Ascending
+		 * is the default, so ascending parts -- i.e. every part of
+		 * every index created so far -- keep their representation
+		 * unchanged.
+		 */
+		if (part->sort_order == SORT_ORDER_DESC) {
+			lua_pushstring(L, sort_order_strs[part->sort_order]);
+			lua_setfield(L, -2, "sort_order");
+		}
+
 		if (part->path != NULL) {
 			lua_pushlstring(L, part->path, part->path_len);
 			lua_setfield(L, -2, "path");
@@ -163,6 +174,33 @@ luaT_key_def_set_part(struct lua_State *L, struct key_part_def *part,
 	lua_gettable(L, -2);
 	if (!lua_isnil(L, -1) && lua_toboolean(L, -1) != 0) {
 		part->exclude_null = true;
+	}
+	lua_pop(L, 1);
+
+	/*
+	 * Set part->sort_order. Only asc and desc are user-settable;
+	 * undef is an internal value (used by SQL for an unspecified
+	 * order) and is rejected here, the same as an unknown string.
+	 * (The index DDL path is guarded separately, in
+	 * key_def_decode_parts.)
+	 */
+	lua_pushstring(L, "sort_order");
+	lua_gettable(L, -2);
+	if (!lua_isnil(L, -1)) {
+		size_t len;
+		const char *str = lua_tolstring(L, -1, &len);
+		if (str == NULL) {
+			diag_set(IllegalParams, "sort_order must be a string");
+			return -1;
+		}
+		part->sort_order = strnindex(sort_order_strs, str, len,
+					     sort_order_MAX);
+		if (part->sort_order == sort_order_MAX ||
+		    part->sort_order == SORT_ORDER_UNDEF) {
+			diag_set(IllegalParams, "Unknown sort order: \"%s\"",
+				 str);
+			return -1;
+		}
 	}
 	lua_pop(L, 1);
 
@@ -486,6 +524,7 @@ lbox_key_def_new(struct lua_State *L)
 				  "{fieldno = fieldno, type = type"
 				  "[, is_nullable = <boolean>]"
 				  "[, exclude_null = <boolean>]"
+				  "[, sort_order = <string>]"
 				  "[, path = <string>]"
 				  "[, collation_id = <number>]"
 				  "[, collation = <string>]}, ...}");
