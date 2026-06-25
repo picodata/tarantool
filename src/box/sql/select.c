@@ -317,6 +317,23 @@ sql_space_info_normalize(struct sql_space_info *info, uint32_t drop_count)
 }
 
 /*
+ * Force an ephemeral sort table to be built in ascending order.
+ *
+ * A descending result is produced by reading the table backward, which is
+ * recorded in SORTFLAG_DESC on the sort context. The table itself stays
+ * ascending so the tuple comparator, which honors a key part's sort order,
+ * does not invert the order a second time. Only a uniform order ever reaches
+ * an ephemeral sort table - a mixed order uses the sorter instead - so a
+ * single ascending order plus a read direction is always sufficient.
+ */
+static void
+sql_space_info_force_asc_order(struct sql_space_info *info)
+{
+	for (uint32_t i = 0; i < info->part_count; i++)
+		info->sort_orders[i] = SORT_ORDER_ASC;
+}
+
+/*
  * Delete all the content of a Select structure.  Deallocate the structure
  * itself only if bFree is true.
  */
@@ -1008,6 +1025,7 @@ pushOntoSorter(Parse * pParse,		/* Parser context */
 				pParse->is_aborted = true;
 				return;
 			}
+			sql_space_info_force_asc_order(info);
 			sqlVdbeChangeP4(v, pSort->addrSortIndex, (char *)info,
 					P4_DYNAMIC);
 		}
@@ -6008,6 +6026,9 @@ sqlSelect(Parse * pParse,		/* The parser context */
 				P4_KEYINFO);
 		sqlVdbeChangeToNoop(v, sSort.addrSortIndex + 1);
 		sSort.sortFlags |= SORTFLAG_UseSorter;
+	} else if (sSort.addrSortIndex >= 0) {
+		sql_space_info_force_asc_order(
+			sqlVdbeGetOp(v, sSort.addrSortIndex)->p4.space_info);
 	}
 
 	/* Open an ephemeral index to use for the distinct set.
