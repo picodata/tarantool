@@ -49,11 +49,9 @@ for i=1,200 do
     })
 end
 
--- Tests to check that ORDER BY + LIMIT + (ASC + DESC, different
--- sorting orders) are forbidden. Such combination is forbidden
--- because currently it returns data in wrong sorting order.
--- It will be fixed when multi-directional would be introduced:
--- https://github.com/tarantool/tarantool/issues/3309
+-- ORDER BY + LIMIT with mixed sorting orders (ASC + DESC) returns data
+-- in the requested order: the tuple comparator honors each key part's
+-- sort order, so the bounded ephemeral sort table serves a mixed order.
 
 test:do_execsql_test(
     "1.201",

@@ -115,7 +115,6 @@ struct SortCtx {
 	u8 bOrderedInnerLoop;	/* ORDER BY correctly sorts the inner loop */
 };
 #define SORTFLAG_UseSorter  0x01	/* Use SorterOpen instead of OpenEphemeral */
-#define SORTFLAG_DESC 0xF0
 
 static inline uint32_t
 multi_select_coll_seq(struct Parse *parser, struct Select *p, int n);
@@ -317,23 +316,6 @@ sql_space_info_normalize(struct sql_space_info *info, uint32_t drop_count)
 }
 
 /*
- * Force an ephemeral sort table to be built in ascending order.
- *
- * A descending result is produced by reading the table backward, which is
- * recorded in SORTFLAG_DESC on the sort context. The table itself stays
- * ascending so the tuple comparator, which honors a key part's sort order,
- * does not invert the order a second time. Only a uniform order ever reaches
- * an ephemeral sort table - a mixed order uses the sorter instead - so a
- * single ascending order plus a read direction is always sufficient.
- */
-static void
-sql_space_info_force_asc_order(struct sql_space_info *info)
-{
-	for (uint32_t i = 0; i < info->part_count; i++)
-		info->sort_orders[i] = SORT_ORDER_ASC;
-}
-
-/*
  * Delete all the content of a Select structure.  Deallocate the structure
  * itself only if bFree is true.
  */
@@ -372,20 +354,6 @@ sqlSelectDestInit(SelectDest * pDest, int eDest, int iParm, int reg_eph)
 	pDest->reg_eph = reg_eph;
 	pDest->iSdst = 0;
 	pDest->nSdst = 0;
-}
-
-static bool
-is_same_sorting_direction(const struct ExprList *expr_list)
-{
-	if(expr_list == NULL)
-		return true;
-	enum sort_order reference_order = expr_list->a[0].sort_order;
-	for (int i = 1; i < expr_list->nExpr; i++) {
-		assert(expr_list->a[i].sort_order != SORT_ORDER_UNDEF);
-		if (expr_list->a[i].sort_order != reference_order)
-			return false;
-	}
-	return true;
 }
 
 /*
@@ -1025,7 +993,6 @@ pushOntoSorter(Parse * pParse,		/* Parser context */
 				pParse->is_aborted = true;
 				return;
 			}
-			sql_space_info_force_asc_order(info);
 			sqlVdbeChangeP4(v, pSort->addrSortIndex, (char *)info,
 					P4_DYNAMIC);
 		}
@@ -1058,16 +1025,13 @@ pushOntoSorter(Parse * pParse,		/* Parser context */
 		int r1 = 0;
 		/* Fill the sorter until it contains LIMIT+OFFSET entries.  (The iLimit
 		 * register is initialized with value of LIMIT+OFFSET.)  After the sorter
-		 * fills up, delete the least entry in the sorter after each insert.
-		 * Thus we never hold more than the LIMIT+OFFSET rows in memory at once
+		 * fills up, delete the last entry after each insert.  The
+		 * table is sorted in the requested order, so the last entry
+		 * is the row that sorts after every wanted one.  Thus we
+		 * never hold more than LIMIT+OFFSET rows in memory at once
 		 */
 		addr = sqlVdbeAddOp1(v, OP_IfNotZero, iLimit);
-		if (pSort->sortFlags & SORTFLAG_DESC) {
-			int iNextInstr = sqlVdbeCurrentAddr(v) + 1;
-			sqlVdbeAddOp2(v, OP_Rewind, pSort->iECursor, iNextInstr);
-		} else {
-			sqlVdbeAddOp1(v, OP_Last, pSort->iECursor);
-		}
+		sqlVdbeAddOp1(v, OP_Last, pSort->iECursor);
 		if (pSort->bOrderedInnerLoop) {
 			r1 = ++pParse->nMem;
 			sqlVdbeAddOp3(v, OP_Column, pSort->iECursor, nExpr,
@@ -1819,11 +1783,7 @@ generateSortTail(Parse * pParse,	/* Parsing context */
 		sqlVdbeAddOp3(v, OP_SorterData, iTab, regSortOut, iSortTab);
 		bSeq = 0;
 	} else {
-		/* In case of DESC sorting order data should be taken from
-		 * the end of table. */
-		int opPositioning = (pSort->sortFlags & SORTFLAG_DESC) ?
-				    OP_Last : OP_Sort;
-		addr = 1 + sqlVdbeAddOp2(v, opPositioning, iTab, addrBreak);
+		addr = 1 + sqlVdbeAddOp2(v, OP_Sort, iTab, addrBreak);
 		codeOffset(v, p->iOffset, addrContinue);
 		iSortTab = iTab;
 		bSeq = 1;
@@ -1895,10 +1855,7 @@ generateSortTail(Parse * pParse,	/* Parsing context */
 		}
 		sqlVdbeAddOp2(v, OP_SorterNext, iTab, addr);
 	} else {
-		/* In case of DESC sorting cursor should move backward. */
-		int opPositioning = (pSort->sortFlags & SORTFLAG_DESC) ?
-				    OP_Prev : OP_Next;
-		sqlVdbeAddOp2(v, opPositioning, iTab, addr);
+		sqlVdbeAddOp2(v, OP_Next, iTab, addr);
 	}
 	if (pSort->regReturn)
 		sqlVdbeAddOp1(v, OP_Return, pSort->regReturn);
@@ -5972,8 +5929,6 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			pParse->is_aborted = true;
 			goto select_end;
 		}
-		if (info->sort_orders[0] == SORT_ORDER_DESC)
-			sSort.sortFlags |= SORTFLAG_DESC;
 		sSort.addrSortIndex =
 			sqlVdbeAddOp4(v, OP_OpenTEphemeral, sSort.reg_eph, 0, 0,
 				      (char *)info, P4_DYNAMIC);
@@ -6009,12 +5964,13 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	}
 	computeLimitRegisters(pParse, p, iEnd);
 	/*
-	 * At the moment we don't have iterators where the fields are sorted in
-	 * a different order. Because of this, we have to sort all the data and
-	 * select only the required number of rows.
+	 * Without a LIMIT the whole result has to be sorted, so use the sorter,
+	 * which sorts in bulk. With a LIMIT the ephemeral table keeps only the
+	 * LIMIT+OFFSET rows it needs (see pushOntoSorter), so it is preferred.
+	 * The tuple comparator honors each key part's sort order, so the
+	 * ephemeral table serves any order, mixed included.
 	 */
-	if (sSort.addrSortIndex >= 0 &&
-	    (p->iLimit == 0 || !is_same_sorting_direction(sSort.pOrderBy))) {
+	if (sSort.addrSortIndex >= 0 && p->iLimit == 0) {
 		struct VdbeOp *op = sqlVdbeGetOp(v, sSort.addrSortIndex);
 		struct sql_key_info *key_info =
 			sql_key_info_new_from_space_info(op->p4.space_info);
@@ -6026,9 +5982,6 @@ sqlSelect(Parse * pParse,		/* The parser context */
 				P4_KEYINFO);
 		sqlVdbeChangeToNoop(v, sSort.addrSortIndex + 1);
 		sSort.sortFlags |= SORTFLAG_UseSorter;
-	} else if (sSort.addrSortIndex >= 0) {
-		sql_space_info_force_asc_order(
-			sqlVdbeGetOp(v, sSort.addrSortIndex)->p4.space_info);
 	}
 
 	/* Open an ephemeral index to use for the distinct set.
