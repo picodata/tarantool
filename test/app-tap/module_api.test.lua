@@ -754,7 +754,7 @@ local function test_box_access_check_space(test)
 end
 
 require('tap').test("module_api", function(test)
-    test:plan(59)
+    test:plan(60)
     local status, module = pcall(require, 'module_api')
     test:is(status, true, "module")
     test:ok(status, "module is loaded")
