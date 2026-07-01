@@ -126,7 +126,8 @@ vy_stmt_tuple_memory_used(struct vy_stmt_env *env);
  * @retval -1 the statement is too large (diag is set)
  */
 int
-vy_stmt_check_size(struct vy_stmt_env *env, struct tuple_format *format,
+vy_stmt_check_size(const struct vy_stmt_env *env,
+		   const struct tuple_format *format,
 		   size_t tuple_len);
 
 /**

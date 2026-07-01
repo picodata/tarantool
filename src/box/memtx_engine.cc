@@ -1985,7 +1985,8 @@ memtx_engine_set_max_tuple_size(struct memtx_engine *memtx, size_t max_size)
 
 int
 memtx_engine_check_tuple_size(struct engine *engine,
-			      struct tuple_format *format, size_t tuple_len)
+			      const struct tuple_format *format,
+			      size_t tuple_len)
 {
 	struct memtx_engine *memtx = (struct memtx_engine *)engine;
 	size_t total = sizeof(struct tuple) + format->field_map_size_max +

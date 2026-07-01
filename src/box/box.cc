@@ -3434,13 +3434,13 @@ box_return_tuple(box_function_ctx_t *ctx, box_tuple_t *tuple)
 }
 
 API_EXPORT int
-box_tuple_check_size(uint32_t space_id, const char *data, const char *end)
+box_tuple_check_size(uint32_t space_id, size_t tuple_len)
 {
 	struct space *space = space_cache_find(space_id);
 	if (space == NULL)
 		return -1;
 	return engine_check_tuple_size(space->engine, space->format,
-				       end - data);
+				       tuple_len);
 }
 
 API_EXPORT int

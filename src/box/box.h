@@ -519,7 +519,7 @@ box_return_tuple(box_function_ctx_t *ctx, box_tuple_t *tuple);
  *            use box_error_last() to retrieve the error)
  */
 API_EXPORT int
-box_tuple_check_size(uint32_t space_id, const char *data, const char *end);
+box_tuple_check_size(uint32_t space_id, size_t tuple_len);
 
 /**
  * Return MessagePack from a stored C procedure. The MessagePack

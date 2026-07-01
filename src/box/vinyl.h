@@ -78,7 +78,8 @@ vinyl_engine_set_max_tuple_size(struct engine *engine, size_t max_size);
  */
 int
 vinyl_engine_check_tuple_size(struct engine *engine,
-			      struct tuple_format *format, size_t tuple_len);
+			      const struct tuple_format *format,
+			      size_t tuple_len);
 
 /**
  * Update query timeout.

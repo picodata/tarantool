@@ -259,7 +259,8 @@ struct engine_vtab {
 	 * space's engine, without building the tuple's field map.
 	 */
 	int (*check_tuple_size)(struct engine *engine,
-				struct tuple_format *format, size_t tuple_len);
+				const struct tuple_format *format,
+				size_t tuple_len);
 };
 
 enum {
@@ -415,7 +416,8 @@ engine_check_space_def(struct engine *engine, struct space_def *def)
 }
 
 static inline int
-engine_check_tuple_size(struct engine *engine, struct tuple_format *format,
+engine_check_tuple_size(struct engine *engine,
+			const struct tuple_format *format,
 			size_t tuple_len)
 {
 	return engine->vtab->check_tuple_size(engine, format, tuple_len);
@@ -537,8 +539,9 @@ int generic_engine_backup(struct engine *, const struct vclock *,
 void generic_engine_memory_stat(struct engine *, struct engine_memory_stat *);
 void generic_engine_reset_stat(struct engine *);
 int generic_engine_check_space_def(struct space_def *);
-int generic_engine_check_tuple_size(struct engine *, struct tuple_format *,
-				    size_t tuple_len);
+int generic_engine_check_tuple_size(struct engine *,
+				    const struct tuple_format *,
+				    size_t);
 
 #if defined(__cplusplus)
 } /* extern "C" */

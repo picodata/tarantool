@@ -28,12 +28,10 @@ g.before_all(function()
             local msgpackffi = require('msgpackffi')
             ffi.cdef([[
                 int
-                box_tuple_check_size(uint32_t space_id, const char *data,
-                                     const char *end);
+                box_tuple_check_size(uint32_t space_id, size_t tuple_len);
             ]])
             local data = msgpackffi.encode(payload)
-            local buf = ffi.cast('const char *', data)
-            return ffi.C.box_tuple_check_size(space_id, buf, buf + #data)
+            return ffi.C.box_tuple_check_size(space_id, #data)
         end)
     end)
 end)

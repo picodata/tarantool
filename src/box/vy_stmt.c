@@ -259,7 +259,8 @@ vy_stmt_is_exact_key(struct tuple *stmt, struct key_def *cmp_def,
 }
 
 int
-vy_stmt_check_size(struct vy_stmt_env *env, struct tuple_format *format,
+vy_stmt_check_size(const struct vy_stmt_env *env,
+		   const struct tuple_format *format,
 		   size_t tuple_len)
 {
 	size_t total = sizeof(struct vy_stmt) + format->field_map_size_max +
