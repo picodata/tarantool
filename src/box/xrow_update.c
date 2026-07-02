@@ -323,6 +323,8 @@ xrow_upsert_do_ops(struct xrow_update *update, const char *header,
 	for (; op < ops_end; op++) {
 		if (op->meta->do_op(op, &update->root) == 0)
 			continue;
+		if (op->opcode == 'p' || op->opcode == 'm')
+			return -1;
 		struct error *e = diag_last_error(diag_get());
 		if (e->type != &type_ClientError)
 			return -1;

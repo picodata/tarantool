@@ -59,12 +59,20 @@ g.test_arith_overflow = function(cg)
         local s = box.schema.create_space('sql_update_ops')
         s:create_index('pk')
 
-        -- uint64 wraparound near the boundary.
-        s:replace{1, 0xfffffffffffffffeULL}
+        -- SQL integer arithmetic is limited to signed int64.
+        s:replace{1, 0x7ffffffffffffffeLL}
         t.assert_equals(s:update({1}, {{'p', 2, 1}}):totable()[2],
-                        0xffffffffffffffffULL)
+                        0x7fffffffffffffffLL)
         t.assert_error_msg_contains("Integer overflow",
             s.update, s, {1}, {{'p', 2, 1}})
+
+        s:replace{1, 0x7fffffffffffffffLL}
+        t.assert_error_msg_contains("Integer overflow",
+            s.update, s, {1}, {{'p', 2, 0x7fffffffffffffffLL}})
+
+        s:replace{1, 0x7fffffffffffffffLL}
+        t.assert_error_msg_contains("Integer overflow",
+            s.update, s, {1}, {{'m', 2, -1}})
 
         s:replace{1, -2}
         t.assert_error_msg_contains("Integer overflow",
@@ -351,6 +359,45 @@ g.test_upsert = function(cg)
         -- 3VL via update path: AND of false with NULL stays false.
         s:upsert({101, false}, {{'a', 2, box.NULL}})
         t.assert_equals(s:get{101}:totable(), {101, false})
+    end)
+end
+
+g.test_upsert_sql_arith_errors_are_strict = function(cg)
+    cg.server:exec(function()
+        local s = box.schema.create_space('sql_update_ops')
+        s:create_index('pk')
+
+        s:replace{1, 0x7fffffffffffffffLL}
+        t.assert_error_msg_contains("Integer overflow",
+            s.upsert, s, {1, 2}, {{'p', 2, 1}})
+        t.assert_equals(s:get{1}:totable(), {1, 0x7fffffffffffffffLL})
+
+        t.assert_error_msg_contains("Integer overflow",
+            s.upsert, s, {1, 2}, {{'p', 2, 0x7fffffffffffffffLL}})
+        t.assert_equals(s:get{1}:totable(), {1, 0x7fffffffffffffffLL})
+
+        t.assert_error_msg_contains("Integer overflow",
+            s.upsert, s, {1, 2}, {{'p', 2, 0x7fffffffffffffffLL}})
+        t.assert_equals(s:get{1}:totable(), {1, 0x7fffffffffffffffLL})
+
+        t.assert_error_msg_contains("Integer overflow",
+            s.upsert, s, {1, 2}, {{'m', 2, -1}})
+        t.assert_equals(s:get{1}:totable(), {1, 0x7fffffffffffffffLL})
+
+        s:replace{2, 'str'}
+        s:upsert({2, 'str'}, {{'+', 2, 1}})
+        t.assert_equals(s:get{2}:totable(), {2, 'str'})
+        t.assert_error_msg_contains("expected a number",
+            s.upsert, s, {2, 'str'}, {{'p', 2, 1}})
+        t.assert_equals(s:get{2}:totable(), {2, 'str'})
+
+        local sf = box.schema.create_space('sql_update_ops_format',
+            {format = {{'id', 'unsigned'}, {'v', 'unsigned'}}})
+        sf:create_index('pk')
+        sf:replace{1, 0}
+        t.assert_error_msg_contains("expected unsigned, got integer",
+            sf.upsert, sf, {1, 2}, {{'m', 2, 1}})
+        t.assert_equals(sf:get{1}:totable(), {1, 0})
     end)
 end
 

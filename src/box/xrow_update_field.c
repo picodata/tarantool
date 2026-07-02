@@ -65,6 +65,14 @@ xrow_update_err_int_overflow(const struct xrow_update_op *op)
 	return -1;
 }
 
+static inline bool
+int96_is_int64(const struct int96_num *num)
+{
+	return int96_is_neg_int64(num) ||
+	       (int96_is_uint64(num) &&
+		int96_extract_uint64(num) <= (uint64_t)INT64_MAX);
+}
+
 static inline int
 xrow_update_err_decimal_overflow(const struct xrow_update_op *op)
 {
@@ -420,9 +428,13 @@ xrow_update_arith_make(struct xrow_update_op *op,
 			unreachable();
 			break;
 		}
-		if (!int96_is_uint64(&arg1.int96) &&
-		    !int96_is_neg_int64(&arg1.int96))
+		if (xrow_update_op_is_sql_arith(op)) {
+			if (!int96_is_int64(&arg1.int96))
+				return xrow_update_err_int_overflow(op);
+		} else if (!int96_is_uint64(&arg1.int96) &&
+			   !int96_is_neg_int64(&arg1.int96)) {
 			return xrow_update_err_int_overflow(op);
+		}
 		ret->type = arg1.type;
 		ret->int96 = arg1.int96;
 	} else if (lowest_type >= XUPDATE_TYPE_DOUBLE) {
