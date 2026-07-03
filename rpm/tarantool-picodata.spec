@@ -244,6 +244,9 @@ C and Lua/C modules.
 %if 0%{?fedora} >= 33
          -DENABLE_LTO=ON \
 %endif
+%if 0%{?fedora} >= 44
+         -G "Unix Makefiles" \
+%endif
 %if %{_gc64} == "true"
          -DLUAJIT_ENABLE_GC64:BOOL=ON \
 %endif
