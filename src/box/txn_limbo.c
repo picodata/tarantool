@@ -281,6 +281,8 @@ txn_limbo_complete_success(struct txn_limbo *limbo, struct txn_limbo_entry *entr
 	 * affected transactions.
 	 */
 	assert(txn->signature >= 0);
+	if (entry == limbo->entry_to_confirm)
+		limbo->entry_to_confirm = NULL;
 	txn_limbo_complete(txn, true);
 }
 
