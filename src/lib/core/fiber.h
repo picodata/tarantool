@@ -878,10 +878,6 @@ struct cord {
 	 */
 	unsigned int seed;
 	char name[FIBER_NAME_INLINE];
-	/** Cord main fiber started in case of cord_costart. */
-	struct fiber *main_fiber;
-	/** An event triggered to cancel cord main fiber. */
-	ev_async cancel_event;
 };
 
 extern __thread struct cord *cord_ptr;
@@ -937,15 +933,14 @@ int
 cord_costart(struct cord *cord, const char *name, fiber_func f, void *arg);
 
 /**
- * Yield until \a cord has terminated. If fiber is cancelled
- * then cancel is progarated to the cord main fiber if cord is started
- * using cord_costart.
+ * Yield until \a cord has terminated.
+ *
+ * On success:
  *
  * If \a cord has terminated with an uncaught exception
  * the exception is moved to the current fiber's diagnostics
  * area, otherwise the current fiber's diagnostics area is
  * cleared.
- *
  * @param cord cord
  * @sa pthread_join()
  *
