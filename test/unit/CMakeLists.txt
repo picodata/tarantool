@@ -2,6 +2,13 @@ add_compile_flags("C;CXX" "-Wno-unused" "-Wno-unused-result")
 if(CC_HAS_WNO_TAUTOLOGICAL_COMPARE)
     add_compile_flags("C;CXX" "-Wno-tautological-compare")
 endif()
+# GCC with LTO emits false-positive -Wmaybe-uninitialized in some unit tests,
+# where a local is filled through an out-parameter it cannot see across the
+# LTO boundary. Keep -Werror in force for real code, but don't let these abort
+# the unit-test build (observed on Fedora with GCC 15).
+if(CC_HAS_WNO_ERROR_MAYBE_UNINITIALIZED)
+    add_compile_flags("C;CXX" "-Wno-error=maybe-uninitialized")
+endif()
 file(GLOB all_sources *.c *.cc)
 set_source_files_compile_flags(${all_sources})
 

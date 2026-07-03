@@ -83,6 +83,7 @@ check_c_compiler_flag("-Wno-misleading-indentation" CC_HAS_WNO_MISLEADING_INDENT
 check_c_compiler_flag("-Wno-varargs" CC_HAS_WNO_VARARGS)
 check_c_compiler_flag("-Wno-implicit-fallthrough" CC_HAS_WNO_IMPLICIT_FALLTHROUGH)
 check_c_compiler_flag("-Wno-cast-function-type" CC_HAS_WNO_CAST_FUNCTION_TYPE)
+check_c_compiler_flag("-Wno-error=maybe-uninitialized" CC_HAS_WNO_ERROR_MAYBE_UNINITIALIZED)
 
 #
 # Perform build type specific configuration.
