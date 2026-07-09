@@ -26,12 +26,18 @@ g.test_containers_success = function()
 
         sql = [[SELECT {'one' : 123, 3 : 'two', '123' : true}['three'];]]
         t.assert_equals(box.execute(sql).rows, {{}})
+
+        -- Subscripting a typed NULL container yields NULL.
+        t.assert_equals(box.execute([[SELECT CAST(NULL AS ARRAY)[1];]]).rows,
+                        {{}})
+        t.assert_equals(box.execute([[SELECT CAST(NULL AS MAP)['k'];]]).rows,
+                        {{}})
     end)
 end
 
 --
 -- Make sure that operator [] cannot get elements from values of types other
--- than MAP and ARRAY. Also, selecting from NULL throws an error.
+-- than MAP and ARRAY.
 --
 g.test_containers_error = function()
     g.server:exec(function()
@@ -79,11 +85,6 @@ g.test_containers_error = function()
         t.assert_equals(err.message, res)
 
         _, err = box.execute([[SELECT NULL[1];]])
-        t.assert_equals(err.message, res)
-
-        res = [[Failed to execute SQL statement: Selecting is not possible ]]..
-              [[from NULL]]
-        _, err = box.execute([[SELECT CAST(NULL AS ARRAY)[1];]])
         t.assert_equals(err.message, res)
     end)
 end

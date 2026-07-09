@@ -1489,9 +1489,8 @@ case OP_Getitem: {
 	assert(count > 0);
 	struct Mem *value = &aMem[pOp->p3 + count];
 	if (mem_is_null(value)) {
-		diag_set(ClientError, ER_SQL_EXECUTE, "Selecting is not "
-			 "possible from NULL");
-		goto abort_due_to_error;
+		pOut = vdbe_prepare_null_out(p, pOp->p2);
+		break;
 	}
 	if (mem_is_any(value) || !mem_is_container(value)) {
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(value),
