@@ -382,9 +382,11 @@ luaT_istuple
 luaT_newdecimal
 luaT_pushdecimal
 luaT_pushtuple
+luaT_pushvarbinary
 luaT_state
 luaT_toibuf
 luaT_tolstring
+luaT_tovarbinary
 luaT_tuple_encode
 luaT_tuple_new
 lua_atpanic
