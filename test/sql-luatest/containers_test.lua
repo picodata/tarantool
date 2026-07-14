@@ -6,9 +6,28 @@ local g = t.group()
 g.before_all(function()
     g.server = server:new({alias = 'containers'})
     g.server:start()
+    g.server:exec(function()
+        local build_path = os.getenv("BUILDDIR")
+        package.cpath = build_path..'/test/sql-luatest/?.so;'..
+                        build_path..'/test/sql-luatest/?.dylib;'..
+                        package.cpath
+        local opts = {language = 'C', returns = 'any', exports = {'SQL'}}
+        box.schema.func.create('sql_containers.ret_array', opts)
+        box.schema.func.create('sql_containers.ret_map', opts)
+        box.schema.func.create('sql_containers.ret_array_tuple', opts)
+        box.schema.func.create('sql_containers.ret_map_tuple', opts)
+    end)
 end)
 
 g.after_all(function()
+    g.server:exec(function()
+        box.schema.func.drop('sql_containers.ret_array', {if_exists = true})
+        box.schema.func.drop('sql_containers.ret_map', {if_exists = true})
+        box.schema.func.drop('sql_containers.ret_array_tuple',
+                             {if_exists = true})
+        box.schema.func.drop('sql_containers.ret_map_tuple',
+                             {if_exists = true})
+    end)
     g.server:stop()
 end)
 
@@ -135,5 +154,77 @@ g.test_containers_elem_type = function()
 
         sql = [[SELECT {'one' : [11, 22, 33], 3 : 'two'}['one'];]]
         t.assert_equals(box.execute(sql).metadata[1].type, 'any')
+    end)
+end
+
+--
+-- Make sure that an ARRAY value returned from a C stored procedure via
+-- box_return_mp() is properly delivered to SQL.
+--
+g.test_c_ret_array_to_sql = function()
+    g.server:exec(function()
+        local sql = [[SELECT "sql_containers.ret_array"();]]
+        t.assert_equals(box.execute(sql), {
+            metadata = {{name = "COLUMN_1", type = "any"}},
+            rows = {{{2, 42}}
+        }})
+
+        -- indexing the returned container directly works
+        sql = [[SELECT "sql_containers.ret_array"()[1];]]
+        t.assert_equals(box.execute(sql).rows, {{2}})
+    end)
+end
+
+--
+-- Make sure that a MAP value returned from a C stored procedure via
+-- box_return_mp() is properly delivered to SQL.
+--
+g.test_c_ret_map_to_sql = function()
+    g.server:exec(function()
+        local sql = [[SELECT "sql_containers.ret_map"();]]
+        t.assert_equals(box.execute(sql), {
+            metadata = {{name = "COLUMN_1", type = "any"}},
+            rows = {{{key1 = 2, key2 = 42}}
+        }})
+
+        -- indexing the returned container directly works
+        sql = [[SELECT "sql_containers.ret_map"()['key1'];]]
+        t.assert_equals(box.execute(sql).rows, {{2}})
+    end)
+end
+
+--
+-- Make sure that an ARRAY value returned from a C stored procedure inside
+-- a tuple via box_return_tuple() is properly unwrapped and delivered to SQL.
+--
+g.test_c_ret_array_tuple_to_sql = function()
+    g.server:exec(function()
+        local sql = [[SELECT "sql_containers.ret_array_tuple"();]]
+        t.assert_equals(box.execute(sql), {
+            metadata = {{name = "COLUMN_1", type = "any"}},
+            rows = {{{2, 42}}
+        }})
+
+        -- indexing the returned container directly works
+        sql = [[SELECT "sql_containers.ret_array_tuple"()[1];]]
+        t.assert_equals(box.execute(sql).rows, {{2}})
+    end)
+end
+
+--
+-- Make sure that a MAP value returned from a C stored procedure inside
+-- a tuple via box_return_tuple() is properly unwrapped and delivered to SQL.
+--
+g.test_c_ret_map_tuple_to_sql = function()
+    g.server:exec(function()
+        local sql = [[SELECT "sql_containers.ret_map_tuple"();]]
+        t.assert_equals(box.execute(sql), {
+            metadata = {{name = "COLUMN_1", type = "any"}},
+            rows = {{{key1 = 2, key2 = 42}}
+        }})
+
+        -- indexing the returned container directly works
+        sql = [[SELECT "sql_containers.ret_map_tuple"()['key1'];]]
+        t.assert_equals(box.execute(sql).rows, {{2}})
     end)
 end

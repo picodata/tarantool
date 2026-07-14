@@ -3544,17 +3544,28 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 	struct Mem *val = vdbemem_alloc_on_region(port->size);
 	int i = 0;
 	const char *data;
+	uint32_t mp_value_size;
 	struct port_c_entry *pe;
 	for (pe = port->first; pe != NULL; pe = pe->next) {
 		if (pe->mp_size == 0) {
-			data = tuple_data(pe->tuple);
+			uint32_t tuple_size;
+			data = tuple_data_range(pe->tuple, &tuple_size);
+			const char *data_end = data + tuple_size;
+
 			if (mp_decode_array(&data) != 1) {
+				/*
+				 * We only support passing tuples of size 1
+				 * to SQL.
+				 */
 				diag_set(ClientError, ER_SQL_EXECUTE,
 					 "Unsupported type passed from C");
 				goto error;
 			}
+			/* Do not include the size of the tuple array header. */
+			mp_value_size = data_end - data;
 		} else {
 			data = pe->mp;
+			mp_value_size = pe->mp_size;
 		}
 		uint32_t len;
 		mem_clear(&val[i]);
@@ -3605,6 +3616,14 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 		case MP_BIN:
 			str = mp_decode_bin(&data, &len);
 			if (mem_copy_bin(&val[i], str, len) != 0)
+				goto error;
+			break;
+		case MP_MAP:
+			if (mem_copy_map(&val[i], data, mp_value_size) != 0)
+				goto error;
+			break;
+		case MP_ARRAY:
+			if (mem_copy_array(&val[i], data, mp_value_size) != 0)
 				goto error;
 			break;
 		case MP_EXT:
