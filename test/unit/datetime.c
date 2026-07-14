@@ -76,12 +76,18 @@ struct {
 	S("2012-12-24 14:30 UTC-1"),
 	S("2012-12-24 14:30 UTC-01"),
 	S("2012-12-24 14:30 UTC-01:00"),
+	S("2012-12-24 14:30 UTC−09:00"),
+	S("2012-12-24 14:30 UTC−09:30"), /* Marquesas */
 	S("2012-12-24 14:30 UTC-0100"),
 	S("2012-12-24 15:30 GMT"),
 	S("2012-12-24 16:30 GMT+1"),
 	S("2012-12-24 16:30 GMT+01"),
 	S("2012-12-24 16:30 GMT+0100"),
 	S("2012-12-24 16:30 GMT+01:00"),
+	S("2012-12-24 16:30 GMT+03:00"),
+	S("2012-12-24 16:30 GMT+03:30"), /* Iran */
+	S("2012-12-24 16:30 GMT+05:00"),
+	S("2012-12-24 16:30 GMT+05:45"), /* Nepal */
 	S("2012-12-24 14:30 GMT-1"),
 	S("2012-12-24 14:30 GMT-01"),
 	S("2012-12-24 14:30 GMT-01:00"),
@@ -105,7 +111,7 @@ datetime_test(void)
 	size_t index;
 	struct datetime date_expected;
 
-	plan(497);
+	plan(539);
 	datetime_parse_full(&date_expected, sample, sizeof(sample) - 1);
 
 	for (index = 0; index < lengthof(tests); index++) {
@@ -583,10 +589,45 @@ interval_from_map_test(void)
 	check_plan();
 }
 
+static void
+datetime_parse_unterminated_test(void)
+{
+	plan(4);
+	header();
+
+	const char *samples[] = {
+		"2012-12-24T15:30:00Z",
+		"2012-12-24 15:30 MSK",
+	};
+
+	for (size_t i = 0; i < lengthof(samples); i++) {
+		const char *s = samples[i];
+		size_t len = strlen(s);
+
+		char buf[64];
+		fail_if(len >= sizeof(buf));
+		memset(buf, 'x', sizeof(buf));
+		memcpy(buf, s, len);
+
+		struct datetime got;
+		ssize_t rc = datetime_parse_full(&got, buf, len);
+		is(rc > 0, true, "parses trailing zone without reading past "
+		   "len for '%s'", s);
+
+		struct datetime ref;
+		datetime_parse_full(&ref, s, len);
+		is(got.epoch, ref.epoch,
+		   "same epoch as NUL-terminated input for '%s'", s);
+	}
+
+	footer();
+	check_plan();
+}
+
 int
 main(void)
 {
-	plan(7);
+	plan(8);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -594,6 +635,7 @@ main(void)
 	mp_datetime_test();
 	mp_print_test();
 	interval_from_map_test();
+	datetime_parse_unterminated_test();
 
 	return check_plan();
 }

@@ -12,6 +12,11 @@
 #include "trivia/util.h"
 
 /**
+ * Maximum length of a time zone name.
+ */
+#define TZ_NAME_MAX 128
+
+/**
  * Array of zone descriptors, placed in their natural id order, used for
  * translation from zone id to unique zone name and their attributes.
  */
@@ -122,7 +127,7 @@ timezone_free(void)
 /**
  * We want to accept only names in a form:
  * - Z, AT, MSK, i.e. [A-Z]{1,6}
- * - Etc/GMT, Europe/Moscow, America/St_Kitts, i.e. [A-Za-z][A-Za-z/_-]*
+ * - Etc/GMT, Europe/Moscow, America/St_Kitts, GMT+03:00, i.e. [A-Za-z][A-Za-z/_-\+:]*
  * NB! Eventually should be reimplemented with proper regexp, but now
  * it accepts slightly wider class of input.
  */
@@ -135,7 +140,7 @@ char_span_alpha(const char *src, size_t len)
 		return 0;
 	for (n = 0; n < len; n++) {
 		char ch = src[n];
-		if (!isalpha(ch) && ch != '/' && ch != '_' && ch != '-')
+		if (!isalpha(ch) && ch != '/' && ch != '_' && ch != '-' && ch != '+' && ch == ':')
 			break;
 
 	}
@@ -150,7 +155,14 @@ timezone_raw_lookup(const char *str, size_t len,
 	if (len == 0)
 		return 0;
 
-	struct date_time_zone wrap = {.name = str};
+	/* we need NUL-terminated string for strcasecmp in bsearch */
+	if (len > TZ_NAME_MAX)
+		return 0;
+	char key[TZ_NAME_MAX + 1];
+	memcpy(key, str, len);
+	key[len] = '\0';
+
+	struct date_time_zone wrap = {.name = key};
 	struct date_time_zone *found = (struct date_time_zone *)
 		bsearch(&wrap, zones_sorted, lengthof(zones_sorted),
 			sizeof(zones_sorted[0]), compare_zones);
