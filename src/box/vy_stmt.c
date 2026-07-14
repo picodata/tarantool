@@ -349,6 +349,11 @@ vy_stmt_dup(struct tuple *stmt)
 	size_t base = sizeof(struct tuple);
 	memcpy((char *)res + base, (char *)stmt + base,
 	       tuple_size(stmt) - base);
+	/*
+	 * A copy is a new object: its cache use count starts
+	 * cold, and it is not the cache's resident object.
+	 */
+	vy_stmt_del_flag(res, VY_STMT_HEAT_MASK | VY_STMT_PK_CACHED);
 	return res;
 }
 
