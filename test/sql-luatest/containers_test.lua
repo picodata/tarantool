@@ -32,6 +32,10 @@ g.test_containers_success = function()
                         {{}})
         t.assert_equals(box.execute([[SELECT CAST(NULL AS MAP)['k'];]]).rows,
                         {{}})
+
+        -- ANY values are indexable iff they are containers.
+        sql = [[SELECT CAST([1] AS ANY)[1];]]
+        t.assert_equals(box.execute(sql).rows, {{1}})
     end)
 end
 
@@ -78,11 +82,12 @@ g.test_containers_error = function()
         _, err = box.execute([[SELECT CAST(1 AS SCALAR)[1];]])
         t.assert_equals(err.message, res)
 
+        -- ANY-typed values are only checked at runtime: a non-container
+        -- value produces a type mismatch error instead.
         _, err = box.execute([[SELECT CAST(1 AS ANY)[1];]])
-        t.assert_equals(err.message, res)
-
-        _, err = box.execute([[SELECT CAST([1] AS ANY)[1];]])
-        t.assert_equals(err.message, res)
+        t.assert_equals(err.message,
+                         "Type mismatch: can not convert any(1) to map " ..
+                         "or array")
 
         _, err = box.execute([[SELECT NULL[1];]])
         t.assert_equals(err.message, res)
@@ -101,9 +106,11 @@ g.test_containers_followers = function()
         sql = [[SELECT [1, 2, 3][1][2][3][4][5][6][7];]]
         t.assert_equals(box.execute(sql).rows, {{}})
 
+        -- The result of the first [] is statically typed as ANY, so the
+        -- following [] is only checked at runtime.
         sql = [[SELECT ([1, 2, 3][1])[2];]]
         local _, err = box.execute(sql)
-        local res = "Selecting is only possible from map and array values"
+        local res = "Type mismatch: can not convert any(1) to map or array"
         t.assert_equals(err.message, res)
     end)
 end
