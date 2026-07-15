@@ -3360,8 +3360,10 @@ expr_code_getitem(struct Parse *parser, struct Expr *expr, int reg)
 
 	enum field_type type = value->op != TK_NULL ? sql_expr_type(value) :
 			       field_type_MAX;
-	if (value->op != TK_VARIABLE &&
-	    type != FIELD_TYPE_MAP && type != FIELD_TYPE_ARRAY) {
+	bool indexable_type = type == FIELD_TYPE_MAP ||
+			      type == FIELD_TYPE_ARRAY ||
+			      type == FIELD_TYPE_ANY;
+	if (value->op != TK_VARIABLE && !indexable_type) {
 		diag_set(ClientError, ER_SQL_PARSER_GENERIC, "Selecting is "
 			 "only possible from map and array values");
 		parser->is_aborted = true;
