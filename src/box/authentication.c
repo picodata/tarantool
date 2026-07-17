@@ -31,8 +31,15 @@
 const struct auth_method *AUTH_METHOD_DEFAULT;
 
 /** Callback for picodata to register its auth methods with tarantool. */
+/*
+ * NOINLINE is a workaround for a GCC LTO BUG [1]. When compiled with affected
+ * GCC version and with LTO enabled, the function will get inlined, and the
+ * strongly-defined symbol in picodata will fail to override it.
+ *
+ * [1] https://gcc.gnu.org/bugzilla/show_bug.cgi?id=91299
+ */
 void
-__attribute__((weak))
+__attribute__((weak)) NOINLINE
 auth_register_extra_methods(void)
 {
 	/* Nothing to register here. */
