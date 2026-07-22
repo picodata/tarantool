@@ -3268,8 +3268,17 @@ mem_getitem(const struct Mem *mem, const struct Mem *keys, int count,
 	assert(count > 0);
 	assert(mem_is_map(mem) || mem_is_array(mem));
 	const char *data = mem->z;
+	Mem tmp;
 	for (int i = 0; i < count && data != NULL; ++i) {
-		if (mp_getitem(&data, &keys[i]) != 0)
+		const Mem *key = &keys[i];
+		if (mp_typeof(*data) == MP_ARRAY && mem_is_str(key)) {
+			mem_create(&tmp);
+			mem_copy_as_ephemeral(&tmp, &keys[i]);
+			if (str_to_int(&tmp) != 0)
+				mem_set_null(&tmp);
+			key = &tmp;
+		}
+		if (mp_getitem(&data, key) != 0)
 			return -1;
 	}
 	if (data == NULL) {
