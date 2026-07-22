@@ -228,3 +228,56 @@ g.test_c_ret_map_tuple_to_sql = function()
         t.assert_equals(box.execute(sql).rows, {{2}})
     end)
 end
+
+--
+-- Make sure that a string key is parsed as an integer and used to index an
+-- ARRAY, while the result type stays ANY.
+--
+g.test_containers_array_string_key = function()
+    g.server:exec(function()
+        local sql = [[SELECT [10, 20, 30]['1'];]]
+        t.assert_equals(box.execute(sql).rows, {{10}})
+
+        sql = [[SELECT [10, 20, 30]['2'];]]
+        t.assert_equals(box.execute(sql).rows, {{20}})
+
+        sql = [[SELECT [10, 20, 30]['3'];]]
+        t.assert_equals(box.execute(sql).rows, {{30}})
+
+        -- Leading/trailing whitespace is trimmed before parsing the key.
+        sql = [[SELECT [10, 20, 30][' 2 '];]]
+        t.assert_equals(box.execute(sql).rows, {{20}})
+
+        -- Out of range and zero indexes yield NULL, just like with an
+        -- integer key.
+        sql = [[SELECT [10, 20, 30]['0'];]]
+        t.assert_equals(box.execute(sql).rows, {{}})
+
+        sql = [[SELECT [10, 20, 30]['4'];]]
+        t.assert_equals(box.execute(sql).rows, {{}})
+
+        -- Negative indexes are not supported, same as for an integer key.
+        sql = [[SELECT [10, 20, 30]['-1'];]]
+        t.assert_equals(box.execute(sql).rows, {{}})
+
+        -- Keys that cannot be parsed as an integer yield NULL.
+        sql = [[SELECT [10, 20, 30]['abc'];]]
+        t.assert_equals(box.execute(sql).rows, {{}})
+
+        sql = [[SELECT [10, 20, 30]['1.5'];]]
+        t.assert_equals(box.execute(sql).rows, {{}})
+
+        -- Chaining works: a string key can be used at any nesting level.
+        sql = [[SELECT {'one' : [11, 22, 33], 3 : 'two'}['one']['2'];]]
+        t.assert_equals(box.execute(sql).rows, {{22}})
+
+        -- The result is still typed as ANY.
+        sql = [[SELECT typeof([10, 20, 30]['1']);]]
+        t.assert_equals(box.execute(sql).rows, {{'any'}})
+
+        -- MAP lookup is unaffected: a string key is not converted to an
+        -- integer, so it does not match an integer map key.
+        sql = [[SELECT {3 : 'two'}['3'];]]
+        t.assert_equals(box.execute(sql).rows, {{}})
+    end)
+end
