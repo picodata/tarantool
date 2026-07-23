@@ -447,15 +447,18 @@ sql_atoi64(const char *z, int64_t *val, bool *is_neg, int length)
 	if (*z == '-')
 		*is_neg = true;
 
+	/* The leading whitespace skipped above is not part of the value. */
+	int adjusted_length = str_end - z;
+
 	/*
 	 * BLOB data may not end with '\0'. Because of this, the
 	 * strtoll() and strtoull() functions may return an
 	 * incorrect result. To fix this, let's copy the value for
 	 * decoding into static memory and add '\0' to it.
 	 */
-	if (length > SMALL_STATIC_SIZE - 1)
+	if (adjusted_length > SMALL_STATIC_SIZE - 1)
 		return -1;
-	const char *str_value = tt_cstr(z, length);
+	const char *str_value = tt_cstr(z, adjusted_length);
 	char *end = NULL;
 	errno = 0;
 	if (*is_neg) {
