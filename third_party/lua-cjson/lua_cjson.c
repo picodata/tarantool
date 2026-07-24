@@ -529,7 +529,8 @@ static void json_process_value(lua_State *l, struct json_decode_ctx *ctx,
     case JSON_T_INT:
         luaL_pushint64(l, token->value.ival);
         break;;
-    case JSON_T_NUMBER:
+    case JSON_T_DECIMAL:
+    case JSON_T_DOUBLE:
         luaL_checkfinite(l, ctx->cfg, token->value.number);
         lua_pushnumber(l, token->value.number);
         break;;

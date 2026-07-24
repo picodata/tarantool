@@ -19,7 +19,8 @@ typedef enum {
     JSON_T_STRING,
     JSON_T_UINT,
     JSON_T_INT,
-    JSON_T_NUMBER,
+    JSON_T_DECIMAL,
+    JSON_T_DOUBLE,
     JSON_T_BOOLEAN,
     JSON_T_NULL,
     JSON_T_COLON,
@@ -56,6 +57,9 @@ typedef struct {
     long long ival;
     } value;
     int string_len;
+    /* Integer literal outside [int64_min, uint64_max]; false for every token
+     * that is not one, including the inf/nan words. */
+    bool num_overflow;
 } json_token_t;
 
 enum err_context_length {
@@ -67,7 +71,8 @@ enum err_context_length {
 };
 
 /* Fill in the next token; JSON_T_STRING points into json->tmp, JSON_T_ERROR leaves
- * json->ptr at the error and puts the message in token->value.string. */
+ * json->ptr at the error and puts the message in token->value.string.
+ * The token spans [token->start, json->ptr) until the next call. */
 void json_next_token(json_parse_t *json, json_token_t *token);
 
 /* Lay out a " >> " arrow around the character at column_index into the

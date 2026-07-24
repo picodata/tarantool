@@ -1,6 +1,7 @@
 #include "cjson_lexer.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <string.h>
 #include <math.h>
 #include <limits.h>
@@ -17,6 +18,7 @@ const char *json_token_type_name[] = {
     "string",
     "unsigned int",
     "int",
+    "number",
     "number",
     "boolean",
     "null",
@@ -338,24 +340,67 @@ static int json_is_invalid_number(json_parse_t *json)
 
 static void json_next_number_token(json_parse_t *json, json_token_t *token)
 {
+    const char *start = json->ptr;
     char *endptr;
 
-
+    token->num_overflow = false;
+    errno = 0;
     token->type = JSON_T_INT;
-    token->value.ival = strtoll(json->ptr, &endptr, 10);
-    if (token->value.ival == LLONG_MAX) {
-        token->type = JSON_T_UINT;
-        token->value.ival = strtoull(json->ptr, &endptr, 10);
+    token->value.ival = strtoll(start, &endptr, 10);
+    /* int64_max itself is reported as JSON_T_UINT: the literal fits int64,
+     * but the lexer has always probed for overflow by comparing against
+     * LLONG_MAX, so Lua's json.decode hands that one value out as a uint64
+     * cdata. Keep it that way; errno covers everything past it. */
+    if (errno == ERANGE || token->value.ival == LLONG_MAX) {
+        if (start[0] == '-') {
+            /* Below int64_min. */
+            token->num_overflow = true;
+        } else {
+            /* At int64_max or above; may still fit uint64. */
+            errno = 0;
+            token->type = JSON_T_UINT;
+            token->value.ival = (long long)strtoull(start, &endptr, 10);
+            if (errno == ERANGE)
+                token->num_overflow = true;
+        }
     }
     if (*endptr == '.' || *endptr == 'e' || *endptr == 'E') {
-        token->type = JSON_T_NUMBER;
-        token->value.number = fpconv_strtod(json->ptr, &endptr);
-    }
+        /* A fraction and/or exponent: reparse as floating and classify.
+         * endptr is the first non-integer char, so scanning from it
+         * covers only the fraction/exponent tail. An exponent wins over
+         * a fraction (matches src/box/sql/tokenize.c). */
+        const char *tail = endptr;
+        json_token_type_t int_type = token->type;
+        long long int_value = token->value.ival;
+        bool int_overflow = token->num_overflow;
 
-    if (json->ptr == endptr)
+        token->num_overflow = false;
+        token->value.number = fpconv_strtod(start, &endptr);
+        assert(endptr >= tail);
+        if (endptr == tail) {
+            /* The tail turned out to be neither: "1e" has no exponent
+             * digits, so the floating conversion stopped where the integer
+             * one did. Keep the integer reading rather than retyping the
+             * same span; the leftover byte fails as a token of its own. */
+            token->type = int_type;
+            token->value.ival = int_value;
+            token->num_overflow = int_overflow;
+        } else {
+            bool has_exp = false;
+            for (const char *p = tail; p < endptr; p++) {
+                if (*p == 'e' || *p == 'E') {
+                    has_exp = true;
+                    break;
+                }
+            }
+            token->type = has_exp ? JSON_T_DOUBLE : JSON_T_DECIMAL;
+        }
+    }
+    if (start == endptr) {
         json_set_token_error(token, json, "invalid number");
-    else
-        json->ptr = endptr;     /* Skip the processed number */
+        return;
+    }
+    json->ptr = endptr;
 }
 
 /* Fills in the token struct.
@@ -365,6 +410,11 @@ static void json_next_number_token(json_parse_t *json, json_token_t *token)
 void json_next_token(json_parse_t *json, json_token_t *token)
 {
     int ch;
+
+    /* Only a number fills this in, so clear it for every other token; a
+     * consumer reusing one token struct must not read the previous token's
+     * value here. */
+    token->num_overflow = false;
 
     /* Eat whitespace. */
     while (1) {
@@ -431,18 +481,18 @@ void json_next_token(json_parse_t *json, json_token_t *token)
          * digits (such as Infinity and NaN) are not permitted.
          */
         if (!strncmp(json->ptr, "inf", 3)) {
-            token->type = JSON_T_NUMBER;
+            token->type = JSON_T_DOUBLE;
             token->value.number = INFINITY;
             json->ptr += 3;
             return;
         } else if (!strncmp(json->ptr, "-inf", 4)) {
-            token->type = JSON_T_NUMBER;
+            token->type = JSON_T_DOUBLE;
             token->value.number = -INFINITY;
             json->ptr += 4;
             return;
         } else if (!strncmp(json->ptr, "nan", 3) ||
                    !strncmp(json->ptr, "-nan", 3)) {
-            token->type = JSON_T_NUMBER;
+            token->type = JSON_T_DOUBLE;
             token->value.number = NAN;
             json->ptr += (*json->ptr == '-' ? 4 : 3);
             return;
