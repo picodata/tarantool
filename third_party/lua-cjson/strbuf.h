@@ -22,8 +22,12 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#ifndef TARANTOOL_LUA_CJSON_STRBUF_H_INCLUDED
+#define TARANTOOL_LUA_CJSON_STRBUF_H_INCLUDED
+
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 
 struct ibuf;
 
@@ -145,6 +149,8 @@ static inline char *strbuf_string(strbuf_t *s, int *len)
 
     return s->buf;
 }
+
+#endif /* TARANTOOL_LUA_CJSON_STRBUF_H_INCLUDED */
 
 /* vi:ai et sw=4 ts=4:
  */

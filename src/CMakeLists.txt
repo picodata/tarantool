@@ -223,6 +223,7 @@ set (server_sources
      ${lua_sources}
      ${PROJECT_SOURCE_DIR}/third_party/lua-yaml/lyaml.cc
      ${PROJECT_SOURCE_DIR}/third_party/lua-cjson/lua_cjson.c
+     ${PROJECT_SOURCE_DIR}/third_party/lua-cjson/cjson_lexer.c
      ${PROJECT_SOURCE_DIR}/third_party/lua-cjson/strbuf.c
      ${COMPRESS_MODULE_SOURCES}
 )
