@@ -361,6 +361,12 @@ create_unit_test(PREFIX json
                  LIBRARIES json unit ${ICU_LIBRARIES}
 )
 
+create_unit_test(PREFIX cjson_lexer
+                 SOURCES cjson_lexer.c core_test_utils.c
+                     ${PROJECT_SOURCE_DIR}/third_party/lua-cjson/cjson_lexer.c
+                     ${PROJECT_SOURCE_DIR}/third_party/lua-cjson/strbuf.c
+                 LIBRARIES core unit)
+
 create_unit_test(PREFIX http_parser
                  SOURCES http_parser.c
                  LIBRARIES unit http_parser
