@@ -55,12 +55,13 @@ end
 -- A reader iterating a scan one row per step inside an open
 -- transaction: step() returns the next row, nil at the end of
 -- the scan. The pause between steps is a real yield in the
--- middle of the scan.
+-- middle of the scan. opts.txn_isolation, when set, opens the
+-- transaction at that isolation level.
 function M.stepped_scan(index, key, opts)
     local req = fiber.channel(1)
     local res = fiber.channel(1)
     local holder = fiber.create(function()
-        box.begin()
+        box.begin({txn_isolation = opts and opts.txn_isolation})
         local gen, param, state = index:pairs(key, opts)
         while req:get() do
             local tuple

@@ -50,6 +50,9 @@
 /**
  * Scan TX write set for given key.
  * Add one or no statement to the history list.
+ *
+ * The transaction's own writes never reach the cache, so is_stale
+ * is unused.
  */
 static int
 vy_point_lookup_scan_txw(struct vy_lsm *lsm, struct vy_tx *tx,
@@ -81,6 +84,11 @@ vy_point_lookup_scan_cache(struct vy_lsm *lsm, const struct vy_read_view **rv,
 
 	/* Unconfirmed data never enters the cache: see vy_cache_insert(). */
 	assert(entry.stmt == NULL || !vy_stmt_is_prepared(entry.stmt));
+	/*
+	 * If a cached version is skipped, no need to set is_stale:
+	 * the same row also sits in a mem or a run, and will raise
+	 * the is_stale/is_stale_link flags in these sources.
+	 */
 	if (entry.stmt == NULL || vy_stmt_lsn(entry.stmt) > (*rv)->vlsn)
 		return 0;
 
@@ -320,7 +328,15 @@ done:
 		lsm->stat.upsert.applied += upserts_applied;
 		vy_lsm_acct_read_amp(lsm, lsm->last_range,
 				     disk_bytes, ret->stmt);
-		if (ret->stmt != NULL && history.is_stale)
+		/*
+		 * No need to set the STALE flag for a prepared
+		 * tuple. Prepared data is never admitted to the
+		 * cache anyway, and if we set the flag, it will
+		 * live till after the data is committed, poisoning
+		 * the tuple from being admitted ever.
+		 */
+		if (ret->stmt != NULL && history.is_stale &&
+		    !vy_lsn_is_prepared(vy_stmt_lsn(ret->stmt)))
 			vy_stmt_add_flag(ret->stmt, VY_STMT_STALE);
 	}
 	vy_history_cleanup(&history);

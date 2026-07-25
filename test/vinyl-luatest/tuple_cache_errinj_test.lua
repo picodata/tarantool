@@ -605,6 +605,68 @@ g.test_scan_does_not_claim_row_inserted_while_suspended = function(cg)
     end)
 end
 
+-- A reader below a committed insert finds it invisible and
+-- descends to the lower sources -- the mem and the runs. The
+-- link that would span the insert must not form: the read
+-- iterator marks the link to-be stale, and the mark must
+-- survive a dump that rotates the source holding the insert
+-- mid-scan: the reader yields on a disk read, the invisible
+-- statement moves from memory to a run, and the resumed walk
+-- completes the chain. A lost mark would let the chain claim
+-- the range over the insert, and a later reader at the latest
+-- view would be served the claim without the key.
+g.test_stale_mark_survives_dump_rotation = function(cg)
+    cg.server:exec(function()
+        local fiber = require('fiber')
+        local s = box.schema.space.create('test', {engine = 'vinyl'})
+        s:create_index('pk')
+        s:create_index('sk', {unique = false,
+                              parts = {{2, 'unsigned'},
+                                       {3, 'unsigned'}}})
+        s:replace{10, 6, 9}
+        s:replace{30, 6, 9}
+        s:replace{99, 1, 1}
+        box.snapshot()
+        -- The reader pins its view below the insert.
+        local pinned = fiber.channel(1)
+        local go = fiber.channel(1)
+        local done = fiber.channel(1)
+        local reader = fiber.create(function()
+            box.begin({txn_isolation = 'snapshot'})
+            s:get{99}
+            pinned:put(true)
+            go:get()
+            done:put(s.index.sk:select({6}, {iterator = 'GE'}))
+            box.commit()
+        end)
+        reader:set_joinable(true)
+        t.assert(pinned:get())
+        s:replace{20, 6, 9}
+        -- Delay the reader's disk reads: it finds {20} invisible
+        -- in memory and suspends before returning {30} from the
+        -- run.
+        box.error.injection.set('ERRINJ_VY_READ_PAGE_DELAY', true)
+        go:put(true)
+        -- One yield runs the reader until it blocks on the
+        -- delayed disk read.
+        fiber.yield()
+        -- Rotate: the dump moves {20} into a run while the
+        -- reader is suspended mid-scan. The join returns when the
+        -- checkpoint -- the rotation included -- is complete.
+        local dumper = fiber.create(function()
+            box.snapshot()
+        end)
+        dumper:set_joinable(true)
+        t.assert_equals({dumper:join()}, {true})
+        box.error.injection.set('ERRINJ_VY_READ_PAGE_DELAY', false)
+        t.assert_equals(done:get(), {{10, 6, 9}, {30, 6, 9}})
+        reader:join()
+        -- The latest view must see the inserted row.
+        t.assert_equals(s.index.sk:select({6}, {iterator = 'GE'}),
+                        {{10, 6, 9}, {20, 6, 9}, {30, 6, 9}})
+    end)
+end
+
 --
 -- 3. Dead keys under concurrent change.
 --
@@ -754,6 +816,152 @@ g.test_dead_key_removal_spares_resurrected_entry = function(cg)
         t.assert_gt(s.index.sk:stat().cache.get.rows, gets,
                     'the resurrected entry survived the dead-key '
                     .. 'removal')
+        box.cfg{vinyl_defer_deletes = defer}
+    end)
+end
+
+--
+-- 4. Snapshot isolation and read views vs prepared data.
+--
+
+-- A prepared write lands in a chain already fragmented by
+-- committed overwrites: the reader skips it, and nothing it
+-- caches may hide the write once it commits -- commit does not
+-- invalidate the cache, so a wrongly cached value or link would
+-- serve the pre-write state forever.
+g.test_prepared_skip_in_fragmented_chain = function(cg)
+    cg.server:exec(function()
+        local helpers = require('test.vinyl-luatest.tuple_cache_helpers')
+        local s = box.schema.space.create('test', {engine = 'vinyl'})
+        s:create_index('pk')
+        for _, k in ipairs({10, 20, 30, 40, 50}) do
+            s:replace{k, 'old'}
+        end
+        -- The full chain, then the holes.
+        t.assert_equals(#s:select({}, {fullscan = true}), 5)
+        s:replace{20, 'new'}
+        s:replace{40, 'new'}
+
+        -- The prepared write hits a cached segment member.
+        local write = helpers.suspended_write(function()
+            s:replace{30, 'newer'}
+        end)
+
+        -- A committed-boundary reader crosses the holes and the
+        -- prepared key: correct results, nothing cached over the
+        -- prepared skip.
+        t.assert_equals(s:select({}, {fullscan = true}),
+                        {{10, 'old'}, {20, 'new'}, {30, 'old'},
+                         {40, 'new'}, {50, 'old'}},
+            'the reader sees the committed state')
+
+        t.assert(write.commit(), 'the writer commits')
+
+        -- No cached value or link hides the committed write.
+        t.assert_equals(s:select({}, {fullscan = true}),
+                        {{10, 'old'}, {20, 'new'}, {30, 'newer'},
+                         {40, 'new'}, {50, 'old'}},
+            'the latest scan sees the committed write')
+    end)
+end
+
+-- A deferred DELETE and a prepared statement side by side under
+-- one secondary key: the deferred DELETE is the one skip exempt
+-- from staleness, and the exemption must not swallow the
+-- prepared skip next to it. A cached claim of the key's absence
+-- would hide the prepared row once it commits.
+g.test_deferred_delete_does_not_exempt_prepared_neighbor =
+        function(cg)
+    cg.server:exec(function()
+        local helpers = require('test.vinyl-luatest.tuple_cache_helpers')
+        local defer = box.cfg.vinyl_defer_deletes
+        box.cfg{vinyl_defer_deletes = true}
+        local s = box.schema.space.create('test', {engine = 'vinyl'})
+        s:create_index('pk')
+        s:create_index('sk', {parts = {{2, 'unsigned'}},
+                              unique = false, bloom_fpr = 1})
+        s:replace{1, 10}
+        box.snapshot()
+
+        -- The primary-only overwrite orphans the secondary key;
+        -- the dump generates the deferred DELETE for it into the
+        -- secondary memory level.
+        s:replace{1, 99}
+        box.snapshot()
+
+        -- The prepared row lands under the same secondary key,
+        -- next to the deferred DELETE.
+        local write = helpers.suspended_write(function()
+            s:replace{2, 10}
+        end)
+
+        -- The reader crosses both: the deferred DELETE without a
+        -- trace, the prepared row as a skip. The key reads empty.
+        t.assert_equals(s.index.sk:select({10}), {},
+            'the reader sees the key empty')
+
+        t.assert(write.commit(), 'the writer commits')
+
+        -- The committed row must not be hidden by a cached
+        -- absence claim.
+        t.assert_equals(s.index.sk:select({10}), {{2, 10}},
+            'the latest read sees the committed row')
+        t.assert_equals(s.index.sk:select({99}), {{1, 99}})
+        box.cfg{vinyl_defer_deletes = defer}
+    end)
+end
+
+-- A staleness verdict must survive its result being dropped: a
+-- reader skips a prepared row, then drops the dead secondary key
+-- it was advancing to. The verdict reaches the chain through the
+-- dead key's own report -- vy_cache_builder_add_delete() carries
+-- the stale flag -- and the pending link opened at the previous
+-- result dies there, or the next, clean result would complete it
+-- over the skipped row, hiding it from every reader once it
+-- commits.
+g.test_dropped_result_keeps_stale_verdict = function(cg)
+    cg.server:exec(function()
+        local helpers = require('test.vinyl-luatest.tuple_cache_helpers')
+        local defer = box.cfg.vinyl_defer_deletes
+        box.cfg{vinyl_defer_deletes = true}
+        local s = box.schema.space.create('test', {engine = 'vinyl'})
+        s:create_index('pk')
+        s:create_index('sk', {parts = {{2, 'unsigned'}},
+                              unique = false, bloom_fpr = 1})
+        s:replace{1, 10}
+        s:replace{2, 20}
+        s:replace{3, 30}
+        -- The move makes secondary key 20 a dead key: with
+        -- deferred DELETEs its old entry stays until a dump, and
+        -- a reader resolving it drops it without reporting to
+        -- the chain builder.
+        s:replace{2, 99}
+
+        -- The prepared row lands between the reader's first
+        -- result and the dead key: the same advance skips it and
+        -- then drops the dead key.
+        local write = helpers.suspended_write(function()
+            s:replace{4, 15}
+        end)
+
+        -- A read-confirmed reader: it skips the prepared row and
+        -- sees the move committed, so the dead key resolves dead.
+        box.begin({txn_isolation = 'read-confirmed'})
+        local rows = s.index.sk:select({}, {fullscan = true})
+        box.commit()
+        t.assert_equals(rows, {{1, 10}, {3, 30}, {2, 99}},
+            'the reader skips the prepared row and the dead key')
+
+        t.assert(write.commit(), 'the writer commits')
+
+        -- No link may span the skipped row: the latest scan sees
+        -- it, twice -- the second scan possibly served from the
+        -- cache.
+        for _ = 1, 2 do
+            t.assert_equals(s.index.sk:select({}, {fullscan = true}),
+                            {{1, 10}, {4, 15}, {3, 30}, {2, 99}},
+                'the committed row is not hidden by a chain link')
+        end
         box.cfg{vinyl_defer_deletes = defer}
     end)
 end

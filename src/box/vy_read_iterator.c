@@ -331,6 +331,23 @@ vy_read_iterator_reevaluate_srcs(struct vy_read_iterator *itr,
  *    See also vy_read_iterator_evaluate_src().
  */
 
+/**
+ * Account a single source's staleness mark in the read iterator.
+ * Ignored for INT64_MAX read views as pure safety: at the global
+ * view nothing committed is invisible, and a taken prepared
+ * statement is refused by the admission gates on its own. The
+ * flag is consumed at the builder interface alone: a result, a
+ * consumed DELETE and the end of matches each deliver it, so
+ * every advance's verdict reaches the chain.
+ */
+static void
+vy_read_iterator_set_stale(struct vy_read_iterator *itr, bool stale)
+{
+	if (!stale || (**itr->read_view).vlsn == INT64_MAX)
+		return;
+	itr->is_stale = true;
+}
+
 static NODISCARD int
 vy_read_iterator_scan_txw(struct vy_read_iterator *itr,
 			  struct vy_entry *next, bool *stop)
@@ -401,8 +418,17 @@ vy_read_iterator_scan_mem(struct vy_read_iterator *itr, uint32_t mem_src,
 
 	assert(mem_src >= itr->mem_src && mem_src < itr->disk_src);
 
-	if (!vy_read_iterator_src_is_visible(itr, src))
+	if (!vy_read_iterator_src_is_visible(itr, src)) {
+		/*
+		 * A whole source skipped because it is invisible to
+		 * the read view may contain a newer row that shadows
+		 * the result. Look at vy_mem_tree_size() since
+		 * statement counters don't reflect prepared data.
+		 */
+		if (vy_mem_tree_size(&src_itr->mem->tree) > 0)
+			vy_read_iterator_set_stale(itr, true);
 		return 0;
+	}
 
 	rc = vy_mem_iterator_restore(src_itr, itr->last, &src->history);
 	if (rc == 0) {
@@ -440,8 +466,15 @@ vy_read_iterator_scan_disk(struct vy_read_iterator *itr, uint32_t disk_src,
 
 	assert(disk_src >= itr->disk_src && disk_src < itr->src_count);
 
-	if (!vy_read_iterator_src_is_visible(itr, src))
+	if (!vy_read_iterator_src_is_visible(itr, src)) {
+		/*
+		 * A source we won't scan may still hold a newer version
+		 * invisible in the read view that shadows the result.
+		 */
+		if (src_itr->slice->run->count.rows > 0)
+			vy_read_iterator_set_stale(itr, true);
 		return 0;
+	}
 
 	if (!src->is_started || disk_src >= itr->skipped_src)
 		rc = vy_run_iterator_skip(src_itr, itr->last,
@@ -471,8 +504,11 @@ vy_read_iterator_restore_mem(struct vy_read_iterator *itr,
 	struct vy_read_src *src = &itr->src[itr->mem_src];
 	struct vy_mem_iterator *src_itr = &src->mem_iterator;
 
-	if (!vy_read_iterator_src_is_visible(itr, src))
+	if (!vy_read_iterator_src_is_visible(itr, src)) {
+		if (vy_mem_tree_size(&src_itr->mem->tree) > 0)
+			vy_read_iterator_set_stale(itr, true);
 		return 0;
+	}
 
 	/*
 	 * 'next' may refer to a statement in the memory source history,
@@ -569,6 +605,7 @@ vy_read_iterator_advance(struct vy_read_iterator *itr)
 restart:
 	itr->prev_front_id = itr->front_id;
 	itr->front_id++;
+	itr->is_stale = false;
 
 	/*
 	 * Look up the next key in read sources starting
@@ -588,6 +625,8 @@ restart:
 	for (uint32_t i = itr->mem_src; i < itr->disk_src && !stop; i++) {
 		if (vy_read_iterator_scan_mem(itr, i, &next, &stop) != 0)
 			return -1;
+		vy_read_iterator_set_stale(
+			itr, itr->src[i].mem_iterator.is_stale_link);
 	}
 	if (stop)
 		goto done;
@@ -599,6 +638,13 @@ rescan_disk:
 			vy_read_iterator_unpin_slices(itr);
 			return -1;
 		}
+		/*
+		 * Note staleness now, before a range crossing below drops
+		 * this range's disk sources and the skip is forgotten.
+		 * See vy_read_iterator::is_stale.
+		 */
+		vy_read_iterator_set_stale(
+			itr, itr->src[i].run_iterator.is_stale_link);
 		if (stop)
 			break;
 	}
@@ -634,6 +680,8 @@ rescan_disk:
 	 */
 	if (vy_read_iterator_restore_mem(itr, &next) != 0)
 		return -1;
+	vy_read_iterator_set_stale(
+		itr, itr->src[itr->mem_src].mem_iterator.is_stale_link);
 	/*
 	 * Scan the next range in case we transgressed the current
 	 * range's boundaries.
@@ -643,6 +691,25 @@ rescan_disk:
 		goto rescan_disk;
 	}
 done:
+	/*
+	 * The result comes from the newest mem or disk source at the
+	 * merge front, so its exact is_stale verdict applies: the
+	 * sources are scanned from newest to oldest, and an invisible
+	 * version is newer than the visible result, so only the
+	 * newest source that resolved the key can hold one (deferred
+	 * DELETEs, exempt from staleness, are the only out-of-order
+	 * statements). Older front sources have nothing to add, and
+	 * the sources that skipped the key entirely were already
+	 * taken in via is_stale_link above.
+	 */
+	for (uint32_t i = itr->mem_src; i < itr->src_count; i++) {
+		if (itr->src[i].front_id != itr->front_id)
+			continue;
+		vy_read_iterator_set_stale(itr, i < itr->disk_src ?
+			itr->src[i].mem_iterator.is_stale :
+			itr->src[i].run_iterator.is_stale);
+		break;
+	}
 #ifndef NDEBUG
 	/*
 	 * Check that the statement meets search criteria. A
@@ -846,7 +913,7 @@ vy_read_iterator_open_after(struct vy_read_iterator *itr, struct vy_lsm *lsm,
 
 	/* After the iterator type normalizations above. */
 	vy_cache_builder_create(&itr->cache_builder, &lsm->cache,
-				itr->iterator_type, key, last, rv);
+				itr->iterator_type, key, last);
 
 	itr->check_exact_match =
 		(iterator_type == ITER_EQ || iterator_type == ITER_REQ ||
@@ -1083,7 +1150,8 @@ next_key:
 		 * prepared or in a tx write set.
 		 */
 		vy_cache_builder_add_delete(&itr->cache_builder, entry,
-					    vy_stmt_lsn(entry.stmt));
+					    vy_stmt_lsn(entry.stmt),
+					    itr->is_stale);
 		goto next_key;
 	}
 	assert(entry.stmt == NULL ||
@@ -1129,7 +1197,7 @@ vy_read_iterator_next(struct vy_read_iterator *itr, struct vy_entry *result)
 		}
 		/* Report the proven-dead key to the chain. */
 		vy_cache_builder_add_delete(&itr->cache_builder, entry,
-					    delete_lsn);
+					    delete_lsn, itr->is_stale);
 		/*
 		 * The resolution may yield: bail out if the
 		 * transaction was aborted meanwhile.
@@ -1139,7 +1207,7 @@ vy_read_iterator_next(struct vy_read_iterator *itr, struct vy_entry *result)
 			return -1;
 		}
 	}
-	vy_cache_builder_add(&itr->cache_builder, entry);
+	vy_cache_builder_add(&itr->cache_builder, entry, itr->is_stale);
 	*result = entry;
 	return 0;
 }
