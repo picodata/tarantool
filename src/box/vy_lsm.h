@@ -84,8 +84,10 @@ struct vy_lsm_env {
 	int64_t *p_generation;
 	/** Tuple format for keys (SELECT). */
 	struct tuple_format *key_format;
-	/** Key (SELECT) with no parts. */
-	struct vy_entry empty_key;
+	/** The empty key marked infimum: before every key. */
+	struct vy_entry key_inf;
+	/** The empty key marked supremum: after every key. */
+	struct vy_entry key_sup;
 	/**
 	 * If read of a single statement takes longer than
 	 * the given value, warn about it in the log.

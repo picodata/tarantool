@@ -42,6 +42,7 @@
 
 #include "tuple.h"
 #include "iproto_constants.h"
+#include "iterator_type.h"
 #include "vy_entry.h"
 
 #if defined(__cplusplus)
@@ -190,11 +191,13 @@ enum {
 	VY_STMT_FLAGS_ALL = (VY_STMT_DEFERRED_DELETE | VY_STMT_SKIP_READ |
 			     VY_STMT_UPDATE),
 	/**
-	 * The key marks an exclusive upper bound (data_end of a
-	 * slice clipped by a range boundary).  Transient: never
-	 * persisted, not included in VY_STMT_FLAGS_ALL.
+	 * The key statement is the infimum of its key: it sorts
+	 * before any equal key. Marks a slice's exclusive upper
+	 * bound (data_end clipped by a range boundary) and the
+	 * cache's key entries. Transient: never persisted, not
+	 * included in VY_STMT_FLAGS_ALL.
 	 */
-	VY_STMT_EXCLUSIVE_BOUND		= 1 << 3,
+	VY_STMT_INFIMUM			= 1 << 3,
 	/**
 	 * The statement contributes to the primary index's per-type
 	 * counters used by space:len(). Decided at prepare and cached
@@ -229,6 +232,13 @@ enum {
 	 * Transient: never persisted, not included in VY_STMT_FLAGS_ALL.
 	 */
 	VY_STMT_MEM			= 1 << 6,
+	/**
+	 * The key statement is the supremum of its key: it sorts
+	 * after any equal key. The counterpart of VY_STMT_INFIMUM,
+	 * used by the cache's key entries. Transient: never
+	 * persisted, not included in VY_STMT_FLAGS_ALL.
+	 */
+	VY_STMT_SUPREMUM		= 1 << 7,
 };
 
 /**
@@ -358,11 +368,11 @@ vy_stmt_has_flag(struct tuple *stmt, uint8_t flag)
 	return vy_stmt_flags(stmt) & flag;
 }
 
-/** Check if the entry has VY_STMT_EXCLUSIVE_BOUND flag set. */
+/** Check if the entry is the infimum of its key. */
 static inline bool
-vy_entry_is_exclusive(struct vy_entry entry)
+vy_entry_is_infimum(struct vy_entry entry)
 {
-	return vy_stmt_flags(entry.stmt) & VY_STMT_EXCLUSIVE_BOUND;
+	return vy_stmt_flags(entry.stmt) & VY_STMT_INFIMUM;
 }
 
 /**
@@ -450,7 +460,8 @@ vy_stmt_is_exact_key(struct tuple *stmt, struct key_def *cmp_def,
 		     struct key_def *key_def, bool is_unique);
 
 /**
- * Duplicate the statememnt.
+ * Duplicate the statement, flags included: a copy of a bound
+ * key is the same bound.
  *
  * @param stmt statement
  * @return new statement of the same type with the same data.
@@ -922,9 +933,153 @@ vy_entry_compare_with_raw_key(struct vy_entry entry,
 }
 
 /**
- * Compare two entries as upper bounds with INCLUSIVE/EXCLUSIVE
- * semantics.  At equal keys, an EXCLUSIVE bound (flagged with
- * VY_STMT_EXCLUSIVE_BOUND) sorts before an INCLUSIVE one.
+ * The sign of a statement among equal keys.
+ * @retval -1 an infimum key.
+ * @retval 1 a supremum key.
+ * @retval 0 a plain key or a tuple.
+ */
+static inline int
+vy_bound_sign(struct tuple *stmt)
+{
+	uint8_t flags = vy_stmt_flags(stmt);
+	if (flags & VY_STMT_INFIMUM)
+		return -1;
+	if (flags & VY_STMT_SUPREMUM)
+		return 1;
+	return 0;
+}
+
+/**
+ * The bound a scan of the given iterator type starts from,
+ * relative to the search key. A type that includes its key's
+ * matches starts on the near side and travels through them: GE
+ * at the key's infimum, LE at its supremum. An exclusive type
+ * starts on the far side, its matches behind: GT at the
+ * supremum, LT at the infimum.
+ * @retval VY_STMT_SUPREMUM for GT, LE and REQ.
+ * @retval VY_STMT_INFIMUM for all others.
+ */
+static inline uint8_t
+vy_bound_flag(enum iterator_type type)
+{
+	const unsigned mask = (1u << ITER_GT) | (1u << ITER_LE) |
+			      (1u << ITER_REQ);
+	return (mask & (1u << type)) ? VY_STMT_SUPREMUM :
+				       VY_STMT_INFIMUM;
+}
+
+/**
+ * @return true if @a stmt is an infimum or supremum key, see
+ * vy_bound_sign().
+ */
+static inline bool
+vy_stmt_is_bound(struct tuple *stmt)
+{
+	return (vy_stmt_flags(stmt) &
+		(VY_STMT_INFIMUM | VY_STMT_SUPREMUM)) != 0;
+}
+
+/**
+ * Make the bound a scan of @a order starts from -- a private
+ * copy of @a key marked with the order's bound flag, see
+ * vy_bound_flag(). For keys the caller does not own; a freshly
+ * created key is marked in place instead.
+ * @param key the key, a plain statement.
+ * @param order the scan order the bound positions.
+ * @retval the bound entry, referenced.
+ * @retval none allocation failed.
+ */
+static inline struct vy_entry
+vy_bound_new(struct vy_entry key, enum iterator_type order)
+{
+	assert(!vy_stmt_is_bound(key.stmt));
+	struct vy_entry bound;
+	bound.stmt = vy_stmt_dup(key.stmt);
+	if (bound.stmt == NULL)
+		return vy_entry_none();
+	bound.hint = key.hint;
+	vy_stmt_add_flag(bound.stmt, vy_bound_flag(order));
+	/*
+	 * A bound key's main function is to mark the start or the
+	 * end of a range, and in this role it could carry any
+	 * LSN. But later a DELETE may be fused into it, and then
+	 * the bound key's LSN stores the LSN of the fused DELETE.
+	 * Set the LSN to 0 to indicate no fusion has taken place
+	 * yet.
+	 */
+	vy_stmt_set_lsn(bound.stmt, 0);
+	return bound;
+}
+
+/**
+ * Check if @a entry is the bound of @a key on the side of
+ * @a sign -- the key's own bound, not a wider key's, which
+ * compares equal on the common prefix but covers a range of its
+ * own: the part counts must match too.
+ * @param entry the entry to check.
+ * @param key the key whose bound is sought.
+ * @param sign -1 for the infimum bound, 1 for the supremum.
+ * @param cmp_def the comparison key definition.
+ * @retval true @a entry is the bound.
+ */
+static inline bool
+vy_entry_is_bound_of(struct vy_entry entry, struct vy_entry key, int sign,
+		     struct key_def *cmp_def)
+{
+	return vy_stmt_is_bound(entry.stmt) &&
+	       vy_bound_sign(entry.stmt) == sign &&
+	       vy_stmt_key_part_count(entry.stmt, cmp_def) ==
+	       vy_stmt_key_part_count(key.stmt, cmp_def) &&
+	       vy_entry_compare(entry, key, cmp_def) == 0;
+}
+
+/**
+ * Provide a total order for partial keys and keys with
+ * INFIMUM/SUPREMUM bits, as (sign, part count) pairs of keys
+ * sharing their common parts. The total order is necessary to
+ * guarantee no tuple escapes a bound driven range scan in the
+ * tuple cache: over an index on (a, b) it sorts, e.g.,
+ *
+ *   [10]- < [10] < {10, 1} < {10, 2} < [10, 2]+ < [10]+
+ *
+ * where [10]- and [10]+ are the infimum and supremum keys of 10
+ * and [10] is a bare partial key. Every tuple with prefix 10
+ * sorts strictly between the bound keys of 10, so a chain
+ * bracketed by them provably covers the scan's whole match
+ * range, and a bound key of a shorter prefix hugs the wider
+ * range: [10]- sorts before [10, 2]-, [10, 2]+ before [10]+.
+ * The comparison is decided at the first position where one key
+ * has no part, and the missing part compares as the key's
+ * padding: -inf for an infimum key, a shade above it for a bare
+ * partial key, +inf for a supremum key.
+ * @retval <0 the first key sorts before the second.
+ * @retval 0 the keys share the position.
+ * @retval >0 the first key sorts after the second.
+ */
+static inline int
+vy_total_order_cmp(int sign_a, uint32_t parts_a, int sign_b,
+		   uint32_t parts_b)
+{
+	if (parts_a != parts_b) {
+		/*
+		 * The shorter key's padding against the longer key's
+		 * real part: below it unless the pad is +inf.
+		 */
+		if (parts_a < parts_b)
+			return sign_a > 0 ? 1 : -1;
+		return sign_b > 0 ? -1 : 1;
+	}
+	/* Pads meet pads at the same position: -inf < bare < +inf. */
+	return sign_a - sign_b;
+}
+
+/**
+ * Compare two entries as positions in the total key order: equal
+ * common parts are tie-broken by the keys' padding signs and part
+ * counts, see vy_total_order_cmp().
+ * @retval <0 @a a sorts before @a b.
+ * @retval 0 @a a and @a b share the position.
+ * @retval >0 @a a sorts after @a b.
  */
 static inline int
 vy_bound_cmp(struct vy_entry a, struct vy_entry b,
@@ -933,23 +1088,10 @@ vy_bound_cmp(struct vy_entry a, struct vy_entry b,
 	int rc = vy_entry_compare(a, b, cmp_def);
 	if (rc != 0)
 		return rc;
-	return (int)!vy_entry_is_exclusive(a) -
-	       (int)!vy_entry_is_exclusive(b);
-}
-
-/**
- * Compare an upper bound (entry with optional VY_STMT_EXCLUSIVE_BOUND
- * flag) against a raw key point (always treated as inclusive).
- * Returns < 0 if the bound is before the point.
- */
-static inline int
-vy_bound_cmp_raw(struct vy_entry bound, const char *key,
-		 hint_t hint, struct key_def *cmp_def)
-{
-	int rc = vy_entry_compare_with_raw_key(bound, key, hint, cmp_def);
-	if (rc != 0)
-		return rc;
-	return vy_entry_is_exclusive(bound) ? -1 : 0;
+	return vy_total_order_cmp(vy_bound_sign(a.stmt),
+				  vy_stmt_key_part_count(a.stmt, cmp_def),
+				  vy_bound_sign(b.stmt),
+				  vy_stmt_key_part_count(b.stmt, cmp_def));
 }
 
 /**

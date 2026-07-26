@@ -302,7 +302,7 @@ vy_stmt_are_same(struct vy_entry actual,
 	}
 	/*
 	 * Compare only persistent flags. Transient flags
-	 * (VY_STMT_COUNTED, VY_STMT_EXCLUSIVE_BOUND) ride on
+	 * (VY_STMT_COUNTED, VY_STMT_INFIMUM) ride on
 	 * in-memory statements as scratch space and are not part
 	 * of the equivalence the templates express.
 	 */

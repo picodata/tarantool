@@ -274,7 +274,7 @@ gstat()
     tx: 0
     bloom_filter: 0
     page_index: 0
-    tuple: 160
+    tuple: 320
   disk:
     data_compacted: 0
     data: 0
@@ -1195,7 +1195,7 @@ gstat()
     tx: 0
     bloom_filter: 140
     page_index: 2684
-    tuple: 220448
+    tuple: 220608
   disk:
     data_compacted: 105949
     data: 104900

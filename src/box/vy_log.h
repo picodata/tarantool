@@ -39,6 +39,7 @@
 #include <small/rlist.h>
 
 #include "salad/stailq.h"
+#include "vy_stmt.h"
 
 /*
  * Data stored in vinyl is organized in ranges and runs.
@@ -768,18 +769,35 @@ vy_log_drop_lsm(int64_t id, int64_t drop_lsn)
 	vy_log_write(&record);
 }
 
+/**
+ * A bound key's data for a log record. An empty-key bound is a
+ * key space edge: it carries no data and is stored as an absent
+ * key. A NULL bound is allowed for slices only: a slice is
+ * logged before it is added to a range, which is what assigns
+ * its bounds.
+ */
+static inline const char *
+vy_log_bound_key(struct tuple *key)
+{
+	if (key == NULL || vy_stmt_is_empty_key(key))
+		return NULL;
+	return tuple_data(key);
+}
+
 /** Helper to log a vinyl range insertion. */
 static inline void
 vy_log_insert_range(int64_t lsm_id, int64_t range_id,
-		    const char *begin, const char *end)
+		    struct tuple *begin, struct tuple *end)
 {
+	/* Range bounds are always bound statements. */
+	assert(begin != NULL && end != NULL);
 	struct vy_log_record record;
 	vy_log_record_init(&record);
 	record.type = VY_LOG_INSERT_RANGE;
 	record.lsm_id = lsm_id;
 	record.range_id = range_id;
-	record.begin = begin;
-	record.end = end;
+	record.begin = vy_log_bound_key(begin);
+	record.end = vy_log_bound_key(end);
 	vy_log_write(&record);
 }
 
@@ -863,7 +881,7 @@ vy_log_forget_run(int64_t run_id)
 /** Helper to log creation of a run slice. */
 static inline void
 vy_log_insert_slice(int64_t range_id, int64_t run_id, int64_t slice_id,
-		    const char *begin, const char *end)
+		    struct tuple *begin, struct tuple *end)
 {
 	struct vy_log_record record;
 	vy_log_record_init(&record);
@@ -871,8 +889,8 @@ vy_log_insert_slice(int64_t range_id, int64_t run_id, int64_t slice_id,
 	record.range_id = range_id;
 	record.run_id = run_id;
 	record.slice_id = slice_id;
-	record.begin = begin;
-	record.end = end;
+	record.begin = vy_log_bound_key(begin);
+	record.end = vy_log_bound_key(end);
 	vy_log_write(&record);
 }
 

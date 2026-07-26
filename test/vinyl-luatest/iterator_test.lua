@@ -309,3 +309,149 @@ g.test_random_iterator_on_multi_part_datetime_pk = function(cg)
         end
     end)
 end
+
+--
+-- A reverse iterator with a partial key must return every row
+-- matching the key, even when the matching rows span several
+-- ranges, i.e. a range boundary falls inside the group of rows
+-- sharing the key prefix. A reverse scan enters the range tree
+-- at the last matching range and walks down; if it enters at
+-- the first one instead, the rows in the later ranges are lost.
+--
+g.test_reverse_across_range_split = function(cg)
+    cg.server:exec(function()
+        local s = box.schema.create_space('test', {engine = 'vinyl'})
+        s:create_index('pk', {
+            parts = {{1, 'unsigned'}, {2, 'unsigned'}},
+            range_size = 16 * 1024,
+            page_size = 1024,
+            run_count_per_level = 1,
+        })
+        local pad = string.rep('x', 400)
+        for k = 1, 4 do
+            for i = 1, 50 do
+                s:insert({k, i, pad})
+            end
+            box.snapshot()
+        end
+        -- Wait for compaction to split the index into enough
+        -- ranges that at least one boundary falls inside a
+        -- 50-row key group.
+        t.helpers.retrying({timeout = 60}, function()
+            t.assert_ge(s.index.pk:stat().range_count, 4)
+        end)
+    end)
+
+    local function check(cg)
+        cg.server:exec(function()
+            local s = box.space.test
+            for k = 1, 4 do
+                local forward = s:select({k}, {iterator = 'EQ'})
+                t.assert_equals(#forward, 50)
+                local reverse = s:select({k}, {iterator = 'REQ'})
+                t.assert_equals(#reverse, 50)
+                for i = 1, 50 do
+                    t.assert_equals(reverse[i], forward[51 - i])
+                end
+                -- LE on the partial key starts after the whole
+                -- group: the first row it returns is the group's
+                -- last one.
+                local le = s:select({k}, {iterator = 'LE', limit = 1})
+                t.assert_equals(le[1], forward[50])
+                -- LT on the partial key starts before the whole
+                -- group: the first row it returns is the previous
+                -- group's last one, if any.
+                local lt = s:select({k}, {iterator = 'LT', limit = 1})
+                if k > 1 then
+                    t.assert_equals(lt[1][1], k - 1)
+                    t.assert_equals(lt[1][2], 50)
+                else
+                    t.assert_equals(#lt, 0)
+                end
+            end
+            local all = s:select({}, {iterator = 'LE'})
+            t.assert_equals(#all, 200)
+        end)
+    end
+
+    check(cg)
+    -- Range bounds, including the split keys, travel through the
+    -- metadata log on restart. Recheck on the recovered tree.
+    cg.server:restart()
+    check(cg)
+end
+
+--
+-- A reverse scan with a partial key must not return tuples
+-- matching the key prefix: LT {1} excludes every {1, *}. The
+-- result must hold when the range tree is split at a boundary
+-- extending the searched prefix, so that a slice's upper bound
+-- ties with the search key on its common parts and the seek
+-- is wrongly clamped to the bound.
+--
+g.test_reverse_partial_scan_after_split = function(cg)
+    cg.server:exec(function()
+        box.cfg{log_level = 'verbose'}
+        local s = box.schema.space.create('test', {engine = 'vinyl'})
+        s:create_index('pk', {
+            parts = {{1, 'unsigned'}, {2, 'unsigned'}},
+            range_size = 4 * 1024,
+            page_size = 1024,
+            run_count_per_level = 1,
+        })
+        local pad = string.rep('x', 256)
+        s:replace{0, 1, pad}
+        for _ = 1, 5 do
+            for i = 1, 500 do s:replace{1, i, pad} end
+            box.snapshot()
+        end
+        t.helpers.retrying({timeout = 120}, function()
+            t.assert_ge(s.index.pk:stat().range_count, 2)
+        end)
+        -- A seek wrongly clamped to a slice bound can only
+        -- return foreign rows while the slice's run physically
+        -- extends past the bound: after a dump lands one run
+        -- spanning all the split ranges, until the per-range
+        -- compactions rewrite it into per-range runs. Make the
+        -- state permanent instead of racing those compactions:
+        -- raise run_count_per_level out of reach first, then
+        -- dump, so the dump triggers no compaction at all. An
+        -- option alter must not rebuild the index: a rebuild
+        -- would start over with a single range.
+        s.index.pk:alter({run_count_per_level = 10})
+        t.assert_ge(s.index.pk:stat().range_count, 2)
+        for i = 1, 500 do s:replace{1, i, pad} end
+        box.snapshot()
+        box.cfg{log_level = 'info'}
+    end)
+
+    -- Read the actual split boundary from the log instead of
+    -- assuming where the split lands: the scenario needs a
+    -- boundary extending the searched prefix, and a layout
+    -- change moving the boundary must fail the test loudly
+    -- rather than degrade it into a trivial pass. Any split
+    -- key works: every one bounds some range.
+    local split_key = cg.server:grep_log(
+        'split range .* by key (%[%d+, %d+%])', 1024 * 1024)
+    t.assert_is_not(split_key, nil)
+    local b1, b2 = string.match(split_key, '%[(%d+), (%d+)%]')
+    b1, b2 = tonumber(b1), tonumber(b2)
+    -- The boundary must extend the prefix past its first key:
+    -- a seek wrongly clamped to a {1, 1} boundary would return
+    -- a correct result by accident.
+    t.assert_equals(b1, 1)
+    t.assert_ge(b2, 2)
+
+    cg.server:exec(function(b1, b2)
+        local s = box.space.test
+        -- LT on the boundary's prefix must skip the whole
+        -- group, entering below every {1, *} bound.
+        t.assert_equals(s:select({b1}, {iterator = 'LT'}), {s:get{0, 1}})
+        t.assert_equals(s:select({b1 - 1}, {iterator = 'GT'}),
+                        s:select({b1}, {iterator = 'GE'}))
+        -- LT on the exact boundary lands on its predecessor,
+        -- the last key of the range below the split.
+        local prev = s:select({b1, b2}, {iterator = 'LT', limit = 1})[1]
+        t.assert_equals({prev[1], prev[2]}, {b1, b2 - 1})
+    end, {b1, b2})
+end

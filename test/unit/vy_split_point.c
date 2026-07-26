@@ -70,7 +70,22 @@ vy_bound_new_i64(int64_t value, bool exclusive)
 {
 	struct vy_entry e = vy_key_new_i64(value);
 	if (exclusive)
-		vy_stmt_add_flag(e.stmt, VY_STMT_EXCLUSIVE_BOUND);
+		vy_stmt_add_flag(e.stmt, VY_STMT_INFIMUM);
+	return e;
+}
+
+/** The keyspace edges: an infimum and a supremum empty key. */
+static struct vy_entry key_inf;
+static struct vy_entry key_sup;
+
+static struct vy_entry
+vy_test_bound_new(uint8_t flag)
+{
+	char buf[MSGPACK_KEY_MAX];
+	mp_encode_array(buf, 0);
+	struct vy_entry e =
+		vy_entry_key_from_msgpack(stmt_env.key_format, cmp_def, buf);
+	vy_stmt_add_flag(e.stmt, flag);
 	return e;
 }
 
@@ -221,7 +236,7 @@ vy_test_range_new(const struct vy_slice_i64 *specs,
 	struct vy_slice **slices = xmalloc(sizeof(*slices) * *n);
 	*p_slices = slices;
 	struct vy_range *range =
-		vy_range_new(1, vy_entry_none(), vy_entry_none(), cmp_def);
+		vy_range_new(1, key_inf, key_sup, cmp_def);
 	fail_if(range == NULL);
 
 	for (int i = 0; i < *n; i++) {
@@ -857,12 +872,20 @@ slice_cut_check(const char *name,
 	else
 		slice->end_bound = vy_bound_new_i64(run_max, false);
 
-	struct vy_entry begin = { .stmt = NULL };
-	struct vy_entry end = { .stmt = NULL };
-	if (cut_begin != NEG_INF)
-		begin = vy_key_new_i64(cut_begin);
-	if (cut_end != POS_INF)
-		end = vy_key_new_i64(cut_end);
+	struct vy_entry begin;
+	struct vy_entry end;
+	if (cut_begin != NEG_INF) {
+		begin = vy_bound_new_i64(cut_begin, true);
+	} else {
+		begin = key_inf;
+		tuple_ref(begin.stmt);
+	}
+	if (cut_end != POS_INF) {
+		end = vy_bound_new_i64(cut_end, true);
+	} else {
+		end = key_sup;
+		tuple_ref(end.stmt);
+	}
 
 	struct vy_slice *result = NULL;
 	int rc = vy_slice_cut(slice, 99, begin, end, cmp_def, &result);
@@ -874,10 +897,8 @@ slice_cut_check(const char *name,
 
 	if (result != NULL)
 		vy_slice_delete(result);
-	if (begin.stmt != NULL)
-		tuple_unref(begin.stmt);
-	if (end.stmt != NULL)
-		tuple_unref(end.stmt);
+	tuple_unref(begin.stmt);
+	tuple_unref(end.stmt);
 	vy_slice_delete(slice);
 	vy_run_unref(run);
 }
@@ -1144,6 +1165,8 @@ main(void)
 	uint32_t types[] = { FIELD_TYPE_INTEGER };
 	cmp_def = box_key_def_new(fields, types, 1);
 	fail_if(cmp_def == NULL);
+	key_inf = vy_test_bound_new(VY_STMT_INFIMUM);
+	key_sup = vy_test_bound_new(VY_STMT_SUPREMUM);
 
 	test_vy_split_point_cmp();
 	test_vy_range_find_best_split();
@@ -1152,6 +1175,8 @@ main(void)
 	test_vy_compaction_plan_trim();
 	test_bloat_guard_with_split();
 
+	tuple_unref(key_inf.stmt);
+	tuple_unref(key_sup.stmt);
 	key_def_delete(cmp_def);
 	vy_run_env_destroy(&run_env);
 	vy_iterator_C_test_finish();

@@ -478,12 +478,15 @@ vy_slice_cut(struct vy_slice *slice, int64_t id, struct vy_entry begin,
 {
 	*result = NULL;
 
-	if (begin.stmt != NULL &&
-	    vy_bound_cmp(begin, slice->end_bound, cmp_def) > 0)
+	assert(vy_stmt_is_bound(begin.stmt) && vy_stmt_is_bound(end.stmt));
+	/*
+	 * Equal infimum bounds -- the cut begins exactly at the
+	 * slice's clipped end -- touch without intersecting.
+	 */
+	if (vy_bound_cmp(begin, slice->end_bound, cmp_def) >= 0)
 		return 0; /* no intersection: begin past end_bound */
 
-	if (end.stmt != NULL &&
-	    vy_entry_compare(end, slice->begin, cmp_def) <= 0)
+	if (vy_bound_cmp(end, slice->begin, cmp_def) <= 0)
 		return 0; /* no intersection: end <= slice->begin */
 
 	*result = vy_slice_new(id, slice->run);
@@ -1412,7 +1415,7 @@ vy_run_iterator_seek(struct vy_run_iterator *itr, struct vy_entry last,
 		 * sense, start from end_bound instead.
 		 */
 		if (vy_bound_cmp(key, slice->end_bound, cmp_def) > 0) {
-			iterator_type = vy_entry_is_exclusive(
+			iterator_type = vy_entry_is_infimum(
 				slice->end_bound) ? ITER_LT : ITER_LE;
 			key = slice->end_bound;
 		}

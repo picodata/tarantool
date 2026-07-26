@@ -1597,9 +1597,15 @@ vy_tx_manager_abort_writers_for_ddl(struct vy_tx_manager *xm,
 	rlist_foreach_entry(tx, &xm->writers, in_writers) {
 		if (tx->state == VINYL_TX_ABORT)
 			continue;
+		/*
+		 * The empty key ties with every statement of the
+		 * LSM tree in the raw order, so the search tells
+		 * whether the write set holds any of them. The
+		 * write set ignores the bound flag.
+		 */
 		if (tx->last_stmt_space != space &&
 		    write_set_search_key(&tx->write_set, lsm,
-					 lsm->env->empty_key) == NULL)
+					 lsm->env->key_inf) == NULL)
 			continue;
 		/*
 		 * We can't abort prepared transactions as they have

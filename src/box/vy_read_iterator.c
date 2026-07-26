@@ -155,14 +155,14 @@ vy_read_iterator_range_is_done(struct vy_read_iterator *itr,
 	struct key_def *cmp_def = itr->lsm->cmp_def;
 	int dir = iterator_direction(itr->iterator_type);
 
-	if (dir > 0 && range->end.stmt != NULL &&
+	if (dir > 0 && !vy_stmt_is_empty_key(range->end.stmt) &&
 	    (next.stmt == NULL || vy_entry_compare(next, range->end,
 						   cmp_def) >= 0) &&
 	    (itr->iterator_type != ITER_EQ ||
 	     vy_entry_compare(itr->key, range->end, cmp_def) >= 0))
 		return true;
 
-	if (dir < 0 && range->begin.stmt != NULL &&
+	if (dir < 0 && !vy_stmt_is_empty_key(range->begin.stmt) &&
 	    (next.stmt == NULL || vy_entry_compare(next, range->begin,
 						   cmp_def) < 0) &&
 	    (itr->iterator_type != ITER_REQ ||
@@ -813,6 +813,14 @@ vy_read_iterator_open_after(struct vy_read_iterator *itr, struct vy_lsm *lsm,
 	if (iterator_type == ITER_ALL)
 		itr->iterator_type = ITER_GE;
 
+	/*
+	 * A reverse scan enters the range tree at the last range
+	 * holding matching keys, and only a bound key addresses
+	 * it. Forward scans may pass bare keys.
+	 */
+	assert(iterator_direction(itr->iterator_type) > 0 ||
+	       vy_stmt_is_bound(key.stmt));
+
 	if (iterator_type == ITER_REQ) {
 		/*
 		 * Source iterators cannot handle ITER_REQ and
@@ -846,7 +854,6 @@ vy_read_iterator_restore(struct vy_read_iterator *itr)
 	itr->mem_list_version = itr->lsm->mem_list_version;
 	itr->range_tree_version = itr->lsm->range_tree_version;
 	itr->curr_range = vy_range_tree_find_by_key(&itr->lsm->range_tree,
-						    itr->iterator_type,
 						    itr->last.stmt != NULL ?
 						    itr->last : itr->key);
 	itr->range_version = itr->curr_range->version;
@@ -891,11 +898,11 @@ vy_read_iterator_next_range(struct vy_read_iterator *itr)
 		 * We could skip an entire range due to the cache.
 		 * Make sure the next statement falls in the range.
 		 */
-		if (dir > 0 && (range->end.stmt == NULL ||
+		if (dir > 0 && (vy_stmt_is_empty_key(range->end.stmt) ||
 				vy_entry_compare(itr->last, range->end,
 						 cmp_def) < 0))
 			break;
-		if (dir < 0 && (range->begin.stmt == NULL ||
+		if (dir < 0 && (vy_stmt_is_empty_key(range->begin.stmt) ||
 				vy_entry_compare(itr->last, range->begin,
 						 cmp_def) > 0))
 			break;
@@ -952,9 +959,13 @@ vy_read_iterator_track_read(struct vy_read_iterator *itr, struct vy_entry entry)
 		return;
 
 	if (entry.stmt == NULL) {
-		entry = (itr->iterator_type == ITER_EQ ||
-			 itr->iterator_type == ITER_REQ ?
-			 itr->key : itr->lsm->env->empty_key);
+		if (itr->iterator_type == ITER_EQ ||
+		    itr->iterator_type == ITER_REQ)
+			entry = itr->key;
+		else if (iterator_direction(itr->iterator_type) > 0)
+			entry = itr->lsm->env->key_sup;
+		else
+			entry = itr->lsm->env->key_inf;
 	}
 
 	if (iterator_direction(itr->iterator_type) >= 0) {

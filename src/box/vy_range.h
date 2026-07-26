@@ -367,6 +367,7 @@ vy_range_is_scheduled(struct vy_range *range)
  */
 int
 vy_range_tree_cmp(struct vy_range *range_a, struct vy_range *range_b);
+/** Compare a search key with a range's begin. */
 int
 vy_range_tree_key_cmp(struct vy_entry entry, struct vy_range *range);
 
@@ -376,18 +377,21 @@ rb_gen_ext_key(MAYBE_UNUSED static inline, vy_range_tree_, vy_range_tree_t,
 	       struct vy_entry, vy_range_tree_key_cmp);
 
 /**
- * Find the first range in which a given key should be looked up.
+ * Return the range holding the scan entry point for @a key.
  *
- * @param tree          Range tree to search.
- * @param iterator_type Iterator type.
- * @param key           Key to look up.
+ * The key's rank in the total key order gives the entry point
+ * directly: a bound key stands at the edge of its match range,
+ * a bare key between its infimum and the first matching key.
+ * The predecessor search returns the last range whose begin
+ * does not exceed that point - the range holding it.
  *
- * @retval              The first range to look up the key in.
+ * A forward scan may pass a bare key: its rank and the key's
+ * infimum select the same range. A reverse scan must pass a
+ * bound key: it enters at the last matching range, which only
+ * a supremum addresses when range begins extend the key.
  */
 struct vy_range *
-vy_range_tree_find_by_key(vy_range_tree_t *tree,
-			  enum iterator_type iterator_type,
-			  struct vy_entry key);
+vy_range_tree_find_by_key(vy_range_tree_t *tree, struct vy_entry key);
 
 /**
  * Allocate and initialize a range (either a new one or for

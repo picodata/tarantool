@@ -1196,7 +1196,7 @@ vinyl_space_check_format(struct space *space, struct tuple_format *format)
 	}
 
 	struct vy_read_iterator itr;
-	vy_read_iterator_open(&itr, pk, NULL, ITER_ALL, pk->env->empty_key,
+	vy_read_iterator_open(&itr, pk, NULL, ITER_ALL, pk->env->key_inf,
 			      &env->xm->p_committed_read_view);
 	int loops = 0;
 	struct vy_entry entry;
@@ -3260,7 +3260,7 @@ vy_join_add_space(struct space *space, void *arg)
 		return -1;
 	}
 	vy_read_iterator_open(&entry->iterator, lsm, NULL, ITER_ALL,
-			      lsm->env->empty_key,
+			      lsm->env->key_inf,
 			      (const struct vy_read_view **)&ctx->rv);
 	/*
 	 * The space can be dropped while initial join is in progress.
@@ -4039,6 +4039,17 @@ vinyl_index_create_iterator(struct index *base, enum iterator_type type,
 				   key, part_count);
 	if (it->key.stmt == NULL)
 		goto err_key;
+	/*
+	 * The key is a fresh statement owned by this iterator, so
+	 * it can be marked in place: the scan starts at the edge
+	 * of the key's match range given by the iterator type.
+	 * An empty key historically means a full scan whatever
+	 * the type, so it is marked by the direction alone.
+	 */
+	enum iterator_type bound_type = type;
+	if (part_count == 0)
+		bound_type = iterator_direction(type) > 0 ? ITER_GE : ITER_LE;
+	vy_stmt_add_flag(it->key.stmt, vy_bound_flag(bound_type));
 	struct vy_entry last;
 	if (pos != NULL) {
 		last = vy_entry_key_new(lsm->env->key_format, lsm->cmp_def,
@@ -4527,7 +4538,7 @@ vinyl_space_build_index(struct space *src_space, struct index *new_index,
 	}
 
 	struct vy_read_iterator itr;
-	vy_read_iterator_open(&itr, pk, NULL, ITER_ALL, pk->env->empty_key,
+	vy_read_iterator_open(&itr, pk, NULL, ITER_ALL, pk->env->key_inf,
 			      &env->xm->p_committed_read_view);
 	int loops = 0;
 	struct vy_entry entry;

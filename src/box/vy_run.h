@@ -212,7 +212,7 @@ struct vy_slice {
 	 *
 	 * An inclusive key (max_key) when the run's max key falls
 	 * within this range (typical case, non-shared runs).
-	 * An exclusive key (with VY_STMT_EXCLUSIVE_BOUND flag)
+	 * An exclusive key (with VY_STMT_INFIMUM flag)
 	 * when the run extends past this range's boundary
 	 * (shared run clipped by range split).
 	 */

@@ -93,10 +93,26 @@ vy_lsm_env_create(struct vy_lsm_env *env, const char *path,
 		  vy_compaction_trigger_cb compaction_trigger_cb,
 		  void *compaction_trigger_arg)
 {
-	env->empty_key.hint = HINT_NONE;
-	env->empty_key.stmt = vy_key_new(key_format, NULL, 0);
-	if (env->empty_key.stmt == NULL)
+	/*
+	 * The bounds of the whole key space: the empty key marked
+	 * infimum sorts before every key, marked supremum after
+	 * every key. Range bounds are always bound keys, and the
+	 * leftmost and rightmost ranges use these singletons.
+	 * Full scans use them as search keys.
+	 */
+	env->key_inf.hint = HINT_NONE;
+	env->key_inf.stmt = vy_key_new(key_format, NULL, 0);
+	env->key_sup.hint = HINT_NONE;
+	env->key_sup.stmt = vy_key_new(key_format, NULL, 0);
+	if (env->key_inf.stmt == NULL || env->key_sup.stmt == NULL) {
+		if (env->key_inf.stmt != NULL)
+			tuple_unref(env->key_inf.stmt);
+		if (env->key_sup.stmt != NULL)
+			tuple_unref(env->key_sup.stmt);
 		return -1;
+	}
+	vy_stmt_add_flag(env->key_inf.stmt, VY_STMT_INFIMUM);
+	vy_stmt_add_flag(env->key_sup.stmt, VY_STMT_SUPREMUM);
 	env->path = path;
 	env->p_generation = p_generation;
 	env->key_format = key_format;
@@ -116,7 +132,8 @@ vy_lsm_env_create(struct vy_lsm_env *env, const char *path,
 void
 vy_lsm_env_destroy(struct vy_lsm_env *env)
 {
-	tuple_unref(env->empty_key.stmt);
+	tuple_unref(env->key_inf.stmt);
+	tuple_unref(env->key_sup.stmt);
 	tuple_format_unref(env->key_format);
 	mempool_destroy(&env->history_node_pool);
 }
@@ -497,9 +514,11 @@ vy_lsm_create(struct vy_lsm *lsm)
 	 */
 	int64_t id = vy_log_next_id();
 
-	/* Create the initial range. */
-	struct vy_range *range = vy_range_new(vy_log_next_id(), vy_entry_none(),
-					      vy_entry_none(), lsm->cmp_def);
+	/* Create the initial range: the whole key space. */
+	struct vy_range *range = vy_range_new(vy_log_next_id(),
+					      lsm->env->key_inf,
+					      lsm->env->key_sup,
+					      lsm->cmp_def);
 	if (range == NULL)
 		return -1;
 	assert(lsm->range_count == 0);
@@ -509,7 +528,8 @@ vy_lsm_create(struct vy_lsm *lsm)
 	vy_log_tx_begin();
 	vy_log_prepare_lsm(id, lsm->space_id, lsm->index_id,
 			   lsm->group_id, lsm->key_def);
-	vy_log_insert_range(id, range->id, NULL, NULL);
+	vy_log_insert_range(id, range->id, range->begin.stmt,
+			    range->end.stmt);
 	vy_log_tx_try_commit();
 
 	/* Assign the id. */
@@ -628,26 +648,40 @@ vy_lsm_recover_range(struct vy_lsm *lsm,
 		     struct vy_range_recovery_info *range_info,
 		     struct vy_run_env *run_env, bool force_recovery)
 {
-	struct vy_entry begin = vy_entry_none();
-	struct vy_entry end = vy_entry_none();
 	struct vy_range *range = NULL;
+	/*
+	 * An absent key in the log is the key space bound; an
+	 * interior key becomes the infimum bound it has always
+	 * meant: an inclusive begin, an exclusive end.
+	 */
+	struct vy_entry begin = lsm->env->key_inf;
+	struct vy_entry end = lsm->env->key_sup;
+	tuple_ref(begin.stmt);
+	tuple_ref(end.stmt);
 
 	if (range_info->begin != NULL) {
+		tuple_unref(begin.stmt);
 		begin = vy_entry_key_from_msgpack(lsm->env->key_format,
 						  lsm->cmp_def,
 						  range_info->begin);
-		if (begin.stmt == NULL)
+		if (begin.stmt == NULL) {
+			begin = vy_entry_none();
 			goto out;
+		}
+		vy_stmt_add_flag(begin.stmt, VY_STMT_INFIMUM);
 	}
 	if (range_info->end != NULL) {
+		tuple_unref(end.stmt);
 		end = vy_entry_key_from_msgpack(lsm->env->key_format,
 						lsm->cmp_def,
 						range_info->end);
-		if (end.stmt == NULL)
+		if (end.stmt == NULL) {
+			end = vy_entry_none();
 			goto out;
+		}
+		vy_stmt_add_flag(end.stmt, VY_STMT_INFIMUM);
 	}
-	if (begin.stmt != NULL && end.stmt != NULL &&
-	    vy_entry_compare(begin, end, lsm->cmp_def) >= 0) {
+	if (vy_bound_cmp(begin, end, lsm->cmp_def) >= 0) {
 		diag_set(ClientError, ER_INVALID_VYLOG_FILE,
 			 tt_sprintf("begin >= end for range %lld",
 				    (long long)range_info->id));
@@ -774,8 +808,8 @@ vy_lsm_recover(struct vy_lsm *lsm, struct vy_recovery *recovery,
 		 * even for dropped ones.
 		 */
 		struct vy_range *range;
-		range = vy_range_new(vy_log_next_id(), vy_entry_none(),
-				     vy_entry_none(), lsm->cmp_def);
+		range = vy_range_new(vy_log_next_id(), lsm->env->key_inf,
+				     lsm->env->key_sup, lsm->cmp_def);
 		if (range == NULL)
 			return -1;
 		vy_lsm_add_range(lsm, range);
@@ -868,7 +902,8 @@ vy_lsm_recover(struct vy_lsm *lsm, struct vy_recovery *recovery,
 	struct vy_range *range, *prev = NULL;
 	for (range = vy_range_tree_first(&lsm->range_tree); range != NULL;
 	     prev = range, range = vy_range_tree_next(&lsm->range_tree, range)) {
-		if (prev == NULL && range->begin.stmt != NULL) {
+		if (prev == NULL &&
+		    !vy_stmt_is_empty_key(range->begin.stmt)) {
 			diag_set(ClientError, ER_INVALID_VYLOG_FILE,
 				 tt_sprintf("Range %lld is leftmost but "
 					    "starts with a finite key",
@@ -877,9 +912,8 @@ vy_lsm_recover(struct vy_lsm *lsm, struct vy_recovery *recovery,
 		}
 		int cmp = 0;
 		if (prev != NULL &&
-		    (prev->end.stmt == NULL || range->begin.stmt == NULL ||
-		     (cmp = vy_entry_compare(prev->end, range->begin,
-					     lsm->cmp_def)) != 0)) {
+		    (cmp = vy_bound_cmp(prev->end, range->begin,
+					lsm->cmp_def)) != 0) {
 			const char *errmsg = cmp > 0 ?
 				"Nearby ranges %lld and %lld overlap" :
 				"Keys between ranges %lld and %lld not spanned";
@@ -896,7 +930,7 @@ vy_lsm_recover(struct vy_lsm *lsm, struct vy_recovery *recovery,
 				    (long long)lsm->id));
 		return -1;
 	}
-	if (prev->end.stmt != NULL) {
+	if (!vy_stmt_is_empty_key(prev->end.stmt)) {
 		diag_set(ClientError, ER_INVALID_VYLOG_FILE,
 			 tt_sprintf("Range %lld is rightmost but "
 				    "ends with a finite key",
@@ -1173,13 +1207,13 @@ vy_lsm_debloat(struct vy_lsm *lsm, struct vy_range *start,
 		 * range->end is exclusive.
 		 */
 		if (forward) {
-			if (r->begin.stmt != NULL &&
+			if (!vy_stmt_is_empty_key(r->begin.stmt) &&
 			    vy_entry_compare_with_raw_key(
 					r->begin, run->info.max_key,
 					HINT_NONE, lsm->cmp_def) > 0)
 				return;
 		} else {
-			if (r->end.stmt != NULL &&
+			if (!vy_stmt_is_empty_key(r->end.stmt) &&
 			    vy_entry_compare_with_raw_key(
 					r->end, run->info.min_key,
 					HINT_NONE, lsm->cmp_def) <= 0)
@@ -1276,8 +1310,8 @@ vy_lsm_probe_blind_write(struct vy_lsm *lsm, struct tuple *stmt)
 		.hint = vy_stmt_hint(stmt, lsm->key_def),
 	};
 	struct vy_range *range = vy_range_tree_find_by_key(
-		&lsm->range_tree, ITER_EQ, entry);
-	if (range == NULL || rlist_empty(&range->slices))
+		&lsm->range_tree, entry);
+	if (rlist_empty(&range->slices))
 		return;
 	struct vy_slice *last = rlist_last_entry(&range->slices,
 						 struct vy_slice, in_range);
@@ -1522,6 +1556,12 @@ vy_lsm_split_range(struct vy_lsm *lsm, struct vy_range *range,
 					      split_key_raw);
 	if (split_key.stmt == NULL)
 		goto fail;
+	/*
+	 * The split key is the left part's exclusive end and the
+	 * right part's inclusive begin: one infimum bound serves
+	 * both, and the slices inherit it verbatim.
+	 */
+	vy_stmt_add_flag(split_key.stmt, VY_STMT_INFIMUM);
 
 	struct vy_entry keys[3];
 	keys[0] = range->begin;
@@ -1565,13 +1605,11 @@ vy_lsm_split_range(struct vy_lsm *lsm, struct vy_range *range,
 	for (int i = 0; i < n_parts; i++) {
 		part = parts[i];
 		vy_log_insert_range(lsm->id, part->id,
-				    tuple_data_or_null(part->begin.stmt),
-				    tuple_data_or_null(part->end.stmt));
+				    part->begin.stmt, part->end.stmt);
 		rlist_foreach_entry(slice, &part->slices, in_range)
 			vy_log_insert_slice(part->id, slice->run->id,
-					    slice->id,
-					    tuple_data_or_null(slice->begin.stmt),
-					    tuple_data_or_null(part->end.stmt));
+					    slice->id, slice->begin.stmt,
+					    part->end.stmt);
 	}
 	if (vy_log_tx_commit() < 0)
 		goto fail;
@@ -1631,8 +1669,7 @@ vy_lsm_coalesce_range(struct vy_lsm *lsm, struct vy_range *range)
 	 */
 	vy_log_tx_begin();
 	vy_log_insert_range(lsm->id, result->id,
-			    tuple_data_or_null(result->begin.stmt),
-			    tuple_data_or_null(result->end.stmt));
+			    result->begin.stmt, result->end.stmt);
 	for (it = first; it != end;
 	     it = vy_range_tree_next(&lsm->range_tree, it)) {
 		struct vy_slice *slice;
@@ -1642,9 +1679,8 @@ vy_lsm_coalesce_range(struct vy_lsm *lsm, struct vy_range *range)
 		rlist_foreach_entry(slice, &it->slices, in_range) {
 			vy_log_insert_slice(result->id,
 					    slice->run->id, slice->id,
-					    tuple_data_or_null(slice->begin.stmt),
-					    tuple_data_or_null(
-							result->end.stmt));
+					    slice->begin.stmt,
+					    result->end.stmt);
 		}
 	}
 	if (vy_log_tx_commit() < 0)

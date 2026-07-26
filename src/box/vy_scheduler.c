@@ -1313,8 +1313,7 @@ vy_task_dump_complete(struct vy_task *task)
 		assert(i < lsm->range_count);
 		slice = new_slices[i];
 		vy_log_insert_slice(range->id, new_run->id, slice->id,
-				    tuple_data_or_null(slice->begin.stmt),
-				    tuple_data_or_null(range->end.stmt));
+				    slice->begin.stmt, range->end.stmt);
 	}
 	vy_log_dump_lsm(lsm->id, dump_lsn);
 	if (vy_log_tx_commit() < 0)
@@ -1638,8 +1637,7 @@ vy_task_compaction_complete(struct vy_task *task)
 		vy_log_create_run(lsm->id, new_run->id, new_run->dump_lsn,
 				  new_run->dump_count);
 		vy_log_insert_slice(range->id, new_run->id, new_slice->id,
-				    tuple_data_or_null(new_slice->begin.stmt),
-				    tuple_data_or_null(range->end.stmt));
+				    new_slice->begin.stmt, range->end.stmt);
 	}
 	if (vy_log_tx_commit() < 0) {
 		if (new_slice != NULL)

@@ -186,8 +186,7 @@ vy_point_lookup_scan_slices(struct vy_lsm *lsm, const struct vy_read_view **rv,
 			    struct vy_entry key, struct vy_history *history)
 {
 	struct vy_range *range = vy_range_tree_find_by_key(&lsm->range_tree,
-							   ITER_EQ, key);
-	assert(range != NULL);
+							   key);
 	lsm->last_range = range;
 	int slice_count = range->slice_count;
 	size_t region_svp = region_used(&fiber()->gc);
@@ -467,8 +466,7 @@ vy_lsm_check_concurrent_write(struct vy_lsm *lsm, struct vy_tx *tx,
 	 */
 	vy_lsm_ref(lsm);
 	struct vy_range *range = vy_range_tree_find_by_key(
-		&lsm->range_tree, ITER_EQ, key);
-	assert(range != NULL);
+		&lsm->range_tree, key);
 	if (range->slice_count == 0)
 		goto done_cleanup_unref;
 	size_t region_svp = region_used(&fiber()->gc);

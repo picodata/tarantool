@@ -58,121 +58,26 @@ vy_range_tree_cmp(struct vy_range *range_a, struct vy_range *range_b)
 	if (range_a == range_b)
 		return 0;
 
-	/* Any key > -inf. */
-	if (range_a->begin.stmt == NULL)
-		return -1;
-	if (range_b->begin.stmt == NULL)
-		return 1;
-
 	assert(range_a->cmp_def == range_b->cmp_def);
-	return vy_entry_compare(range_a->begin, range_b->begin,
-				range_a->cmp_def);
+	return vy_bound_cmp(range_a->begin, range_b->begin,
+			    range_a->cmp_def);
 }
 
 int
 vy_range_tree_key_cmp(struct vy_entry entry, struct vy_range *range)
 {
-	/* Any key > -inf. */
-	if (range->begin.stmt == NULL)
-		return 1;
-	return vy_entry_compare(entry, range->begin, range->cmp_def);
+	return vy_bound_cmp(entry, range->begin, range->cmp_def);
 }
 
 struct vy_range *
-vy_range_tree_find_by_key(vy_range_tree_t *tree,
-			  enum iterator_type iterator_type,
-			  struct vy_entry key)
+vy_range_tree_find_by_key(vy_range_tree_t *tree, struct vy_entry key)
 {
-	if (vy_stmt_is_empty_key(key.stmt)) {
-		switch (iterator_type) {
-		case ITER_LT:
-		case ITER_LE:
-		case ITER_REQ:
-			return vy_range_tree_last(tree);
-		case ITER_GT:
-		case ITER_GE:
-		case ITER_EQ:
-			return vy_range_tree_first(tree);
-		default:
-			unreachable();
-			return NULL;
-		}
-	}
-	struct vy_range *range;
-	if (iterator_type == ITER_GE || iterator_type == ITER_GT ||
-	    iterator_type == ITER_EQ) {
-		/**
-		 * Case 1. part_count == 1, looking for [10]. ranges:
-		 * {1, 3, 5} {7, 8, 9} {10, 15 20} {22, 32, 42}
-		 *                      ^looking for this
-		 * Case 2. part_count == 1, looking for [10]. ranges:
-		 * {1, 2, 4} {5, 6, 7, 8} {50, 100, 200}
-		 *            ^looking for this
-		 * Case 3. part_count == 2, looking for [10]. ranges:
-		 * {[1, 2], [2, 3]} {[9, 1], [10, 1], [10 2], [11 3]} {[12,..}
-		 *                   ^looking for this
-		 * Case 4. part_count == 2, looking for [10]. ranges:
-		 * {[1, 2], [10, 1]} {[10, 2] [10 3] [11 3]} {[12, 1]..}
-		 *  ^looking for this
-		 * Case 5. part_count does not matter, looking for [10].
-		 * ranges:
-		 * {100, 200}, {300, 400}
-		 * ^looking for this
-		 */
-		/**
-		 * vy_range_tree_psearch finds least range with begin == key
-		 * or previous if equal was not found
-		 */
-		range = vy_range_tree_psearch(tree, key);
-		/* switch to previous for case (4) */
-		if (range != NULL && range->begin.stmt != NULL &&
-		    !vy_stmt_is_full_key(key.stmt, range->cmp_def) &&
-		    vy_entry_compare(key, range->begin, range->cmp_def) == 0)
-			range = vy_range_tree_prev(tree, range);
-		/* for case 5 or subcase of case 4 */
-		if (range == NULL)
-			range = vy_range_tree_first(tree);
-	} else {
-		assert(iterator_type == ITER_LT || iterator_type == ITER_LE ||
-		       iterator_type == ITER_REQ);
-		/**
-		 * Case 1. part_count == 1, looking for [10]. ranges:
-		 * {1, 3, 5} {7, 8, 9} {10, 15 20} {22, 32, 42}
-		 *                      ^looking for this
-		 * Case 2. part_count == 1, looking for [10]. ranges:
-		 * {1, 2, 4} {5, 6, 7, 8} {50, 100, 200}
-		 *            ^looking for this
-		 * Case 3. part_count == 2, looking for [10]. ranges:
-		 * {[1, 2], [2, 3]} {[9, 1], [10, 1], [10 2], [11 3]} {[12,..}
-		 *                   ^looking for this
-		 * Case 4. part_count == 2, looking for [10]. ranges:
-		 * {[1, 2], [10, 1]} {[10, 2] [10 3] [11 3]} {[12, 1]..}
-		 *                    ^looking for this
-		 * Case 5. part_count does not matter, looking for [10].
-		 * ranges:
-		 * {1, 2}, {3, 4, ..}
-		 *          ^looking for this
-		 */
-		/**
-		 * vy_range_tree_nsearch finds most range with begin == key
-		 * or next if equal was not found
-		 */
-		range = vy_range_tree_nsearch(tree, key);
-		if (range != NULL) {
-			/* fix curr_range for cases 2 and 3 */
-			if (range->begin.stmt != NULL &&
-			    vy_entry_compare(key, range->begin,
-					     range->cmp_def) != 0) {
-				struct vy_range *prev;
-				prev = vy_range_tree_prev(tree, range);
-				if (prev != NULL)
-					range = prev;
-			}
-		} else {
-			/* Case 5 */
-			range = vy_range_tree_last(tree);
-		}
-	}
+	/*
+	 * The leftmost range begins at minus infinity, so the
+	 * predecessor search can only miss on an empty tree.
+	 */
+	struct vy_range *range = vy_range_tree_psearch(tree, key);
+	assert(range != NULL);
 	return range;
 }
 
@@ -236,7 +141,8 @@ vy_compaction_plan_seal(struct vy_range *range)
 		 * and there is nobody to coalesce with.
 		 */
 		assert(plan->count == 0);
-		if (range->begin.stmt != NULL || range->end.stmt != NULL)
+		if (!vy_stmt_is_empty_key(range->begin.stmt) ||
+		    !vy_stmt_is_empty_key(range->end.stmt))
 			plan->priority = 1;
 	} else if (plan->split_key != NULL) {
 		/* Oversized range: schedule for splitting. */
@@ -294,13 +200,12 @@ vy_range_new(int64_t id, struct vy_entry begin, struct vy_entry end,
 			 "malloc", "struct vy_range");
 		return NULL;
 	}
+	assert(vy_stmt_is_bound(begin.stmt) && vy_stmt_is_bound(end.stmt));
 	range->id = id;
 	range->begin = begin;
-	if (begin.stmt != NULL)
-		tuple_ref(begin.stmt);
+	tuple_ref(begin.stmt);
 	range->end = end;
-	if (end.stmt != NULL)
-		tuple_ref(end.stmt);
+	tuple_ref(end.stmt);
 	range->cmp_def = cmp_def;
 	rlist_create(&range->slices);
 	heap_node_create(&range->heap_node);
@@ -310,10 +215,8 @@ vy_range_new(int64_t id, struct vy_entry begin, struct vy_entry end,
 void
 vy_range_delete(struct vy_range *range)
 {
-	if (range->begin.stmt != NULL)
-		tuple_unref(range->begin.stmt);
-	if (range->end.stmt != NULL)
-		tuple_unref(range->end.stmt);
+	tuple_unref(range->begin.stmt);
+	tuple_unref(range->end.stmt);
 	vy_compaction_plan_destroy(&range->compaction_plan);
 
 	struct vy_slice *slice, *next_slice;
@@ -331,12 +234,12 @@ vy_range_snprint(char *buf, int size, const struct vy_range *range)
 {
 	int total = 0;
 	SNPRINT(total, snprintf, buf, size, "[%" PRId64 "] (", range->id);
-	if (range->begin.stmt != NULL)
+	if (!vy_stmt_is_empty_key(range->begin.stmt))
 		SNPRINT(total, tuple_snprint, buf, size, range->begin.stmt);
 	else
 		SNPRINT(total, snprintf, buf, size, "-inf");
 	SNPRINT(total, snprintf, buf, size, "..");
-	if (range->end.stmt != NULL)
+	if (!vy_stmt_is_empty_key(range->end.stmt))
 		SNPRINT(total, tuple_snprint, buf, size, range->end.stmt);
 	else
 		SNPRINT(total, snprintf, buf, size, "inf");
@@ -375,17 +278,17 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 	 * wastes disk references and confuses the compaction
 	 * scheduler.
 	 */
-	assert(range->begin.stmt == NULL ||
+	assert(vy_stmt_is_empty_key(range->begin.stmt) ||
 	       vy_entry_compare_with_raw_key(
 			range->begin, run->info.max_key,
 			HINT_NONE, range->cmp_def) <= 0);
-	assert(range->end.stmt == NULL ||
+	assert(vy_stmt_is_empty_key(range->end.stmt) ||
 	       vy_entry_compare_with_raw_key(
 			range->end, run->info.min_key,
 			HINT_NONE, range->cmp_def) > 0);
 
 	/* slice->begin = MAX(range::begin, run::min_key) */
-	if (range->begin.stmt != NULL &&
+	if (!vy_stmt_is_empty_key(range->begin.stmt) &&
 	    vy_entry_compare_with_raw_key(range->begin, run->info.min_key,
 					  HINT_NONE, range->cmp_def) >= 0) {
 		slice->begin = range->begin;
@@ -418,13 +321,16 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 	 * ends before the range boundary, so max_key is the
 	 * precise inclusive upper bound.
 	 */
-	if (range->end.stmt != NULL &&
+	if (!vy_stmt_is_empty_key(range->end.stmt) &&
 	    vy_entry_compare_with_raw_key(range->end, run->info.max_key,
 					  HINT_NONE, range->cmp_def) <= 0) {
+		/*
+		 * The range end is an infimum bound and the slice
+		 * inherits it verbatim: keys strictly less than
+		 * the (exclusive) range end.
+		 */
 		slice->end_bound = range->end;
 		tuple_ref(range->end.stmt);
-		vy_stmt_add_flag(slice->end_bound.stmt,
-				 VY_STMT_EXCLUSIVE_BOUND);
 	} else {
 		slice->end_bound = vy_entry_key_from_msgpack(
 			env->key_format, range->cmp_def,
@@ -440,7 +346,7 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 					&unused);
 	assert(slice->first_page_no < run->info.page_count);
 	enum iterator_type itype =
-		vy_entry_is_exclusive(slice->end_bound) ?
+		vy_entry_is_infimum(slice->end_bound) ?
 		ITER_LT : ITER_LE;
 	slice->last_page_no =
 		vy_page_index_find_page(run, slice->end_bound,
@@ -1083,13 +989,17 @@ vy_compaction_plan_check_last_level(struct vy_range *range)
 		struct vy_slice *slice =
 			rlist_entry(pos, struct vy_slice, in_range);
 		/*
-		 * Two intervals [a_min, a_max] and [b_min, b_max]
-		 * overlap iff a_min <= b_max AND a_max >= b_min.
+		 * A slice's keys lie strictly between its bound
+		 * positions, so slices overlap only if their open
+		 * intervals do: a_min < b_max AND a_max > b_min.
+		 * Equal bounds -- a slice ending at a split key's
+		 * infimum meeting one beginning at it -- touch
+		 * without sharing a key.
 		 */
 		if (vy_bound_cmp(cluster_max, slice->begin,
-				 cmp_def) >= 0 &&
+				 cmp_def) > 0 &&
 		    vy_bound_cmp(slice->end_bound, cluster_min,
-				 cmp_def) >= 0) {
+				 cmp_def) > 0) {
 			/* Overlap found: not last level. */
 			return;
 		}
@@ -1205,8 +1115,8 @@ vy_split_point_cmp(const void *a, const void *b, void *arg)
 	 * any exclusive end that is evaluated as a candidate here.
 	 */
 	if (pa->type == VY_SPLIT_POINT_END)
-		return (int)!vy_entry_is_exclusive(pa->slice->end_bound) -
-		       (int)!vy_entry_is_exclusive(pb->slice->end_bound);
+		return (int)!vy_entry_is_infimum(pa->slice->end_bound) -
+		       (int)!vy_entry_is_infimum(pb->slice->end_bound);
 	return 0;
 }
 
@@ -1228,7 +1138,7 @@ vy_split_update_balance(struct vy_split_point *start,
 			*right -= p->bytes;
 			break;
 		case VY_SPLIT_POINT_END:
-			if (!vy_entry_is_exclusive(p->slice->end_bound)) {
+			if (!vy_entry_is_infimum(p->slice->end_bound)) {
 				/*
 				 * Inclusive end: the slice is fully
 				 * to the left only past this key.
@@ -1312,7 +1222,7 @@ vy_range_find_best_split(struct vy_range *range, uint64_t range_size)
 	struct vy_split_point *p_prev = NULL;
 	for (p = point_vec; p < point_vec + point_vec_size; p++) {
 		if (p->type == VY_SPLIT_POINT_END &&
-		    !vy_entry_is_exclusive(p->slice->end_bound)) {
+		    !vy_entry_is_infimum(p->slice->end_bound)) {
 			/*
 			 * Inclusive end is never a split
 			 * candidate, because it still cuts off

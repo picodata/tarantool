@@ -103,8 +103,8 @@ test_basic()
 				       index_def, format, NULL, 0);
 	isnt(pk, NULL, "lsm is not NULL");
 
-	struct vy_range *range = vy_range_new(1, vy_entry_none(),
-					      vy_entry_none(), pk->cmp_def);
+	struct vy_range *range = vy_range_new(1, lsm_env.key_inf,
+					      lsm_env.key_sup, pk->cmp_def);
 
 	isnt(pk, NULL, "range is not NULL");
 	vy_lsm_add_range(pk, range);
