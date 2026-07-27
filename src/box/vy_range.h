@@ -330,8 +330,8 @@ const char *
 vy_split_key(const struct vy_split_point *p, hint_t *hint);
 
 /**
- * Compare split points for ordering in the sweep algorithm:
- * first by key, then by boundary type.
+ * Compare split points as positions in the total key order;
+ * an END sorts before a BEGIN at a shared position.
  */
 int
 vy_split_point_cmp(const void *a, const void *b, void *arg);

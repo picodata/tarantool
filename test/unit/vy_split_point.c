@@ -69,8 +69,8 @@ static struct vy_entry
 vy_bound_new_i64(int64_t value, bool exclusive)
 {
 	struct vy_entry e = vy_key_new_i64(value);
-	if (exclusive)
-		vy_stmt_add_flag(e.stmt, VY_STMT_INFIMUM);
+	vy_stmt_add_flag(e.stmt, exclusive ? VY_STMT_INFIMUM :
+					     VY_STMT_SUPREMUM);
 	return e;
 }
 
@@ -250,7 +250,7 @@ vy_test_range_new(const struct vy_slice_i64 *specs,
 		slices[i]->seed = RAND_MAX;
 		vy_range_add_slice(range, slices[i]);
 		/*
-		 * Set begin/end_bound after vy_range_add_slice,
+		 * Set begin/end after vy_range_add_slice,
 		 * because vy_range_init_slice clears them first
 		 * (and then returns early for runs with no pages).
 		 *
@@ -258,14 +258,13 @@ vy_test_range_new(const struct vy_slice_i64 *specs,
 		 * the boundary clips: EXCLUSIVE(range end).
 		 * Otherwise (widened or unbounded): INCLUSIVE(max_key).
 		 */
-		if (specs[i].begin != NEG_INF)
-			slices[i]->begin = vy_key_new_i64(specs[i].begin);
+		slices[i]->begin = vy_bound_new_i64(specs[i].begin, true);
 		if (specs[i].end_type == END_EX &&
 		    specs[i].end != POS_INF && mk >= specs[i].end) {
-			slices[i]->end_bound =
+			slices[i]->end =
 				vy_bound_new_i64(specs[i].end, true);
 		} else {
-			slices[i]->end_bound = vy_bound_new_i64(mk, false);
+			slices[i]->end = vy_bound_new_i64(mk, false);
 		}
 	}
 	return range;
@@ -315,8 +314,8 @@ test_vy_split_point_cmp(void)
 	struct vy_slice *slice_a = vy_slice_new(1, run);
 	fail_if(slice_a == NULL);
 	slice_a->count.bytes = slice_spec_a.bytes;
-	slice_a->begin = vy_key_new_i64(slice_spec_a.begin);
-	slice_a->end_bound = vy_bound_new_i64(10, false);
+	slice_a->begin = vy_bound_new_i64(slice_spec_a.begin, true);
+	slice_a->end = vy_bound_new_i64(10, false);
 	struct vy_split_point p_key_a = {
 		.slice = slice_a,
 		.type = VY_SPLIT_POINT_BEGIN,
@@ -327,8 +326,8 @@ test_vy_split_point_cmp(void)
 	struct vy_slice *slice_b = vy_slice_new(1, run);
 	fail_if(slice_b == NULL);
 	slice_b->count.bytes = slice_spec_b.bytes;
-	slice_b->begin = vy_key_new_i64(slice_spec_b.begin);
-	slice_b->end_bound = vy_bound_new_i64(10, false);
+	slice_b->begin = vy_bound_new_i64(slice_spec_b.begin, true);
+	slice_b->end = vy_bound_new_i64(10, false);
 	struct vy_split_point p_key_b = {
 		.slice = slice_b,
 		.type = VY_SPLIT_POINT_BEGIN,
@@ -342,9 +341,9 @@ test_vy_split_point_cmp(void)
 	struct vy_slice *slice_same = vy_slice_new(1, run);
 	fail_if(slice_same == NULL);
 	slice_same->count.bytes = slice_spec_same.bytes;
-	slice_same->begin = vy_key_new_i64(slice_spec_same.begin);
+	slice_same->begin = vy_bound_new_i64(slice_spec_same.begin, true);
 	/* range_end(1) <= max_key(10) -> EXCLUSIVE */
-	slice_same->end_bound = vy_bound_new_i64(slice_spec_same.end, true);
+	slice_same->end = vy_bound_new_i64(slice_spec_same.end, true);
 
 	struct vy_split_point p_begin = {
 		.slice = slice_same,
@@ -355,24 +354,24 @@ test_vy_split_point_cmp(void)
 		.type = VY_SPLIT_POINT_END,
 	};
 
-	ok(vy_split_point_cmp(&p_begin, &p_excl_end, cmp_def) < 0,
-	   "equal keys order begin < end");
+	ok(vy_split_point_cmp(&p_begin, &p_excl_end, cmp_def) > 0,
+	   "a shared position orders end before begin");
 
-	/* Inclusive end at key 1: use slice_a which has INCLUSIVE end_bound. */
+	/* Inclusive end at key 1: use slice_a which has INCLUSIVE end. */
 	struct vy_split_point p_incl_end = {
 		.slice = slice_a,
 		.type = VY_SPLIT_POINT_END,
 	};
 	/*
-	 * slice_a->end_bound is INCLUSIVE(10), but for this test we need
+	 * slice_a->end is INCLUSIVE(10), but for this test we need
 	 * an inclusive end at key 1.  Use a temporary override.
 	 */
-	struct vy_entry saved = slice_a->end_bound;
-	slice_a->end_bound = vy_bound_new_i64(1, false);
+	struct vy_entry saved = slice_a->end;
+	slice_a->end = vy_bound_new_i64(1, false);
 	ok(vy_split_point_cmp(&p_excl_end, &p_incl_end, cmp_def) < 0,
-	   "equal keys order exclusive end < inclusive end");
-	tuple_unref(slice_a->end_bound.stmt);
-	slice_a->end_bound = saved;
+	   "an exclusive end sorts before an inclusive end at its key");
+	tuple_unref(slice_a->end.stmt);
+	slice_a->end = saved;
 
 	vy_slice_delete(slice_a);
 	vy_slice_delete(slice_b);
@@ -530,8 +529,13 @@ test_vy_range_find_best_split(void)
 		(struct vy_slice_i64)
 		VY_SLICE_LAST,
 	};
+	/*
+	 * An exclusive end meeting a begin at the same key is a
+	 * clean adjacency: the cut leaves one slice fully left
+	 * and the other fully right, splitting neither.
+	 */
 	run_split_case("exclusive end equals another begin",
-		       case_excl_end_equals_begin, KEY_NOT_FOUND);
+		       case_excl_end_equals_begin, 50);
 
 	struct vy_slice_i64 case_three_duplicate_begins[] = {
 		(struct vy_slice_i64)
@@ -762,8 +766,9 @@ test_vy_range_find_best_split(void)
 		(struct vy_slice_i64)
 		VY_SLICE_LAST,
 	};
+	/* The same clean adjacency between two disjoint slices. */
 	run_split_case("range split between -inf and +inf",
-		       case_inf_bounds, KEY_NOT_FOUND);
+		       case_inf_bounds, 50);
 
 	/*
 	 * Pyramid-like overlaps keep the balance heuristic from selecting
@@ -861,16 +866,16 @@ slice_cut_check(const char *name,
 	struct vy_run *run = vy_run_new_i64(run_min, run_max);
 	struct vy_slice *slice = vy_slice_new(1, run);
 	fail_if(slice == NULL);
-	slice->begin = vy_key_new_i64(slice_begin);
+	slice->begin = vy_bound_new_i64(slice_begin, true);
 	/*
-	 * Compute end_bound like vy_range_init_slice would:
+	 * Compute end like vy_range_init_slice would:
 	 * slice_end <= max_key -> EXCLUSIVE(slice_end),
 	 * otherwise -> INCLUSIVE(max_key).
 	 */
 	if (slice_end <= run_max)
-		slice->end_bound = vy_bound_new_i64(slice_end, true);
+		slice->end = vy_bound_new_i64(slice_end, true);
 	else
-		slice->end_bound = vy_bound_new_i64(run_max, false);
+		slice->end = vy_bound_new_i64(run_max, false);
 
 	struct vy_entry begin;
 	struct vy_entry end;
@@ -1089,6 +1094,76 @@ test_vy_compaction_plan_trim(void)
  * vy_compaction_plan_seal then hits assert(plan->count == 0)
  * in the split_key branch.
  */
+/**
+ * Build a range from @a specs, run the compaction priority
+ * update, and check the plan's is_last_level flag.
+ */
+static void
+run_last_level_case(const char *name, const struct vy_slice_i64 *specs,
+		    bool expected)
+{
+	int n;
+	struct vy_slice **slices;
+	struct vy_range *range = vy_test_range_new(specs, &slices, &n);
+
+	struct index_opts opts;
+	index_opts_create(&opts);
+	opts.run_count_per_level = 1;
+	opts.run_size_ratio = 2;
+	opts.range_size = INT64_MAX / 2;
+
+	vy_range_update_compaction_priority(range, &opts, opts.range_size);
+	ok(range->compaction_plan.count > 0 &&
+	   range->compaction_plan.count < n, "%s: plan is a subset", name);
+	is(range->compaction_plan.is_last_level, expected, "%s", name);
+
+	vy_test_range_delete(range, slices, n);
+}
+
+static void
+test_last_level_touching_slice(void)
+{
+	header();
+	plan(4);
+
+	/*
+	 * The plan cluster ends at a split key's infimum and the
+	 * older slice begins at the same infimum -- slices of two
+	 * former neighbor ranges met by a coalesce. They touch
+	 * without sharing a key, so the plan compacts the last
+	 * level for its key range.
+	 */
+	struct vy_slice_i64 case_touching[] = {
+		(struct vy_slice_i64)
+		{ .begin = 50, .end = 90, .end_type = END_IN, .bytes = 10000, },
+		(struct vy_slice_i64)
+		{ .begin = 10, .end = 50, .end_type = END_EX, .bytes = 100, },
+		(struct vy_slice_i64)
+		{ .begin = 10, .end = 50, .end_type = END_EX, .bytes = 100, },
+		(struct vy_slice_i64)
+		VY_SLICE_LAST,
+	};
+	run_last_level_case("older slice touching the plan cluster",
+			    case_touching, true);
+
+	/* One shared key makes it a true overlap. */
+	struct vy_slice_i64 case_overlapping[] = {
+		(struct vy_slice_i64)
+		{ .begin = 49, .end = 90, .end_type = END_IN, .bytes = 10000, },
+		(struct vy_slice_i64)
+		{ .begin = 10, .end = 50, .end_type = END_EX, .bytes = 100, },
+		(struct vy_slice_i64)
+		{ .begin = 10, .end = 50, .end_type = END_EX, .bytes = 100, },
+		(struct vy_slice_i64)
+		VY_SLICE_LAST,
+	};
+	run_last_level_case("older slice overlapping the plan cluster",
+			    case_overlapping, false);
+
+	check_plan();
+	footer();
+}
+
 static void
 test_bloat_guard_with_split(void)
 {
@@ -1156,7 +1231,7 @@ test_bloat_guard_with_split(void)
 int
 main(void)
 {
-	plan(6);
+	plan(7);
 	header();
 
 	vy_iterator_C_test_init(128 * 1024);
@@ -1173,6 +1248,7 @@ main(void)
 	test_split_with_widened_slice_end();
 	test_vy_slice_cut_boundaries();
 	test_vy_compaction_plan_trim();
+	test_last_level_touching_slice();
 	test_bloat_guard_with_split();
 
 	tuple_unref(key_inf.stmt);

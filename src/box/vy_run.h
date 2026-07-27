@@ -203,20 +203,20 @@ struct vy_slice {
 	/** Run this slice is for (increments vy_run::refs). */
 	struct vy_run *run;
 	/**
-	 * Slice begin (increments tuple::refs).
+	 * The begin bound key, an infimum: the range begin, or
+	 * the run's first key when the run starts inside the
+	 * range. All slice keys lie strictly between the bound
+	 * positions in the total key order. Increments
+	 * tuple::refs.
 	 */
 	struct vy_entry begin;
 	/**
-	 * Tightest upper bound on keys stored in this slice
-	 * (increments tuple::refs).
-	 *
-	 * An inclusive key (max_key) when the run's max key falls
-	 * within this range (typical case, non-shared runs).
-	 * An exclusive key (with VY_STMT_INFIMUM flag)
-	 * when the run extends past this range's boundary
-	 * (shared run clipped by range split).
+	 * The end bound key: the range end -- an infimum, when
+	 * the range boundary points in the middle of a shared
+	 * run -- or the supremum of the run's last key, when the
+	 * run ends inside the range. Increments tuple::refs.
 	 */
-	struct vy_entry end_bound;
+	struct vy_entry end;
 	/**
 	 * Random seed used for compaction randomization.
 	 * Lays in range [0, RAND_MAX].

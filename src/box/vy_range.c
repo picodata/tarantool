@@ -262,13 +262,21 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 		tuple_unref(slice->begin.stmt);
 		slice->begin = vy_entry_none();
 	}
-	if (slice->end_bound.stmt != NULL) {
-		tuple_unref(slice->end_bound.stmt);
-		slice->end_bound = vy_entry_none();
+	if (slice->end.stmt != NULL) {
+		tuple_unref(slice->end.stmt);
+		slice->end = vy_entry_none();
 	}
 
 	if (run->info.page_count == 0) {
-		/* The run is empty hence the slice is empty too. */
+		/*
+		 * The run is empty hence the slice is empty too,
+		 * but a slice is a positioned object regardless:
+		 * it spans its range's window.
+		 */
+		slice->begin = range->begin;
+		tuple_ref(slice->begin.stmt);
+		slice->end = range->end;
+		tuple_ref(slice->end.stmt);
 		return;
 	}
 
@@ -307,9 +315,10 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 						  run->info.min_key);
 		if (slice->begin.stmt == NULL)
 			panic("failed to allocate slice begin");
+		vy_stmt_add_flag(slice->begin.stmt, VY_STMT_INFIMUM);
 	}
 	/*
-	 * Compute end_bound: the tightest upper bound on keys
+	 * Compute end: the tightest upper bound on keys
 	 * stored in this slice.
 	 *
 	 * When range->end <= max_key, the range boundary clips
@@ -329,14 +338,20 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 		 * inherits it verbatim: keys strictly less than
 		 * the (exclusive) range end.
 		 */
-		slice->end_bound = range->end;
+		slice->end = range->end;
 		tuple_ref(range->end.stmt);
 	} else {
-		slice->end_bound = vy_entry_key_from_msgpack(
+		/*
+		 * The run's last key is the tightest inclusive
+		 * bound: the slice ends right after it, at the
+		 * key's supremum.
+		 */
+		slice->end = vy_entry_key_from_msgpack(
 			env->key_format, range->cmp_def,
 			run->info.max_key);
-		if (slice->end_bound.stmt == NULL)
-			panic("failed to allocate slice end_bound");
+		if (slice->end.stmt == NULL)
+			panic("failed to allocate slice end");
+		vy_stmt_add_flag(slice->end.stmt, VY_STMT_SUPREMUM);
 	}
 	/** Lookup the first and the last pages spanned by the slice. */
 	bool unused;
@@ -346,10 +361,10 @@ vy_range_init_slice(struct vy_range *range, struct vy_slice *slice)
 					&unused);
 	assert(slice->first_page_no < run->info.page_count);
 	enum iterator_type itype =
-		vy_entry_is_infimum(slice->end_bound) ?
+		vy_entry_is_infimum(slice->end) ?
 		ITER_LT : ITER_LE;
 	slice->last_page_no =
-		vy_page_index_find_page(run, slice->end_bound,
+		vy_page_index_find_page(run, slice->end,
 					range->cmp_def, itype,
 					&unused);
 	assert(slice->last_page_no < run->info.page_count);
@@ -419,17 +434,13 @@ struct vy_trim_point {
 	int index;
 };
 
-/** Compare trim points by slice begin key. NULL (= -inf) first. */
+/** Compare trim points by slice begin key. */
 static int
 vy_trim_point_cmp(const void *a, const void *b, void *arg)
 {
 	const struct vy_trim_point *ea = a;
 	const struct vy_trim_point *eb = b;
 	struct key_def *cmp_def = arg;
-	if (ea->slice->begin.stmt == NULL)
-		return (eb->slice->begin.stmt == NULL) ? 0 : -1;
-	if (eb->slice->begin.stmt == NULL)
-		return 1;
 	int rc = vy_entry_compare(ea->slice->begin, eb->slice->begin,
 				  cmp_def);
 	if (rc != 0)
@@ -509,8 +520,7 @@ vy_compaction_plan_trim(struct vy_range *range,
 	for (point = cur + 1; point < end; point++) {
 		struct vy_slice *s = point->slice;
 		/* Is s disjoint from the current cluster? */
-		bool disjoint = s->begin.stmt != NULL &&
-			vy_entry_compare_with_raw_key(
+		bool disjoint = vy_entry_compare_with_raw_key(
 				s->begin, max_end_key,
 				HINT_NONE, cmp_def) > 0;
 		if (disjoint) {
@@ -947,9 +957,9 @@ vy_compaction_plan_check_bloat(struct vy_range *range)
  * to true so that tombstones are pruned during compaction.
  *
  * For each slice, the data range is
- *   [slice->begin,  slice->end_bound]
+ *   [slice->begin,  slice->end]
  * slice->begin already incorporates max(range->begin, min_key)
- * (see vy_range_init_slice).  end_bound is the tightest upper
+ * (see vy_range_init_slice).  end is the tightest upper
  * bound: INCLUSIVE(max_key) or EXCLUSIVE(range boundary).
  *
  * The plan cluster is the union of all plan slices' data ranges.
@@ -968,14 +978,14 @@ vy_compaction_plan_check_last_level(struct vy_range *range)
 	 * Compute the plan's data range [cluster_min, cluster_max].
 	 */
 	struct vy_entry cluster_min = plan->slices[0]->begin;
-	struct vy_entry cluster_max = plan->slices[0]->end_bound;
+	struct vy_entry cluster_max = plan->slices[0]->end;
 	for (int i = 1; i < plan->count; i++) {
 		if (vy_entry_compare(plan->slices[i]->begin,
 				     cluster_min, cmp_def) < 0)
 			cluster_min = plan->slices[i]->begin;
-		if (vy_bound_cmp(plan->slices[i]->end_bound,
+		if (vy_bound_cmp(plan->slices[i]->end,
 				 cluster_max, cmp_def) > 0)
-			cluster_max = plan->slices[i]->end_bound;
+			cluster_max = plan->slices[i]->end;
 	}
 
 	/*
@@ -998,7 +1008,7 @@ vy_compaction_plan_check_last_level(struct vy_range *range)
 		 */
 		if (vy_bound_cmp(cluster_max, slice->begin,
 				 cmp_def) > 0 &&
-		    vy_bound_cmp(slice->end_bound, cluster_min,
+		    vy_bound_cmp(slice->end, cluster_min,
 				 cmp_def) > 0) {
 			/* Overlap found: not last level. */
 			return;
@@ -1076,20 +1086,31 @@ vy_split_key(const struct vy_split_point *p, hint_t *hint)
 {
 	struct vy_slice *slice = p->slice;
 	if (p->type == VY_SPLIT_POINT_BEGIN) {
-		if (slice->begin.stmt != NULL) {
-			*hint = slice->begin.hint;
-			return tuple_data(slice->begin.stmt);
-		}
-		*hint = HINT_NONE;
-		return slice->run->info.min_key;
+		*hint = slice->begin.hint;
+		return tuple_data(slice->begin.stmt);
 	}
-	/* END: use end_bound. */
-	*hint = slice->end_bound.hint;
-	return tuple_data(slice->end_bound.stmt);
+	/* END: use end. */
+	*hint = slice->end.hint;
+	return tuple_data(slice->end.stmt);
+}
+
+/** The split point's position: the owning slice's bound key. */
+static inline struct vy_entry
+vy_split_entry(const struct vy_split_point *p)
+{
+	return p->type == VY_SPLIT_POINT_BEGIN ? p->slice->begin :
+						 p->slice->end;
 }
 
 /**
- * Compare two split points by key, then by boundary type.
+ * Compare two split points as positions in the total key order.
+ * The bound flags place every point exactly: a clipped end and
+ * a begin sharing a split key take the same position, a
+ * whole-run end sorts right after its last key. The one tie
+ * left is an END meeting a BEGIN at a shared position: the END
+ * sorts first, so a candidate at the position is scored with
+ * the departing slice already left of the cut and the arriving
+ * one still right of it.
  */
 int
 vy_split_point_cmp(const void *a, const void *b, void *arg)
@@ -1098,29 +1119,19 @@ vy_split_point_cmp(const void *a, const void *b, void *arg)
 	const struct vy_split_point *pb = b;
 	struct key_def *cmp_def = arg;
 
-	hint_t hint_a, hint_b;
-	const char *key_a = vy_split_key(pa, &hint_a);
-	const char *key_b = vy_split_key(pb, &hint_b);
-	int rc = vy_key_compare(key_a, hint_a, key_b, hint_b,
-				cmp_def);
+	int rc = vy_bound_cmp(vy_split_entry(pa), vy_split_entry(pb),
+			      cmp_def);
 	if (rc != 0)
 		return rc;
-	/* BEGIN < END at the same key. */
-	if (pa->type != pb->type)
-		return (int)pa->type - (int)pb->type;
-	/*
-	 * Among ENDs at the same key: exclusive before inclusive.
-	 * An inclusive end's weight transfer must be deferred
-	 * until we advance past this key, so it must sort after
-	 * any exclusive end that is evaluated as a candidate here.
-	 */
-	if (pa->type == VY_SPLIT_POINT_END)
-		return (int)!vy_entry_is_infimum(pa->slice->end_bound) -
-		       (int)!vy_entry_is_infimum(pb->slice->end_bound);
-	return 0;
+	/* END < BEGIN at the same position. */
+	return (int)pb->type - (int)pa->type;
 }
 
-/** Update left/right/active balance counters for split points. */
+/**
+ * Update left/right/active balance counters for split points.
+ * A point's weight transfers exactly once, when the sweep
+ * passes its position.
+ */
 static void
 vy_split_update_balance(struct vy_split_point *start,
 			struct vy_split_point *end,
@@ -1138,19 +1149,9 @@ vy_split_update_balance(struct vy_split_point *start,
 			*right -= p->bytes;
 			break;
 		case VY_SPLIT_POINT_END:
-			if (!vy_entry_is_infimum(p->slice->end_bound)) {
-				/*
-				 * Inclusive end: the slice is fully
-				 * to the left only past this key.
-				 */
-				*left += p->bytes;
-				*active -= p->bytes;
-			}
-			/*
-			 * Exclusive end: the weight was already
-			 * transferred eagerly when this point
-			 * became a split candidate.
-			 */
+			/* The slice moves fully to the left. */
+			*left += p->bytes;
+			*active -= p->bytes;
 			break;
 		}
 	}
@@ -1167,9 +1168,10 @@ vy_range_find_best_split(struct vy_range *range, uint64_t range_size)
 
 	/*
 	 * Each slice contributes a BEGIN point and an END point.
-	 * The END type (INCLUSIVE or EXCLUSIVE) is determined by
-	 * slice->end_bound, which already picks the tightest
-	 * upper bound (run->info.max_key or range boundary).
+	 * The end is whichever is tighter (see
+	 * vy_range_init_slice()): the range boundary that clips
+	 * the run -- an infimum, exclusive -- or the run's own
+	 * last key -- a supremum, right after it, inclusive.
 	 */
 	size_t point_vec_size = range->slice_count * 2;
 
@@ -1210,24 +1212,18 @@ vy_range_find_best_split(struct vy_range *range, uint64_t range_size)
 	uint64_t best_active = UINT64_MAX;
 	/* The lowest size difference of left and right ranges. */
 	uint64_t best_balance = UINT64_MAX;
-	/*
-	 * If the previous point was a begin,
-	 * we increase 'active' *after* we advance to the next
-	 * point.
-	 * If it was an end, it's not a good split candidate, so
-	 * we skip it. But we can move the slice fully to the
-	 * left only when we move to a split point that's fully
-	 * to the right of an inclusive end.
-	 */
 	struct vy_split_point *p_prev = NULL;
+	/* The first point whose weight is not yet transferred. */
+	struct vy_split_point *p_next = point_vec;
 	for (p = point_vec; p < point_vec + point_vec_size; p++) {
 		if (p->type == VY_SPLIT_POINT_END &&
-		    !vy_entry_is_infimum(p->slice->end_bound)) {
+		    !vy_entry_is_infimum(p->slice->end)) {
 			/*
-			 * Inclusive end is never a split
-			 * candidate, because it still cuts off
-			 * a little piece of a slice into a new
-			 * range.
+			 * The end is the run's last key: its
+			 * position, right after the key, cannot
+			 * serve as a split key. A split key is an
+			 * infimum: the left part's exclusive end
+			 * and the right part's begin.
 			 */
 			continue;
 		}
@@ -1248,13 +1244,18 @@ vy_range_find_best_split(struct vy_range *range, uint64_t range_size)
 				continue;
 			}
 		}
-		vy_split_update_balance(p_prev ? p_prev : point_vec,
-					p, &left, &right, &active);
-		if (p->type == VY_SPLIT_POINT_END) {
-			/* Exclusive end: eagerly transfer weight. */
-			left += p->bytes;
-			active -= p->bytes;
-		}
+		/*
+		 * Transfer the weight of every point up to the
+		 * candidate. An END candidate transfers its own
+		 * too: the cut sits at its position, so its slice
+		 * lies fully left. A BEGIN candidate's slice lies
+		 * fully right and is transferred later.
+		 */
+		struct vy_split_point *p_to =
+			p->type == VY_SPLIT_POINT_END ? p + 1 : p;
+		vy_split_update_balance(p_next, p_to,
+					&left, &right, &active);
+		p_next = p_to;
 		/*
 		 * Splitting a run that does not participate in
 		 * future compaction may permanently increase
@@ -1296,9 +1297,8 @@ vy_range_find_best_split(struct vy_range *range, uint64_t range_size)
 		}
 		p_prev = p;
 	}
-	/* Call last time to satisfy the assert below. */
-	vy_split_update_balance(p_prev ? p_prev : point_vec,
-				p, &left, &right, &active);
+	/* Transfer the rest to satisfy the assert below. */
+	vy_split_update_balance(p_next, p, &left, &right, &active);
 	assert(active == 0);
 
 	free(point_vec);
@@ -1414,8 +1414,7 @@ vy_range_needs_split(struct vy_range *range, int64_t range_size,
 	 * of the slice, e.g. when the slice begins in the middle
 	 * of a group. In such cases there's no point in splitting.
 	 */
-	if (slice->begin.stmt != NULL &&
-	    vy_entry_compare_with_raw_key(slice->begin, mid_key,
+	if (vy_entry_compare_with_raw_key(slice->begin, mid_key,
 					  HINT_NONE, range->cmp_def) >= 0)
 		return false;
 	/*
@@ -1423,7 +1422,7 @@ vy_range_needs_split(struct vy_range *range, int64_t range_size,
 	 * mid_page, which may be a page earlier than slice->first_page if
 	 * the slice begins mid-group.
 	 */
-	assert(vy_entry_compare_with_raw_key(slice->end_bound, mid_key,
+	assert(vy_entry_compare_with_raw_key(slice->end, mid_key,
 					     HINT_NONE, range->cmp_def) > 0);
 	*p_split_key = mid_key;
 
