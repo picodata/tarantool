@@ -36,6 +36,7 @@
 #include "fiber.h"
 #include "vy_history.h"
 #include "vy_lsm.h"
+#include "vy_point_lookup.h"
 #include "vy_stat.h"
 
 /**
@@ -998,8 +999,18 @@ vy_read_iterator_disk_bytes(struct vy_read_iterator *itr)
 	return disk_bytes;
 }
 
-NODISCARD int
-vy_read_iterator_next(struct vy_read_iterator *itr, struct vy_entry *result)
+/**
+ * Get the next key of the scanned index: the raw merge step.
+ * A secondary index key is returned unresolved.
+ * @param itr         Read iterator.
+ * @param[out] result The found statement is stored here.
+ *
+ * @retval  0 Success.
+ * @retval -1 Read error.
+ */
+static NODISCARD int
+vy_read_iterator_next_key(struct vy_read_iterator *itr,
+			  struct vy_entry *result)
 {
 	assert(itr->tx == NULL || itr->tx->state == VINYL_TX_READY);
 
@@ -1050,7 +1061,21 @@ next_key:
 	return 0;
 }
 
-void
+/**
+ * Add the last returned tuple to the cache. A secondary index
+ * caches the resolved full tuple, not the partial key: the same
+ * statement then backs both the primary and the secondary index
+ * cache, saving memory.
+ * @param itr   Read iterator
+ * @param entry Last tuple returned by the iterator.
+ * @param skipped_lsn Max LSN among all full statements skipped because
+ *                    they didn't match the partial tuple key.
+ *
+ * The skipped_lsn is used for the cache chain link. Basically, it's the max
+ * LSN over all deferred DELETE statements that fall between the previous and
+ * the current cache nodes.
+ */
+static void
 vy_read_iterator_cache_add(struct vy_read_iterator *itr, struct vy_entry entry,
 			   int64_t skipped_lsn)
 {
@@ -1092,6 +1117,55 @@ vy_read_iterator_cache_add(struct vy_read_iterator *itr, struct vy_entry entry,
 	itr->cache_link_lsn = 0;
 }
 
+/** See the comment in vy_read_iterator.h. */
+NODISCARD int
+vy_read_iterator_next(struct vy_read_iterator *itr, struct vy_entry *result)
+{
+	if (itr->pk_entry.stmt != NULL) {
+		tuple_unref(itr->pk_entry.stmt);
+		itr->pk_entry = vy_entry_none();
+	}
+	struct vy_entry entry;
+	int64_t skipped_lsn = 0;
+	while (true) {
+		if (vy_read_iterator_next_key(itr, &entry) != 0)
+			return -1;
+		if (itr->lsm->index_id == 0 || entry.stmt == NULL)
+			break;
+		/*
+		 * A secondary index statement only refers to the
+		 * tuple: resolve it into the full tuple stored in
+		 * the primary index.
+		 */
+		struct vy_entry full;
+		if (vy_get_by_secondary_tuple(itr->lsm, itr->tx,
+					      itr->read_view, entry, &full,
+					      &skipped_lsn) != 0)
+			return -1;
+		if (full.stmt != NULL) {
+			itr->pk_entry = full;
+			entry = full;
+			break;
+		}
+		/*
+		 * The key is dead: its tuple was overwritten or
+		 * deleted in the primary index. The resolution may
+		 * yield: bail out if the transaction was aborted
+		 * meanwhile. The other cursor-level failures (the
+		 * transaction ended or changed hands) cannot occur
+		 * within one call: a transaction is driven by its
+		 * own fiber.
+		 */
+		if (itr->tx != NULL && itr->tx->state == VINYL_TX_ABORT) {
+			diag_set(ClientError, ER_READ_VIEW_ABORTED);
+			return -1;
+		}
+	}
+	vy_read_iterator_cache_add(itr, entry, skipped_lsn);
+	*result = entry;
+	return 0;
+}
+
 /**
  * Close the iterator and free resources
  */
@@ -1100,6 +1174,8 @@ vy_read_iterator_close(struct vy_read_iterator *itr)
 {
 	if (itr->last.stmt != NULL)
 		tuple_unref(itr->last.stmt);
+	if (itr->pk_entry.stmt != NULL)
+		tuple_unref(itr->pk_entry.stmt);
 	if (itr->last_cached.stmt != NULL)
 		tuple_unref(itr->last_cached.stmt);
 	vy_read_iterator_cleanup(itr);

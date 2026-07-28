@@ -526,3 +526,131 @@ done:
 	}
 	return rc;
 }
+
+/** See the comment in vy_point_lookup.h. */
+int
+vy_get_by_secondary_tuple(struct vy_lsm *lsm, struct vy_tx *tx,
+			  const struct vy_read_view **rv,
+			  struct vy_entry entry, struct vy_entry *result,
+			  int64_t *skipped_lsn)
+{
+	int rc = 0;
+	assert(lsm->index_id > 0);
+
+	/*
+	 * Lookup the full tuple by a secondary statement.
+	 * There are two cases: the secondary statement may be
+	 * a key, if we got this tuple from disk, in which case
+	 * we need to extract the primary key parts from it; or
+	 * it may be a full tuple, if we got this tuple from
+	 * the tuple cache or level 0, in which case we may pass
+	 * it immediately to the iterator.
+	 */
+	struct vy_entry key;
+	if (vy_stmt_is_key(entry.stmt)) {
+		key.stmt = vy_stmt_extract_key(entry.stmt, lsm->pk_in_cmp_def,
+					       lsm->env->key_format,
+					       MULTIKEY_NONE);
+		if (key.stmt == NULL)
+			return -1;
+	} else {
+		key.stmt = entry.stmt;
+		tuple_ref(key.stmt);
+	}
+	key.hint = vy_stmt_hint(key.stmt, lsm->pk->cmp_def);
+
+	lsm->pk->stat.lookup++;
+
+	struct vy_entry pk_entry;
+	if (vy_point_lookup(lsm->pk, tx, rv, key, /*keep_delete=*/true,
+			    &pk_entry) != 0) {
+		rc = -1;
+		goto out;
+	}
+
+	bool match = false;
+	struct vy_entry full_entry;
+	if (pk_entry.stmt != NULL &&
+	    vy_stmt_type(pk_entry.stmt) != IPROTO_DELETE) {
+		vy_stmt_foreach_entry(full_entry, pk_entry.stmt, lsm->cmp_def) {
+			if (vy_entry_compare(full_entry, entry,
+					     lsm->cmp_def) == 0) {
+				match = true;
+				break;
+			}
+		}
+	}
+	if (!match) {
+		/*
+		 * If the primary index statement deleting the target
+		 * key from the secondary index hasn't been confirmed,
+		 * we must track it in the transaction read set because
+		 * it may still be rolled back due to a WAL error, in which
+		 * case the overwritten tuple matching the secondary index
+		 * key can be reinstantiated.
+		 */
+		if (tx != NULL && pk_entry.stmt != NULL &&
+		    vy_stmt_is_prepared(pk_entry.stmt))
+			vy_tx_track_point(tx, lsm->pk, pk_entry);
+		/*
+		 * If a tuple read from a secondary index doesn't
+		 * match the tuple corresponding to it in the
+		 * primary index, it must have been overwritten or
+		 * deleted, but the DELETE statement hasn't been
+		 * propagated to the secondary index yet. In this
+		 * case silently skip this tuple.
+		 */
+		/*
+		 * Charge the wasted primary lookup to the primary's
+		 * read-amp stat.  The orphan exists because the
+		 * primary hasn't compacted to produce deferred
+		 * deletes yet.  Use the primary tuple size to reflect
+		 * the actual cost of the unnecessary lookup.  This
+		 * signal accumulates across all secondary indexes,
+		 * eventually triggering primary compaction to clean
+		 * up deferred deletes.
+		 */
+		if (pk_entry.stmt != NULL)
+			vy_lsm_acct_read_amp(lsm->pk,
+					     lsm->pk->last_range,
+					     tuple_size(pk_entry.stmt),
+					     NULL);
+		vy_stmt_counter_acct_tuple(&lsm->stat.skip, entry.stmt);
+		if (pk_entry.stmt != NULL) {
+			vy_stmt_counter_acct_tuple(&lsm->pk->stat.skip,
+						   pk_entry.stmt);
+			*skipped_lsn = MAX(*skipped_lsn,
+					   vy_stmt_lsn(pk_entry.stmt));
+			tuple_unref(pk_entry.stmt);
+		}
+		/*
+		 * We must purge stale tuples from the cache before
+		 * storing the resulting interval in order to avoid
+		 * chain intersections, which are not tolerated by
+		 * the tuple cache implementation.
+		 */
+		vy_cache_on_write(&lsm->cache, entry, NULL);
+		*result = vy_entry_none();
+		goto out;
+	}
+
+	/*
+	 * Even though the tuple is tracked in the secondary index
+	 * read set, we still must track the full tuple read from
+	 * the primary index, otherwise the transaction won't be
+	 * aborted if this tuple is overwritten or deleted, because
+	 * the DELETE statement is not written to secondary indexes
+	 * immediately.
+	 */
+	if (tx != NULL)
+		vy_tx_track_point(tx, lsm->pk, pk_entry);
+
+	if ((*rv)->vlsn == INT64_MAX)
+		vy_cache_add_point(&lsm->pk->cache, pk_entry, key);
+
+	vy_stmt_counter_acct_tuple(&lsm->pk->stat.get, pk_entry.stmt);
+	*result = full_entry;
+out:
+	tuple_unref(key.stmt);
+	return rc;
+}

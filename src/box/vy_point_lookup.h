@@ -117,6 +117,29 @@ int
 vy_lsm_check_concurrent_write(struct vy_lsm *lsm, struct vy_tx *tx,
 			      struct vy_entry entry);
 
+/**
+ * Get a full tuple by a tuple read from a secondary index.
+ * @param lsm         LSM tree from which the tuple was read.
+ * @param tx          Current transaction.
+ * @param rv          Read view.
+ * @param entry       Tuple read from a secondary index.
+ * @param[out] result The found tuple is stored here. Must be
+ *                    unreferenced after usage.
+ * @param[in,out] skipped_lsn If the result is NULL and the input value
+ *                            is less, set to the LSN of the statement
+ *                            that was skipped because it didn't match
+ *                            the partial tuple key. In other words, it's
+ *                            the LSN of the deferred DELETE statement.
+ *
+ * @retval  0 Success.
+ * @retval -1 Memory error or read error.
+ */
+int
+vy_get_by_secondary_tuple(struct vy_lsm *lsm, struct vy_tx *tx,
+			  const struct vy_read_view **rv,
+			  struct vy_entry entry, struct vy_entry *result,
+			  int64_t *skipped_lsn);
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */

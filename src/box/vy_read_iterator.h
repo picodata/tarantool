@@ -84,8 +84,18 @@ struct vy_read_iterator {
 	 * Used by vy_read_iterator_cache_add().
 	 */
 	int64_t cache_link_lsn;
-	/** Last statement returned by vy_read_iterator_next(). */
+	/**
+	 * The last key returned by the raw merge step, see
+	 * vy_read_iterator_next_key(): for a secondary index,
+	 * the unresolved reference statement.
+	 */
 	struct vy_entry last;
+	/**
+	 * The full tuple the last returned secondary index
+	 * statement was resolved into. Referenced by the
+	 * iterator until the next call.
+	 */
+	struct vy_entry pk_entry;
 	/**
 	 * Last statement added to the tuple cache by
 	 * vy_read_iterator_cache_add().
@@ -171,41 +181,21 @@ vy_read_iterator_open(struct vy_read_iterator *itr, struct vy_lsm *lsm,
 
 /**
  * Get the next statement with another key, or start the iterator,
- * if it wasn't started.
+ * if it wasn't started. For a secondary index the statement is
+ * resolved into the full tuple stored in the primary index; keys
+ * the resolution proves dead are consumed internally. Every
+ * result, including the end of the scan, is offered to the
+ * cache; only reads at the latest read view are cached.
  * @param itr         Read iterator.
- * @param[out] result Found statement is stored here.
+ * @param[out] result Found statement is stored here. Owned by
+ *                    the iterator: valid until the next call or
+ *                    close.
  *
  * @retval  0 Success.
  * @retval -1 Read error.
  */
 NODISCARD int
 vy_read_iterator_next(struct vy_read_iterator *itr, struct vy_entry *result);
-
-/**
- * Add the last tuple returned by the read iterator to the cache.
- * @param itr   Read iterator
- * @param entry Last tuple returned by the iterator.
- * @param skipped_lsn Max LSN among all full statements skipped because
- *                    they didn't match the partial tuple key.
- *
- * We use a separate function for populating the cache rather than
- * doing that right in vy_read_iterator_next() so that we can store
- * full tuples in a secondary index cache, thus saving some memory.
- *
- * Usage pattern:
- * - Call vy_read_iterator_next() to get a partial tuple.
- * - Call vy_point_lookup() to get the full tuple corresponding
- *   to the partial tuple returned by the iterator.
- * - Call vy_read_iterator_cache_add() on the full tuple to add
- *   the result to the cache.
- *
- * The skipped_lsn is used for the cache chain link. Basically, it's the max
- * LSN over all deferred DELETE statements that fall between the previous and
- * the current cache nodes.
- */
-void
-vy_read_iterator_cache_add(struct vy_read_iterator *itr, struct vy_entry entry,
-			   int64_t skipped_lsn);
 
 /**
  * Close the iterator and free resources.

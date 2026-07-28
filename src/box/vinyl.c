@@ -1428,150 +1428,6 @@ vy_is_committed(struct vy_env *env, struct vy_lsm *lsm)
 }
 
 /**
- * Get a full tuple by a tuple read from a secondary index.
- * @param lsm         LSM tree from which the tuple was read.
- * @param tx          Current transaction.
- * @param rv          Read view.
- * @param entry       Tuple read from a secondary index.
- * @param[out] result The found tuple is stored here. Must be
- *                    unreferenced after usage.
- * @param[in,out] skipped_lsn If the result is NULL and the input value
- *                            is less, set to the LSN of the statement
- *                            that was skipped because it didn't match
- *                            the partial tuple key. In other words, it's
- *                            the LSN of the deferred DELETE statement.
- *
- * @param  0 Success.
- * @param -1 Memory error or read error.
- */
-static int
-vy_get_by_secondary_tuple(struct vy_lsm *lsm, struct vy_tx *tx,
-			  const struct vy_read_view **rv,
-			  struct vy_entry entry, struct vy_entry *result,
-			  int64_t *skipped_lsn)
-{
-	int rc = 0;
-	assert(lsm->index_id > 0);
-
-	/*
-	 * Lookup the full tuple by a secondary statement.
-	 * There are two cases: the secondary statement may be
-	 * a key, if we got this tuple from disk, in which case
-	 * we need to extract the primary key parts from it; or
-	 * it may be a full tuple, if we got this tuple from
-	 * the tuple cache or level 0, in which case we may pass
-	 * it immediately to the iterator.
-	 */
-	struct vy_entry key;
-	if (vy_stmt_is_key(entry.stmt)) {
-		key.stmt = vy_stmt_extract_key(entry.stmt, lsm->pk_in_cmp_def,
-					       lsm->env->key_format,
-					       MULTIKEY_NONE);
-		if (key.stmt == NULL)
-			return -1;
-	} else {
-		key.stmt = entry.stmt;
-		tuple_ref(key.stmt);
-	}
-	key.hint = vy_stmt_hint(key.stmt, lsm->pk->cmp_def);
-
-	lsm->pk->stat.lookup++;
-
-	struct vy_entry pk_entry;
-	if (vy_point_lookup(lsm->pk, tx, rv, key, /*keep_delete=*/true,
-			    &pk_entry) != 0) {
-		rc = -1;
-		goto out;
-	}
-
-	bool match = false;
-	struct vy_entry full_entry;
-	if (pk_entry.stmt != NULL &&
-	    vy_stmt_type(pk_entry.stmt) != IPROTO_DELETE) {
-		vy_stmt_foreach_entry(full_entry, pk_entry.stmt, lsm->cmp_def) {
-			if (vy_entry_compare(full_entry, entry,
-					     lsm->cmp_def) == 0) {
-				match = true;
-				break;
-			}
-		}
-	}
-	if (!match) {
-		/*
-		 * If the primary index statement deleting the target
-		 * key from the secondary index hasn't been confirmed,
-		 * we must track it in the transaction read set because
-		 * it may still be rolled back due to a WAL error, in which
-		 * case the overwritten tuple matching the secondary index
-		 * key can be reinstantiated.
-		 */
-		if (tx != NULL && pk_entry.stmt != NULL &&
-		    vy_stmt_is_prepared(pk_entry.stmt))
-			vy_tx_track_point(tx, lsm->pk, pk_entry);
-		/*
-		 * If a tuple read from a secondary index doesn't
-		 * match the tuple corresponding to it in the
-		 * primary index, it must have been overwritten or
-		 * deleted, but the DELETE statement hasn't been
-		 * propagated to the secondary index yet. In this
-		 * case silently skip this tuple.
-		 */
-		/*
-		 * Charge the wasted primary lookup to the primary's
-		 * read-amp stat.  The orphan exists because the
-		 * primary hasn't compacted to produce deferred
-		 * deletes yet.  Use the primary tuple size to reflect
-		 * the actual cost of the unnecessary lookup.  This
-		 * signal accumulates across all secondary indexes,
-		 * eventually triggering primary compaction to clean
-		 * up deferred deletes.
-		 */
-		if (pk_entry.stmt != NULL)
-			vy_lsm_acct_read_amp(lsm->pk,
-					     lsm->pk->last_range,
-					     tuple_size(pk_entry.stmt),
-					     NULL);
-		vy_stmt_counter_acct_tuple(&lsm->stat.skip, entry.stmt);
-		if (pk_entry.stmt != NULL) {
-			vy_stmt_counter_acct_tuple(&lsm->pk->stat.skip,
-						   pk_entry.stmt);
-			*skipped_lsn = MAX(*skipped_lsn,
-					   vy_stmt_lsn(pk_entry.stmt));
-			tuple_unref(pk_entry.stmt);
-		}
-		/*
-		 * We must purge stale tuples from the cache before
-		 * storing the resulting interval in order to avoid
-		 * chain intersections, which are not tolerated by
-		 * the tuple cache implementation.
-		 */
-		vy_cache_on_write(&lsm->cache, entry, NULL);
-		*result = vy_entry_none();
-		goto out;
-	}
-
-	/*
-	 * Even though the tuple is tracked in the secondary index
-	 * read set, we still must track the full tuple read from
-	 * the primary index, otherwise the transaction won't be
-	 * aborted if this tuple is overwritten or deleted, because
-	 * the DELETE statement is not written to secondary indexes
-	 * immediately.
-	 */
-	if (tx != NULL)
-		vy_tx_track_point(tx, lsm->pk, pk_entry);
-
-	if ((*rv)->vlsn == INT64_MAX)
-		vy_cache_add_point(&lsm->pk->cache, pk_entry, key);
-
-	vy_stmt_counter_acct_tuple(&lsm->pk->stat.get, pk_entry.stmt);
-	*result = full_entry;
-out:
-	tuple_unref(key.stmt);
-	return rc;
-}
-
-/**
  * Get a tuple from a vinyl space by key.
  * @param lsm         LSM tree in which search.
  * @param tx          Current transaction.
@@ -1646,20 +1502,9 @@ vy_get(struct vy_lsm *lsm, struct vy_tx *tx,
 
 	struct vy_read_iterator itr;
 	vy_read_iterator_open(&itr, lsm, tx, ITER_EQ, key, rv);
-	while ((rc = vy_read_iterator_next(&itr, &partial)) == 0) {
-		if (lsm->index_id == 0 || partial.stmt == NULL) {
-			entry = partial;
-			if (entry.stmt != NULL)
-				tuple_ref(entry.stmt);
-			break;
-		}
-		rc = vy_get_by_secondary_tuple(lsm, tx, rv, partial, &entry,
-					       &skipped_lsn);
-		if (rc != 0 || entry.stmt != NULL)
-			break;
-	}
-	if (rc == 0)
-		vy_read_iterator_cache_add(&itr, entry, skipped_lsn);
+	rc = vy_read_iterator_next(&itr, &entry);
+	if (rc == 0 && entry.stmt != NULL)
+		tuple_ref(entry.stmt);
 	vy_read_iterator_close(&itr);
 	if (rc != 0)
 		goto fail;
@@ -3875,15 +3720,15 @@ vinyl_iterator_update_pos(struct vinyl_iterator *it, struct vy_entry entry)
 	tuple_ref(entry.stmt);
 }
 
+/** Implementation of the iterator::next() method. */
 static int
-vinyl_iterator_primary_next(struct iterator *base, struct tuple **ret)
+vinyl_iterator_next(struct iterator *base, struct tuple **ret)
 {
 	double start_time = ev_monotonic_now(loop());
 
-	assert(base->next == vinyl_iterator_primary_next);
+	assert(base->next == vinyl_iterator_next);
 	struct vinyl_iterator *it = (struct vinyl_iterator *)base;
 	struct vy_lsm *lsm = it->iterator.lsm;
-	assert(lsm->index_id == 0);
 	/*
 	 * Make sure the LSM tree isn't deleted while we are
 	 * reading from it.
@@ -3896,8 +3741,6 @@ vinyl_iterator_primary_next(struct iterator *base, struct tuple **ret)
 	struct vy_entry entry;
 	if (vy_read_iterator_next(&it->iterator, &entry) != 0)
 		goto fail;
-	vy_read_iterator_cache_add(&it->iterator, entry,
-				   /*skipped_lsn=*/0);
 	vinyl_iterator_account_read(it, start_time, entry.stmt);
 	if (entry.stmt == NULL) {
 		/* EOF. Close the iterator immediately. */
@@ -3907,60 +3750,6 @@ vinyl_iterator_primary_next(struct iterator *base, struct tuple **ret)
 		tuple_bless(entry.stmt);
 	}
 	*ret = entry.stmt;
-	vy_lsm_unref(lsm);
-	return 0;
-fail:
-	vinyl_iterator_close(it);
-	vy_lsm_unref(lsm);
-	return -1;
-}
-
-static int
-vinyl_iterator_secondary_next(struct iterator *base, struct tuple **ret)
-{
-	double start_time = ev_monotonic_now(loop());
-
-	assert(base->next == vinyl_iterator_secondary_next);
-	struct vinyl_iterator *it = (struct vinyl_iterator *)base;
-	struct vy_lsm *lsm = it->iterator.lsm;
-	assert(lsm->index_id > 0);
-	/*
-	 * Make sure the LSM tree isn't deleted while we are
-	 * reading from it.
-	 */
-	vy_lsm_ref(lsm);
-
-	struct vy_entry partial, entry;
-	int64_t skipped_lsn = 0;
-next:
-	if (vinyl_iterator_check_tx(it) != 0)
-		goto fail;
-
-	if (vy_read_iterator_next(&it->iterator, &partial) != 0)
-		goto fail;
-
-	if (partial.stmt == NULL) {
-		/* EOF. Close the iterator immediately. */
-		vy_read_iterator_cache_add(&it->iterator, vy_entry_none(),
-					   skipped_lsn);
-		vinyl_iterator_account_read(it, start_time, NULL);
-		vinyl_iterator_close(it);
-		*ret = NULL;
-		goto out;
-	}
-	/* Get the full tuple from the primary index. */
-	if (vy_get_by_secondary_tuple(lsm, it->tx, vy_tx_read_view(it->tx),
-				      partial, &entry, &skipped_lsn) != 0)
-		goto fail;
-	if (entry.stmt == NULL)
-		goto next;
-	vy_read_iterator_cache_add(&it->iterator, entry, skipped_lsn);
-	vinyl_iterator_account_read(it, start_time, entry.stmt);
-	vinyl_iterator_update_pos(it, entry);
-	*ret = entry.stmt;
-	tuple_bless(*ret);
-	tuple_unref(*ret);
-out:
 	vy_lsm_unref(lsm);
 	return 0;
 fail:
@@ -4061,10 +3850,7 @@ vinyl_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	iterator_create(&it->base, base);
-	if (lsm->index_id == 0)
-		it->base.next = vinyl_iterator_primary_next;
-	else
-		it->base.next = vinyl_iterator_secondary_next;
+	it->base.next = vinyl_iterator_next;
 	it->base.position = vinyl_iterator_position;
 	it->base.free = vinyl_iterator_free;
 	it->pool = &env->iterator_pool;
