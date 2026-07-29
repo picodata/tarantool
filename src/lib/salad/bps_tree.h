@@ -144,6 +144,7 @@
  * int bps_tree_insert(tree, new_elem, replaced_elem, before_elem);
  * int bps_tree_insert_get_iterator(tree, new_elem, replaced_elem,
  * 				    inserted_iterator)
+ * int bps_tree_find_or_insert(tree, new_elem, found_iterator, exact);
  * int bps_tree_delete(tree, elem);
  * int bps_tree_delete_value(tree, elem, deleted_elem);
  * size_t bps_tree_size(tree);
@@ -394,6 +395,7 @@ typedef uint32_t bps_tree_block_id_t;
 #define bps_tree_view_find _api_name(view_find)
 #define bps_tree_insert _api_name(insert)
 #define bps_tree_insert_get_iterator _api_name(insert_get_iterator)
+#define bps_tree_find_or_insert _api_name(find_or_insert)
 #define bps_tree_delete _api_name(delete)
 #define bps_tree_delete_value _api_name(delete_value)
 #define bps_tree_size_impl _bps_tree(size)
@@ -734,6 +736,22 @@ static inline int
 bps_tree_insert_get_iterator(struct bps_tree *tree, bps_tree_elem_t new_elem,
 			     bps_tree_elem_t *replaced,
 			     struct bps_tree_iterator *inserted_iterator);
+
+/**
+ * @brief Insert an element into a tree, unless an equal element
+ * is already in it, in which case the incumbent is left intact.
+ * Sets the iterator to the found or inserted element.
+ * @param tree - pointer to a tree
+ * @param new_elem - element to insert or find
+ * @param found_iterator - iterator to the found or inserted element
+ * @param[out] exact - true if an equal element was already in the
+ *             tree and no insertion took place
+ * @return - 0 on success, -1 on memory error
+ */
+static inline int
+bps_tree_find_or_insert(struct bps_tree *tree, bps_tree_elem_t new_elem,
+			struct bps_tree_iterator *found_iterator,
+			bool *exact);
 
 /**
  * @brief Delete an element from a tree.
@@ -4878,6 +4896,43 @@ bps_tree_insert_get_iterator(struct bps_tree *t, bps_tree_elem_t new_elem,
 }
 
 /**
+ * @brief Insert an element into a tree, unless an equal element
+ * is already in it, in which case the incumbent is left intact.
+ * Sets the iterator to the found or inserted element.
+ * @param t - pointer to a tree
+ * @param new_elem - element to insert or find
+ * @param found_iterator - iterator to the found or inserted element
+ * @param[out] exact - true if an equal element was already in the
+ *             tree and no insertion took place
+ * @return - 0 on success, -1 on memory error
+ */
+static inline int
+bps_tree_find_or_insert(struct bps_tree *t, bps_tree_elem_t new_elem,
+			struct bps_tree_iterator *found_iterator,
+			bool *exact)
+{
+	struct bps_tree_common *tree = &t->common;
+	*exact = false;
+	if (tree->root_id == (bps_tree_block_id_t)(-1)) {
+		int rc = bps_tree_insert_first_elem(tree, new_elem);
+		found_iterator->block_id = tree->first_id;
+		found_iterator->pos = 0;
+		return rc;
+	}
+	struct bps_inner_path_elem path[BPS_TREE_MAX_DEPTH];
+	struct bps_leaf_path_elem leaf_path_elem;
+	bps_tree_collect_path(tree, new_elem, path, &leaf_path_elem, exact);
+	if (*exact) {
+		found_iterator->block_id = leaf_path_elem.block_id;
+		found_iterator->pos = leaf_path_elem.insertion_point;
+		return 0;
+	}
+	return bps_tree_process_insert_leaf(tree, &leaf_path_elem, new_elem,
+					    &found_iterator->block_id,
+					    &found_iterator->pos);
+}
+
+/**
  * @brief Delete an element from a tree.
  * @param t - pointer to a tree
  * @param elem - the element tot delete
@@ -6482,6 +6537,8 @@ bps_tree_debug_check_internal_functions(bool assertme)
 #undef bps_tree_find
 #undef bps_tree_view_find
 #undef bps_tree_insert
+#undef bps_tree_insert_get_iterator
+#undef bps_tree_find_or_insert
 #undef bps_tree_delete
 #undef bps_tree_delete_value
 #undef bps_tree_size_impl

@@ -284,3 +284,7 @@ Count: 10575
 	*** delete_value_check: done ***
 	*** insert_successor_test ***
 	*** insert_successor_test: done ***
+	*** find_or_insert_check ***
+	*** find_or_insert_check: done ***
+	*** find_or_insert_massive_check ***
+	*** find_or_insert_massive_check: done ***

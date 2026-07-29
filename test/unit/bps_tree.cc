@@ -901,6 +901,101 @@ insert_successor_test()
 }
 
 
+static void
+find_or_insert_check()
+{
+	header();
+	struct_tree tree;
+	struct_tree_create(&tree, 0, &allocator);
+	struct_tree_iterator iter;
+	bool exact;
+
+	/* Insertion into an empty tree. */
+	struct elem_t e1 = {1, 10};
+	if (struct_tree_find_or_insert(&tree, e1, &iter, &exact) != 0)
+		fail("insert into an empty tree failed", "true");
+	if (exact)
+		fail("insertion reported an equal element", "true");
+	struct elem_t *res = struct_tree_iterator_get_elem(&tree, &iter);
+	if (res == NULL || !equal(*res, e1))
+		fail("iterator does not point to the inserted element",
+		     "true");
+
+	/* An equal element leaves the incumbent intact. */
+	struct elem_t e2 = {1, 20};
+	if (struct_tree_find_or_insert(&tree, e2, &iter, &exact) != 0)
+		fail("find of an equal element failed", "true");
+	if (!exact)
+		fail("an equal element was not found", "true");
+	res = struct_tree_iterator_get_elem(&tree, &iter);
+	if (res == NULL || !equal(*res, e1))
+		fail("the incumbent was not left intact", "true");
+	if (struct_tree_size(&tree) != 1)
+		fail("an equal element was inserted", "true");
+
+	/* A new element lands next to the incumbent. */
+	struct elem_t e3 = {2, 30};
+	if (struct_tree_find_or_insert(&tree, e3, &iter, &exact) != 0)
+		fail("insert of a new element failed", "true");
+	if (exact)
+		fail("insertion reported an equal element", "true");
+	res = struct_tree_iterator_get_elem(&tree, &iter);
+	if (res == NULL || !equal(*res, e3))
+		fail("iterator does not point to the inserted element",
+		     "true");
+	if (struct_tree_size(&tree) != 2)
+		fail("a new element was not inserted", "true");
+
+	struct_tree_destroy(&tree);
+	footer();
+}
+
+static void
+find_or_insert_massive_check()
+{
+	header();
+	const long test_size = 40000;
+	const long key_range = 20000;
+	struct_tree tree;
+	struct_tree_create(&tree, 0, &allocator);
+	/* The reference: the first marker inserted for each key. */
+	static long ref[key_range];
+	static bool has[key_range];
+	memset(has, 0, sizeof(has));
+	srand(0);
+	long count = 0;
+	for (long i = 0; i < test_size; i++) {
+		long key = rand() % key_range;
+		struct elem_t elem = {key, i};
+		struct_tree_iterator iter;
+		bool exact;
+		if (struct_tree_find_or_insert(&tree, elem, &iter,
+					       &exact) != 0)
+			fail("insertion failed", "true");
+		if (exact != has[key])
+			fail("wrong exact flag", "true");
+		if (!has[key]) {
+			has[key] = true;
+			ref[key] = i;
+			count++;
+		}
+		struct elem_t *res =
+			struct_tree_iterator_get_elem(&tree, &iter);
+		struct elem_t expected = {key, ref[key]};
+		if (res == NULL || !equal(*res, expected))
+			fail("iterator points to a wrong element", "true");
+		if ((long)struct_tree_size(&tree) != count)
+			fail("wrong tree size", "true");
+		if (i % 1000 == 0 &&
+		    struct_tree_debug_check(&tree) != 0)
+			fail("debug check failed", "true");
+	}
+	if (struct_tree_debug_check(&tree) != 0)
+		fail("debug check failed", "true");
+	struct_tree_destroy(&tree);
+	footer();
+}
+
 int
 main(void)
 {
@@ -920,6 +1015,8 @@ main(void)
 	insert_get_iterator();
 	delete_value_check();
 	insert_successor_test();
+	find_or_insert_check();
+	find_or_insert_massive_check();
 
 	matras_allocator_destroy(&allocator);
 }
