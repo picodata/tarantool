@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stddef.h>
 #include <string.h>
 #include <math.h>
 #include <limits.h>
@@ -90,6 +91,35 @@ static void json_create_tokens()
     escape2char['u'] = 'u';          /* Unicode parsing required */
 }
 
+/* Bytes remaining from json->ptr, inclusive of the byte it points at. */
+static inline ptrdiff_t json_avail(const json_parse_t *json)
+{
+    return json->end - json->ptr;
+}
+
+/* Byte at json->ptr + offset, or '\0' once that reaches json->end.
+ *
+ * The lexer used to rely on a NUL sentinel at the end of the buffer; reporting
+ * '\0' for an out-of-range offset keeps every caller's existing logic intact,
+ * including the ch2token['\0'] == JSON_T_END dispatch. An embedded NUL
+ * therefore still ends the scan, exactly as before. */
+static inline char json_peek_at(const json_parse_t *json, ptrdiff_t offset)
+{
+    return offset < json_avail(json) ? json->ptr[offset] : '\0';
+}
+
+/* Consume word when it is the next thing in the buffer, and report whether it
+ * was. A truncated tail at the end of the buffer is a mismatch rather than an
+ * overread, and json->ptr is left alone unless the whole word matched. */
+static inline bool json_accept(json_parse_t *json, const char *word)
+{
+    ptrdiff_t len = strlen(word);
+    if (json_avail(json) < len || memcmp(json->ptr, word, len) != 0)
+        return false;
+    json->ptr += len;
+    return true;
+}
+
 static int hexdigit2int(char hex)
 {
     if ('0' <= hex  && hex <= '9')
@@ -103,16 +133,17 @@ static int hexdigit2int(char hex)
     return -1;
 }
 
-static int decode_hex4(const char *hex)
+static int decode_hex4(const json_parse_t *json, ptrdiff_t offset)
 {
     int digit[4];
     int i;
 
     /* Convert ASCII hex digit to numeric digit
      * Note: this returns an error for invalid hex digits, including
-     *       NULL */
+     *       NULL. Bytes past the end of the buffer read as '\0', so a
+     *       truncated escape fails here exactly like an invalid one. */
     for (i = 0; i < 4; i++) {
-        digit[i] = hexdigit2int(hex[i]);
+        digit[i] = hexdigit2int(json_peek_at(json, offset + i));
         if (digit[i] < 0) {
             return -1;
         }
@@ -179,7 +210,7 @@ static int json_append_unicode_escape(json_parse_t *json)
     int escape_len = 6;
 
     /* Fetch UTF-16 code unit */
-    codepoint = decode_hex4(json->ptr + 2);
+    codepoint = decode_hex4(json, 2);
     if (codepoint < 0)
         return -1;
 
@@ -195,13 +226,13 @@ static int json_append_unicode_escape(json_parse_t *json)
             return -1;
 
         /* Ensure the next code is a unicode escape */
-        if (*(json->ptr + escape_len) != '\\' ||
-            *(json->ptr + escape_len + 1) != 'u') {
+        if (json_peek_at(json, escape_len) != '\\' ||
+            json_peek_at(json, escape_len + 1) != 'u') {
             return -1;
         }
 
         /* Fetch the next codepoint */
-        surrogate_low = decode_hex4(json->ptr + 2 + escape_len);
+        surrogate_low = decode_hex4(json, 2 + escape_len);
         if (surrogate_low < 0)
             return -1;
 
@@ -251,8 +282,12 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
      * json->tmp is sized to handle JSON containing only a string value.
      */
     strbuf_reset(json->tmp);
+    /* The decoded string cannot outgrow the text it is decoded from, so the
+     * buffer the caller sized for the whole input has room for it; that is
+     * what lets the appends below skip their capacity checks. */
+    assert(strbuf_empty_length(json->tmp) >= (int)(json->end - json->ptr));
 
-    while ((ch = *json->ptr) != '"') {
+    while ((ch = json_peek_at(json, 0)) != '"') {
         if (!ch) {
             /* Premature end of the string */
             json_set_token_error(token, json, "unexpected end of string");
@@ -262,7 +297,7 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
         /* Handle escapes */
         if (ch == '\\') {
             /* Fetch escape character */
-            ch = *(json->ptr + 1);
+            ch = json_peek_at(json, 1);
 
             /* Translate escape code and append to tmp string */
             ch = escape2char[(unsigned char)ch];
@@ -312,54 +347,112 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
  */
 static int json_is_invalid_number(json_parse_t *json)
 {
-    const char *p = json->ptr;
+    ptrdiff_t offset = 0;
+    char ch = json_peek_at(json, offset);
 
     /* Reject numbers starting with + */
-    if (*p == '+')
+    if (ch == '+')
         return 1;
 
     /* Skip minus sign if it exists */
-    if (*p == '-')
-        p++;
+    if (ch == '-')
+        ch = json_peek_at(json, ++offset);
 
     /* Reject numbers starting with 0x, or leading zeros */
-    if (*p == '0') {
-        int ch2 = *(p + 1);
+    if (ch == '0') {
+        int ch2 = json_peek_at(json, offset + 1);
 
         if ((ch2 | 0x20) == 'x' ||          /* Hex */
             ('0' <= ch2 && ch2 <= '9'))     /* Leading zero */
             return 1;
 
         return 0;
-    } else if (*p < '0' || *p > '9') {
+    } else if (ch < '0' || ch > '9') {
         return 1;
     }
 
     return 0;
 }
 
+/* A byte strtoll(), strtoull() or fpconv_strtod() could consume. A superset
+ * of the JSON number grammar is deliberate: this only decides whether a
+ * literal reaches the end of the buffer, so over-accepting costs nothing. */
+static inline bool json_is_number_char(char ch)
+{
+    return (ch >= '0' && ch <= '9') || ch == '-' || ch == '+' || ch == '.' ||
+           ch == 'e' || ch == 'E';
+}
+
+/* End of the longest run of bytes a conversion could consume. */
+static const char *json_scan_number_run(const char *p, const char *end)
+{
+    while (p < end && json_is_number_char(*p))
+        p++;
+
+    return p;
+}
+
+enum {
+    /*
+     * Covers any numeric literal whose exact text can affect the converted
+     * value. The widest of those is a decimal: DECIMAL_MAX_DIGITS is 38, and
+     * decimal.h budgets 14 more bytes for the sign, point and exponent. A
+     * uint64 takes 20 digits and a double is pinned by 17 significant ones
+     * plus a short exponent, so both fit well inside that. Longer literals
+     * are still valid JSON; they fall back to the heap rather than being
+     * truncated.
+     */
+    JSON_NUM_BUF_SIZE = 64,
+};
+
 static void json_next_number_token(json_parse_t *json, json_token_t *token)
 {
     const char *start = json->ptr;
     char *endptr;
 
+    /*
+     * The strto*() family scans until a byte outside its grammar, so it needs
+     * a terminator and cannot be bounded. Every byte inside the buffer stops
+     * it, since a JSON number is always followed by ',', '}', ']' or
+     * whitespace; only a literal running to the very last byte of the input
+     * has nothing to stop it. Give that one, at most one per parse, a
+     * terminated copy to convert from. Nothing outside this function reads the
+     * copy, so it dies with the frame.
+     */
+    char buf[JSON_NUM_BUF_SIZE];
+    char *heap = NULL;
+    const char *conv = start;
+    /* A run can only reach the end when the buffer's last byte belongs to
+     * one, which is false for every document ending in ',', '}', ']' or
+     * whitespace; that test keeps the scan off the common path. */
+    token->num_at_end = json_is_number_char(json->end[-1]) &&
+                        json_scan_number_run(start, json->end) == json->end;
+    if (token->num_at_end) {
+        size_t len = (size_t)(json->end - start);
+        char *dst = len < sizeof(buf) ? buf : (heap = xmalloc(len + 1));
+
+        memcpy(dst, start, len);
+        dst[len] = '\0';
+        conv = dst;
+    }
+
     token->num_overflow = false;
     errno = 0;
     token->type = JSON_T_INT;
-    token->value.ival = strtoll(start, &endptr, 10);
+    token->value.ival = strtoll(conv, &endptr, 10);
     /* int64_max itself is reported as JSON_T_UINT: the literal fits int64,
      * but the lexer has always probed for overflow by comparing against
      * LLONG_MAX, so Lua's json.decode hands that one value out as a uint64
      * cdata. Keep it that way; errno covers everything past it. */
     if (errno == ERANGE || token->value.ival == LLONG_MAX) {
-        if (start[0] == '-') {
+        if (conv[0] == '-') {
             /* Below int64_min. */
             token->num_overflow = true;
         } else {
             /* At int64_max or above; may still fit uint64. */
             errno = 0;
             token->type = JSON_T_UINT;
-            token->value.ival = (long long)strtoull(start, &endptr, 10);
+            token->value.ival = (long long)strtoull(conv, &endptr, 10);
             if (errno == ERANGE)
                 token->num_overflow = true;
         }
@@ -375,7 +468,7 @@ static void json_next_number_token(json_parse_t *json, json_token_t *token)
         bool int_overflow = token->num_overflow;
 
         token->num_overflow = false;
-        token->value.number = fpconv_strtod(start, &endptr);
+        token->value.number = fpconv_strtod(conv, &endptr);
         assert(endptr >= tail);
         if (endptr == tail) {
             /* The tail turned out to be neither: "1e" has no exponent
@@ -396,11 +489,15 @@ static void json_next_number_token(json_parse_t *json, json_token_t *token)
             token->type = has_exp ? JSON_T_DOUBLE : JSON_T_DECIMAL;
         }
     }
-    if (start == endptr) {
+    /* endptr indexes conv, which is the copy when the literal was copied; map
+     * it back onto the source buffer before it becomes a position. */
+    ptrdiff_t consumed = endptr - conv;
+    free(heap);
+    if (consumed == 0) {
         json_set_token_error(token, json, "invalid number");
         return;
     }
-    json->ptr = endptr;
+    json->ptr = start + consumed;
 }
 
 /* Fills in the token struct.
@@ -411,14 +508,15 @@ void json_next_token(json_parse_t *json, json_token_t *token)
 {
     int ch;
 
-    /* Only a number fills this in, so clear it for every other token; a
+    /* Only a number fills these in, so clear them for every other token; a
      * consumer reusing one token struct must not read the previous token's
-     * value here. */
+     * values here. */
     token->num_overflow = false;
+    token->num_at_end = false;
 
     /* Eat whitespace. */
     while (1) {
-        ch = (unsigned char)*(json->ptr);
+        ch = (unsigned char)json_peek_at(json, 0);
         token->type = ch2token[ch];
         if (token->type == JSON_T_LINEFEED) {
             json->line_count++;
@@ -461,40 +559,34 @@ void json_next_token(json_parse_t *json, json_token_t *token)
     } else if (!json_is_invalid_number(json)) {
         json_next_number_token(json, token);
         return;
-    } else if (!strncmp(json->ptr, "true", 4)) {
+    } else if (json_accept(json, "true")) {
         token->type = JSON_T_BOOLEAN;
         token->value.boolean = 1;
-        json->ptr += 4;
         return;
-    } else if (!strncmp(json->ptr, "false", 5)) {
+    } else if (json_accept(json, "false")) {
         token->type = JSON_T_BOOLEAN;
         token->value.boolean = 0;
-        json->ptr += 5;
         return;
-    } else if (!strncmp(json->ptr, "null", 4)) {
+    } else if (json_accept(json, "null")) {
         token->type = JSON_T_NULL;
-        json->ptr += 4;
         return;
     } else if (json->decode_invalid_numbers) {
         /*
          * RFC4627: Numeric values that cannot be represented as sequences of
          * digits (such as Infinity and NaN) are not permitted.
          */
-        if (!strncmp(json->ptr, "inf", 3)) {
+        if (json_accept(json, "inf")) {
             token->type = JSON_T_DOUBLE;
             token->value.number = INFINITY;
-            json->ptr += 3;
             return;
-        } else if (!strncmp(json->ptr, "-inf", 4)) {
+        } else if (json_accept(json, "-inf")) {
             token->type = JSON_T_DOUBLE;
             token->value.number = -INFINITY;
-            json->ptr += 4;
             return;
-        } else if (!strncmp(json->ptr, "nan", 3) ||
-                   !strncmp(json->ptr, "-nan", 3)) {
+        } else if (json_accept(json, "nan") ||
+                   json_accept(json, "-nan")) {
             token->type = JSON_T_DOUBLE;
             token->value.number = NAN;
-            json->ptr += (*json->ptr == '-' ? 4 : 3);
             return;
         }
     }
@@ -516,7 +608,12 @@ void json_next_token(json_parse_t *json, json_token_t *token)
 void json_fill_err_context(char *err_context, json_parse_t *json,
                            int column_index)
 {
+    /* The arrow lands inside the input: the context before it is read back
+     * from cur_line_ptr + column_index, which nothing else bounds. A token at
+     * the very end of the buffer, JSON_T_END among them, is a position the
+     * caller may ask about, so the end itself is allowed. */
     assert(column_index >= 0);
+    assert(column_index <= json->end - json->cur_line_ptr);
     int length_before = column_index < ERR_CONTEXT_MAX_LENGTH_BEFORE ?
                         column_index : ERR_CONTEXT_MAX_LENGTH_BEFORE;
     const char *src = json->cur_line_ptr + column_index - length_before;
@@ -532,9 +629,9 @@ void json_fill_err_context(char *err_context, json_parse_t *json,
     *(err_context++) = ' ';
 
     /* Fill error context after the arrow. */
-    const char *end = err_context + ERR_CONTEXT_MAX_LENGTH_AFTER;
-    for (; err_context < end && *src != '\0' && *src != '\n'; ++src,
-         ++err_context)
+    const char *ctx_end = err_context + ERR_CONTEXT_MAX_LENGTH_AFTER;
+    for (; err_context < ctx_end && src < json->end && *src != '\0' &&
+         *src != '\n'; ++src, ++err_context)
         *err_context = *src;
     *err_context = '\0';
 }

@@ -36,6 +36,7 @@ extern const char *json_token_type_name[];
 
 typedef struct {
     const char *ptr;
+    const char *end;  /* One past the last byte of the input */
     /* Where a string carrying escapes is decoded to, and what its token then
      * points into. The lexer appends here without checking capacity, so the
      * caller must size the buffer to hold the whole input text plus a NUL
@@ -60,6 +61,13 @@ typedef struct {
     /* Integer literal outside [int64_min, uint64_max]; false for every token
      * that is not one, including the inf/nan words. */
     bool num_overflow;
+    /* The numeric run this token starts reaches the end of the input, so no
+     * byte terminates a scan that reads the literal in place. A consumer
+     * re-reading it with a strto*()-style parser must copy and terminate it
+     * first; note the run can extend past the token, so this can be set even
+     * when the token itself ends earlier. False for every token that is not a
+     * number, including the inf/nan words. */
+    bool num_at_end;
 } json_token_t;
 
 enum err_context_length {

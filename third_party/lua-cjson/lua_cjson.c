@@ -587,6 +587,7 @@ static int json_decode(lua_State *l)
     ctx.lex.decode_invalid_numbers = cfg->decode_invalid_numbers;
     ctx.current_depth = 0;
     ctx.lex.ptr = data;
+    ctx.lex.end = data + json_len;
     ctx.lex.line_count = 1;
     ctx.lex.cur_line_ptr = data;
 

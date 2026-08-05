@@ -4,8 +4,10 @@
 #include "memory.h"
 #include "fiber.h"
 #include "cord_buf.h"
+#include "trivia/util.h"
 #include "unit.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -31,18 +33,26 @@ lexer_env_destroy(void)
 	cord_ibuf_put(lexer_ibuf);
 }
 
-/* One-shot helper: tokenize the first token of a NUL-terminated string. */
+/* One-shot helper: tokenize the first token of a length-bounded buffer. */
 static void
-first_token(const char *str, bool allow_invalid, json_token_t *out)
+first_token_n(const char *str, size_t len, bool allow_invalid,
+	      json_token_t *out)
 {
 	json_parse_t json;
 	json.ptr = str;
+	json.end = str + len;
 	json.tmp = &lexer_tmp;
 	json.decode_invalid_numbers = allow_invalid;
 	json.line_count = 1;
 	json.cur_line_ptr = str;
 
 	json_next_token(&json, out);
+}
+
+static void
+first_token(const char *str, bool allow_invalid, json_token_t *out)
+{
+	first_token_n(str, strlen(str), allow_invalid, out);
 }
 
 static void
@@ -170,7 +180,7 @@ test_invalid_numbers(void)
 static void
 test_invalid_numbers_allowed(void)
 {
-	plan(3);
+	plan(7);
 	header();
 
 	json_token_t t;
@@ -178,8 +188,74 @@ test_invalid_numbers_allowed(void)
 	is(t.type, JSON_T_DOUBLE, "inf allowed as double");
 	/* Not an integer literal, so the overflow flag stays clear. */
 	ok(!t.num_overflow, "inf does not report an overflow");
+	first_token("-inf", true, &t);
+	is(t.type, JSON_T_DOUBLE, "-inf allowed as double");
 	first_token("nan", true, &t);
 	is(t.type, JSON_T_DOUBLE, "nan allowed as double");
+	first_token("-nan", true, &t);
+	is(t.type, JSON_T_DOUBLE, "-nan allowed as double");
+
+	/*
+	 * A word matched on its full length: a truncated tail is an error
+	 * rather than a NaN whose token would run past the end of the buffer.
+	 */
+	first_token("-na", true, &t);
+	is(t.type, JSON_T_ERROR, "-na rejected as truncated");
+	first_token("na", true, &t);
+	is(t.type, JSON_T_ERROR, "na rejected as truncated");
+
+	check_plan();
+	footer();
+}
+
+/*
+ * Every case above hands the lexer a C literal, whose NUL sentinel is there
+ * whether or not the lexer stops at json.end. Copy the text into a buffer
+ * sized exactly to it, so a read past the end is an out-of-bounds one rather
+ * than a byte that merely happened to be a NUL.
+ */
+static void
+test_no_sentinel(void)
+{
+	plan(6);
+	header();
+
+	json_token_t t;
+	char *buf;
+	size_t len;
+
+	/* A keyword is compared on its full length, never past the end. */
+	len = 3;
+	buf = memcpy(xmalloc(len), "tru", len);
+	first_token_n(buf, len, false, &t);
+	is(t.type, JSON_T_ERROR, "truncated keyword rejected");
+	free(buf);
+
+	/* A string looks for its closing quote inside the buffer only. */
+	len = 4;
+	buf = memcpy(xmalloc(len), "\"abc", len);
+	first_token_n(buf, len, false, &t);
+	is(t.type, JSON_T_ERROR, "unterminated string rejected");
+	free(buf);
+
+	/* Same for the four hex digits of an escape. */
+	len = 7;
+	buf = memcpy(xmalloc(len), "\"ab\\u12", len);
+	first_token_n(buf, len, false, &t);
+	is(t.type, JSON_T_ERROR, "truncated unicode escape rejected");
+	free(buf);
+
+	/*
+	 * A literal running to the last byte has nothing to stop the
+	 * conversion, so the lexer converts it from a terminated copy.
+	 */
+	len = 5;
+	buf = memcpy(xmalloc(len), "12345", len);
+	first_token_n(buf, len, false, &t);
+	is(t.type, JSON_T_INT, "number at the end is int");
+	is(t.value.ival, 12345, "number at the end value");
+	ok(t.num_at_end, "number at the end is flagged");
+	free(buf);
 
 	check_plan();
 	footer();
@@ -198,6 +274,7 @@ test_error_position(void)
 	const char *str = "[1,@]";
 	json_parse_t json;
 	json.ptr = str;
+	json.end = str + strlen(str);
 	json.tmp = &lexer_tmp;
 	json.decode_invalid_numbers = false;
 	json.line_count = 1;
@@ -222,12 +299,13 @@ main(void)
 	fiber_init(fiber_c_invoke);
 	lexer_env_create();
 
-	plan(6);
+	plan(7);
 	test_scalars();
 	test_numbers();
 	test_strings();
 	test_invalid_numbers();
 	test_invalid_numbers_allowed();
+	test_no_sentinel();
 	test_error_position();
 	int rc = check_plan();
 
