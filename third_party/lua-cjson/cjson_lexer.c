@@ -277,15 +277,43 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
     /* Skip " */
     json->ptr++;
 
+    /* A string with no escape is its own decoding, so point the token
+     * straight into the input rather than copying it out byte by byte. Most
+     * strings take this path, and the pointer then outlives json->tmp, which
+     * is left untouched. Stop at a NUL as the decoding loop below does, so an
+     * embedded one ends the string here too. */
+    const char *body = json->ptr;
+    const char *p = body;
+    const char *end = json->end;
+    while (p < end && *p != '"' && *p != '\\' && *p != '\0')
+        p++;
+    if (p == end || *p == '\0') {
+        /* Premature end of the string; report it where the scan stopped. */
+        json->ptr = p;
+        json_set_token_error(token, json, "unexpected end of string");
+        return;
+    }
+    if (*p == '"') {
+        json->ptr = p + 1;    /* Eat final quote (") */
+        token->type = JSON_T_STRING;
+        token->value.string = body;
+        token->string_len = (int)(p - body);
+        return;
+    }
+
     /* json->tmp is the temporary strbuf used to accumulate the
      * decoded string value.
      * json->tmp is sized to handle JSON containing only a string value.
+     * The escape-free run leading up to the first escape is copied in one
+     * go; the loop below picks up from there.
      */
     strbuf_reset(json->tmp);
     /* The decoded string cannot outgrow the text it is decoded from, so the
      * buffer the caller sized for the whole input has room for it; that is
      * what lets the appends below skip their capacity checks. */
     assert(strbuf_empty_length(json->tmp) >= (int)(json->end - json->ptr));
+    strbuf_append_mem_unsafe(json->tmp, body, p - body);
+    json->ptr = p;
 
     while ((ch = json_peek_at(json, 0)) != '"') {
         if (!ch) {

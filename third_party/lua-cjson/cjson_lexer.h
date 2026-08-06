@@ -81,8 +81,16 @@ enum err_context_length {
     ERR_CONTEXT_MAX_LENGTH_AFTER + ERR_CONTEXT_ARROW_LENGTH,
 };
 
-/* Fill in the next token; JSON_T_STRING points into json->tmp, JSON_T_ERROR leaves
- * json->ptr at the error and puts the message in token->value.string.
+/* Fill in the next token; JSON_T_STRING points into the input when the string
+ * carries no escape and into json->tmp when it had to be decoded, so
+ * string_len is the only length to go by: a borrowed string runs on into the
+ * rest of the input, and the NUL that happens to follow a decoded one belongs
+ * to the buffer, not to the string. Which of the two it is decides how long it
+ * lives: a string pointing into the input lasts as long as the input does, one
+ * pointing into json->tmp only until the next string that has to be decoded.
+ * Copy the value out to hold it across calls.
+ * JSON_T_ERROR leaves json->ptr at the error and puts the message in
+ * token->value.string.
  * The token spans [token->start, json->ptr) until the next call; a numeric
  * token spans [token->start, token->start + token->num_len). */
 void json_next_token(json_parse_t *json, json_token_t *token);

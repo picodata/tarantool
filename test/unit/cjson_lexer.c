@@ -140,23 +140,45 @@ test_numbers(void)
 	footer();
 }
 
+/*
+ * A JSON_T_STRING is only as long as string_len says: an escape-free one
+ * points straight into the input, with no terminator of its own.
+ */
+static bool
+token_str_eq(const json_token_t *t, const char *want)
+{
+	return t->type == JSON_T_STRING &&
+	       (size_t)t->string_len == strlen(want) &&
+	       memcmp(t->value.string, want, t->string_len) == 0;
+}
+
 static void
 test_strings(void)
 {
-	plan(4);
+	plan(7);
 	header();
 
 	json_token_t t;
-	first_token("\"abc\"", false, &t);
+	const char *plain = "\"abc\"";
+	first_token(plain, false, &t);
 	is(t.type, JSON_T_STRING, "plain string type");
-	is_str(t.value.string, "abc", "plain string value");
+	ok(token_str_eq(&t, "abc"), "plain string value");
+	/* No escape to decode, so the token borrows the input. */
+	ok(t.value.string == plain + 1, "plain string points into the input");
 
 	first_token("\"a\\nb\"", false, &t);
-	is_str(t.value.string, "a\nb", "escape decoded");
+	ok(token_str_eq(&t, "a\nb"), "escape decoded");
 
 	/* Surrogate pair for U+1F600 (four UTF-8 bytes). */
 	first_token("\"\\uD83D\\uDE00\"", false, &t);
-	is_str(t.value.string, "\xF0\x9F\x98\x80", "surrogate pair decoded");
+	ok(token_str_eq(&t, "\xF0\x9F\x98\x80"), "surrogate pair decoded");
+
+	/* The run before the first escape is carried over into the decoding. */
+	first_token("\"abc\\ndef\"", false, &t);
+	ok(token_str_eq(&t, "abc\ndef"), "escape after a plain run");
+
+	first_token("\"\"", false, &t);
+	ok(token_str_eq(&t, ""), "empty string");
 
 	check_plan();
 	footer();
@@ -228,7 +250,7 @@ test_invalid_numbers_allowed(void)
 static void
 test_no_sentinel(void)
 {
-	plan(7);
+	plan(9);
 	header();
 
 	json_token_t t;
@@ -267,6 +289,17 @@ test_no_sentinel(void)
 	is(t.value.ival, 12345, "number at the end value");
 	is(t.num_len, 5, "number at the end length");
 	ok(t.num_at_end, "number at the end is flagged");
+	free(buf);
+
+	/*
+	 * An escape-free string is never copied out, so its token points into
+	 * the very buffer it was lexed from, NUL or no NUL.
+	 */
+	len = 5;
+	buf = memcpy(xmalloc(len), "\"abc\"", len);
+	first_token_n(buf, len, false, &t);
+	ok(token_str_eq(&t, "abc"), "borrowed string value");
+	ok(t.value.string == buf + 1, "borrowed string points into the buffer");
 	free(buf);
 
 	check_plan();
