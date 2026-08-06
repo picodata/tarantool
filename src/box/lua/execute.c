@@ -388,7 +388,12 @@ lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i, 
 		bind->bytes = sizeof(bind->b);
 		break;
 	case MP_BIN:
-		bind->s = mp_decode_bin(&field.sval.data, &bind->bytes);
+		/*
+		 * luaL_tofield() points sval at the varbinary payload itself,
+		 * not at an MP_BIN header, so there is nothing to decode here;
+		 * copy it exactly as MP_STR above does.
+		 */
+		lua_sql_bind_set_bytes(bind, &field, region);
 		break;
 	case MP_EXT:
 		if (field.ext_type == MP_UUID) {

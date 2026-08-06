@@ -54,3 +54,50 @@ g.test_bind_empty_string_insert = function()
         box.execute([[DROP TABLE t]])
     end)
 end
+
+-- A varbinary bind arrives as the payload itself, with no MessagePack header
+-- to decode. Decoding one anyway reads a length out of the payload bytes, so
+-- the bind ends up describing memory past the value.
+g.test_bind_varbinary = function()
+    g.server:exec(function()
+        local varbinary = require('varbinary')
+        local val = varbinary.new('\xde\xad\xbe\xef')
+        local res = box.execute([[SELECT ?]], {val})
+        t.assert_equals(#res.rows[1][1], 4)
+        t.assert_equals(tostring(res.rows[1][1]), tostring(val))
+    end)
+end
+
+-- The same value over iproto, which really does decode from MessagePack.
+g.test_bind_varbinary_iproto = function()
+    local varbinary = require('varbinary')
+    local conn = g.server.net_box
+    local val = varbinary.new('\xde\xad\xbe\xef')
+    local res = conn:execute([[SELECT ?]], {val})
+    t.assert_equals(#res.rows[1][1], 4)
+    t.assert_equals(tostring(res.rows[1][1]), tostring(val))
+end
+
+-- An empty varbinary takes the zero-length path as well.
+g.test_bind_empty_varbinary = function()
+    g.server:exec(function()
+        local varbinary = require('varbinary')
+        local res = box.execute([[SELECT ?]], {varbinary.new('')})
+        t.assert_equals(#res.rows[1][1], 0)
+    end)
+end
+
+-- A varbinary bind round-trips through a VARBINARY column, embedded NUL and
+-- high bytes included. SQL hands the value back to Lua as a plain string.
+g.test_bind_varbinary_insert = function()
+    g.server:exec(function()
+        local varbinary = require('varbinary')
+        local val = varbinary.new('\x00\xff\x10binary')
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, b VARBINARY)]])
+        box.execute([[INSERT INTO t VALUES (1, ?)]], {val})
+        local got = box.execute([[SELECT b FROM t]]).rows[1][1]
+        t.assert_equals(#got, 9)
+        t.assert_equals(got, tostring(val))
+        box.execute([[DROP TABLE t]])
+    end)
+end
