@@ -46,6 +46,11 @@ first_token_n(const char *str, size_t len, bool allow_invalid,
 	json.line_count = 1;
 	json.cur_line_ptr = str;
 
+	/*
+	 * Callers reuse one token across calls, so poison it first: a field the
+	 * lexer forgets to fill must not read back as the previous token's.
+	 */
+	memset(out, 0xa5, sizeof(*out));
 	json_next_token(&json, out);
 }
 
@@ -81,7 +86,7 @@ test_scalars(void)
 static void
 test_numbers(void)
 {
-	plan(13);
+	plan(15);
 	header();
 
 	json_token_t t;
@@ -121,9 +126,11 @@ test_numbers(void)
 
 	first_token("12.5", false, &t);
 	is(t.type, JSON_T_DECIMAL, "12.5 is decimal");
+	is(t.num_len, 4, "12.5 length");
 
 	first_token("1e3", false, &t);
 	is(t.type, JSON_T_DOUBLE, "1e3 is double");
+	is(t.num_len, 3, "1e3 length");
 
 	/* Exponent wins over the fraction. */
 	first_token("1.5e3", false, &t);
@@ -180,20 +187,24 @@ test_invalid_numbers(void)
 static void
 test_invalid_numbers_allowed(void)
 {
-	plan(7);
+	plan(11);
 	header();
 
 	json_token_t t;
 	first_token("inf", true, &t);
 	is(t.type, JSON_T_DOUBLE, "inf allowed as double");
+	is(t.num_len, 3, "inf length");
 	/* Not an integer literal, so the overflow flag stays clear. */
 	ok(!t.num_overflow, "inf does not report an overflow");
 	first_token("-inf", true, &t);
 	is(t.type, JSON_T_DOUBLE, "-inf allowed as double");
+	is(t.num_len, 4, "-inf length");
 	first_token("nan", true, &t);
 	is(t.type, JSON_T_DOUBLE, "nan allowed as double");
+	is(t.num_len, 3, "nan length");
 	first_token("-nan", true, &t);
 	is(t.type, JSON_T_DOUBLE, "-nan allowed as double");
+	is(t.num_len, 4, "-nan length");
 
 	/*
 	 * A word matched on its full length: a truncated tail is an error
@@ -217,7 +228,7 @@ test_invalid_numbers_allowed(void)
 static void
 test_no_sentinel(void)
 {
-	plan(6);
+	plan(7);
 	header();
 
 	json_token_t t;
@@ -254,6 +265,7 @@ test_no_sentinel(void)
 	first_token_n(buf, len, false, &t);
 	is(t.type, JSON_T_INT, "number at the end is int");
 	is(t.value.ival, 12345, "number at the end value");
+	is(t.num_len, 5, "number at the end length");
 	ok(t.num_at_end, "number at the end is flagged");
 	free(buf);
 

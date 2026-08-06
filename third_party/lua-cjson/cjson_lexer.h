@@ -49,6 +49,9 @@ typedef struct {
 
 typedef struct {
     json_token_type_t type;
+    /* Byte length of a numeric literal, set for every token typed JSON_T_UINT,
+     * JSON_T_INT, JSON_T_DECIMAL or JSON_T_DOUBLE. */
+    int num_len;
     /* First character of the token, or the offending one for JSON_T_ERROR. */
     const char *start;
     union {
@@ -80,7 +83,8 @@ enum err_context_length {
 
 /* Fill in the next token; JSON_T_STRING points into json->tmp, JSON_T_ERROR leaves
  * json->ptr at the error and puts the message in token->value.string.
- * The token spans [token->start, json->ptr) until the next call. */
+ * The token spans [token->start, json->ptr) until the next call; a numeric
+ * token spans [token->start, token->start + token->num_len). */
 void json_next_token(json_parse_t *json, json_token_t *token);
 
 /* Lay out a " >> " arrow around the character at column_index into the

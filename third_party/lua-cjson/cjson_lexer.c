@@ -497,6 +497,7 @@ static void json_next_number_token(json_parse_t *json, json_token_t *token)
         json_set_token_error(token, json, "invalid number");
         return;
     }
+    token->num_len = (int)consumed;
     json->ptr = start + consumed;
 }
 
@@ -574,19 +575,26 @@ void json_next_token(json_parse_t *json, json_token_t *token)
         /*
          * RFC4627: Numeric values that cannot be represented as sequences of
          * digits (such as Infinity and NaN) are not permitted.
+         *
+         * These words are the one JSON_T_DOUBLE the number lexer never sees, so
+         * they set num_len themselves; json_accept() has already advanced
+         * json->ptr over the word.
          */
         if (json_accept(json, "inf")) {
             token->type = JSON_T_DOUBLE;
             token->value.number = INFINITY;
+            token->num_len = (int)(json->ptr - token->start);
             return;
         } else if (json_accept(json, "-inf")) {
             token->type = JSON_T_DOUBLE;
             token->value.number = -INFINITY;
+            token->num_len = (int)(json->ptr - token->start);
             return;
         } else if (json_accept(json, "nan") ||
                    json_accept(json, "-nan")) {
             token->type = JSON_T_DOUBLE;
             token->value.number = NAN;
+            token->num_len = (int)(json->ptr - token->start);
             return;
         }
     }
