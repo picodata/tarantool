@@ -280,6 +280,28 @@ port_sql_dump_lua(struct port *port, struct lua_State *L, bool is_flat)
 }
 
 /**
+ * Point @a bind at a copy of a string or varbinary payload on the region.
+ *
+ * The payload has to be copied because it is about to be popped from the Lua
+ * stack. An empty one has nothing to copy, and region_alloc() asserts on a
+ * zero-size request, so hand out a static empty string instead: the bind only
+ * has to be non-NULL, its emptiness is carried by the length.
+ */
+static void
+lua_sql_bind_set_bytes(struct sql_bind *bind, const struct luaL_field *field,
+		       struct region *region)
+{
+	if (field->sval.len == 0) {
+		bind->s = "";
+	} else {
+		char *buf = xregion_alloc(region, field->sval.len);
+		memcpy(buf, field->sval.data, field->sval.len);
+		bind->s = buf;
+	}
+	bind->bytes = field->sval.len;
+}
+
+/**
  * Decode a single bind column or option from Lua stack.
  *
  * @param L Lua stack.
@@ -351,14 +373,7 @@ lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i, 
 		bind->bytes = sizeof(bind->i64);
 		break;
 	case MP_STR:
-		/*
-		 * Data should be saved in allocated memory as it
-		 * will be poped from Lua stack.
-		 */
-		buf = xregion_alloc(region, field.sval.len);
-		memcpy(buf, field.sval.data, field.sval.len);
-		bind->s = buf;
-		bind->bytes = field.sval.len;
+		lua_sql_bind_set_bytes(bind, &field, region);
 		break;
 	case MP_DOUBLE:
 	case MP_FLOAT:
