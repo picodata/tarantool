@@ -25,7 +25,7 @@ test:plan(1)
 
 test:test("json", function(test)
     local serializer = require('json')
-    test:plan(61)
+    test:plan(67)
 
     test:test("unsigned", common.test_unsigned, serializer)
     test:test("signed", common.test_signed, serializer)
@@ -119,6 +119,25 @@ test:test("json", function(test)
     test:is(serializer.decode('{"var":2.0e+3}')["var"], 2000)
     test:is(serializer.decode('{"var":2.0e+3}')["var"], 2000)
     test:is(serializer.decode('{"var":2.0e+3}')["var"], 2000)
+
+    --
+    -- A trailing decimal point is not a JSON number, whatever
+    -- decode_invalid_numbers says: that option admits the inf/nan words,
+    -- not a laxer number grammar.
+    --
+    test:ok(not pcall(serializer.decode, '{"var":1.}'),
+            'error: trailing decimal point')
+    test:ok(not pcall(serializer.decode, '{"var":1.e5}'),
+            'error: trailing decimal point before an exponent')
+    test:ok(not pcall(serializer.decode, '{"var":-1.}'),
+            'error: trailing decimal point after a sign')
+    test:ok(not pcall(serializer.decode, '{"var":1.}',
+                      {decode_invalid_numbers = true}),
+            'error: trailing decimal point with invalid numbers allowed')
+    test:is(serializer.decode('{"var":1.0}')["var"], 1,
+            'a fraction still decodes')
+    test:is(serializer.decode('{"var":1e5}')["var"], 100000,
+            'an exponent still decodes')
 
     --
     -- gh-4366: segmentation fault with recursive table

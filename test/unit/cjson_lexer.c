@@ -187,7 +187,7 @@ test_strings(void)
 static void
 test_invalid_numbers(void)
 {
-	plan(4);
+	plan(13);
 	header();
 
 	json_token_t t;
@@ -197,6 +197,39 @@ test_invalid_numbers(void)
 	is(t.type, JSON_T_ERROR, "leading plus rejected");
 	first_token(".5", false, &t);
 	is(t.type, JSON_T_ERROR, "leading dot rejected");
+
+	/*
+	 * strtod() accepts a trailing decimal point, JSON does not. These are
+	 * the forms json_is_invalid_number()'s prefix screen lets through.
+	 * decode_invalid_numbers admits the inf/nan words rather than a laxer
+	 * grammar, so it makes no difference here.
+	 */
+	first_token("1.", false, &t);
+	is(t.type, JSON_T_ERROR, "trailing dot rejected");
+	/*
+	 * The number lexer flags a run reaching the end of the input before it
+	 * knows the literal is one it accepts, and these run to the end. A
+	 * token rejected afterwards is not a number, so it must not keep it.
+	 */
+	ok(!t.num_at_end, "trailing dot clears num_at_end");
+	first_token("1.", true, &t);
+	is(t.type, JSON_T_ERROR, "trailing dot rejected with invalid numbers");
+	first_token("1.e5", false, &t);
+	is(t.type, JSON_T_ERROR, "trailing dot before exponent rejected");
+	ok(!t.num_at_end, "trailing dot before exponent clears num_at_end");
+	first_token("1.E5", false, &t);
+	is(t.type, JSON_T_ERROR, "trailing dot before capital E rejected");
+
+	/*
+	 * A bare exponent has no digits, so the conversion backs off to the
+	 * integer part, which is a strict number. The token stays an int and
+	 * the leftover 'e' fails as a token of its own.
+	 */
+	first_token("1e", false, &t);
+	is(t.type, JSON_T_INT, "bare exponent stops at the integer part");
+	is(t.value.ival, 1, "bare exponent keeps the integer value");
+	first_token("1e+", false, &t);
+	is(t.type, JSON_T_INT, "signed bare exponent stops there too");
 
 	/* Without decode_invalid_numbers, inf is not a number. */
 	first_token("inf", false, &t);
@@ -306,17 +339,13 @@ test_no_sentinel(void)
 	footer();
 }
 
-static void
-test_error_position(void)
+/*
+ * first_token reads only one token, so drive the lexer across the stream
+ * until it fails, and report the column the error token starts at.
+ */
+static int
+error_column(const char *str)
 {
-	plan(2);
-	header();
-
-	/*
-	 * first_token reads only one token, so drive the lexer across the
-	 * stream until the invalid '@' at column index 3 (0-based).
-	 */
-	const char *str = "[1,@]";
 	json_parse_t json;
 	json.ptr = str;
 	json.end = str + strlen(str);
@@ -330,8 +359,25 @@ test_error_position(void)
 		json_next_token(&json, &t);
 	} while (t.type != JSON_T_ERROR && t.type != JSON_T_END);
 
-	is(t.type, JSON_T_ERROR, "invalid token found");
-	is((int)(t.start - json.cur_line_ptr), 3, "error column index");
+	if (t.type != JSON_T_ERROR)
+		return -1;
+
+	return (int)(t.start - json.cur_line_ptr);
+}
+
+static void
+test_error_position(void)
+{
+	plan(2);
+	header();
+
+	/* The invalid '@' is at column index 3 (0-based). */
+	is(error_column("[1,@]"), 3, "error column index");
+	/*
+	 * A number is rejected as a whole, so the error points at the first
+	 * byte of the literal rather than at the '.' that broke the grammar.
+	 */
+	is(error_column("[0,1.]"), 3, "rejected number reports its start");
 
 	check_plan();
 	footer();

@@ -90,7 +90,9 @@ enum err_context_length {
  * pointing into json->tmp only until the next string that has to be decoded.
  * Copy the value out to hold it across calls.
  * JSON_T_ERROR leaves json->ptr at the error and puts the message in
- * token->value.string.
+ * token->value.string; a numeric literal is rejected as a whole, so there
+ * json->ptr stays on its first byte rather than on the byte that broke the
+ * grammar.
  * The token spans [token->start, json->ptr) until the next call; a numeric
  * token spans [token->start, token->start + token->num_len). */
 void json_next_token(json_parse_t *json, json_token_t *token);

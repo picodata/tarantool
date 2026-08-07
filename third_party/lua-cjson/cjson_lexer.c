@@ -265,6 +265,12 @@ static void json_set_token_error(json_token_t *token, json_parse_t *json,
     token->type = JSON_T_ERROR;
     token->start = json->ptr;
     token->value.string = errtype;
+    /* The number lexer fills these in before it knows the literal is one it
+     * accepts, so a rejected number would hand them out on a token that is no
+     * longer a number. Clear them here rather than at each error, so they stay
+     * as the header describes them however the token failed. */
+    token->num_overflow = false;
+    token->num_at_end = false;
 }
 
 static void json_next_string_token(json_parse_t *json, json_token_t *token)
@@ -402,6 +408,52 @@ static int json_is_invalid_number(json_parse_t *json)
     return 0;
 }
 
+/* Match [p, end) against the strict JSON number grammar:
+ *      -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][-+]?[0-9]+)?
+ *
+ * json_is_invalid_number() screens the literal's prefix, but the tail is left
+ * to the strto*() family, which is laxer than JSON: it accepts a trailing
+ * decimal point ("1.", "1.e5"), where JSON requires a digit after the point.
+ * Re-check the span a conversion consumed, so a token the lexer reports as a
+ * number is one the grammar actually allows. decode_invalid_numbers does not
+ * relax this: it admits the inf/nan words, not a laxer grammar, which is why
+ * json_is_invalid_number() rejects "01" and "+1" however it is set. */
+static bool json_is_strict_number(const char *p, const char *end)
+{
+    if (p < end && *p == '-')
+        p++;
+
+    /* Integer part: a lone zero, or a digit run with no leading zero. */
+    if (p == end || *p < '0' || *p > '9')
+        return false;
+    if (*p == '0') {
+        p++;
+    } else {
+        while (p < end && *p >= '0' && *p <= '9')
+            p++;
+    }
+
+    if (p < end && *p == '.') {
+        p++;
+        if (p == end || *p < '0' || *p > '9')
+            return false;
+        while (p < end && *p >= '0' && *p <= '9')
+            p++;
+    }
+
+    if (p < end && (*p == 'e' || *p == 'E')) {
+        p++;
+        if (p < end && (*p == '+' || *p == '-'))
+            p++;
+        if (p == end || *p < '0' || *p > '9')
+            return false;
+        while (p < end && *p >= '0' && *p <= '9')
+            p++;
+    }
+
+    return p == end;
+}
+
 /* A byte strtoll(), strtoull() or fpconv_strtod() could consume. A superset
  * of the JSON number grammar is deliberate: this only decides whether a
  * literal reaches the end of the buffer, so over-accepting costs nothing. */
@@ -520,8 +572,10 @@ static void json_next_number_token(json_parse_t *json, json_token_t *token)
     /* endptr indexes conv, which is the copy when the literal was copied; map
      * it back onto the source buffer before it becomes a position. */
     ptrdiff_t consumed = endptr - conv;
+    /* Check the span while conv is still alive; it dies with heap below. */
+    bool strict = json_is_strict_number(conv, conv + consumed);
     free(heap);
-    if (consumed == 0) {
+    if (consumed == 0 || !strict) {
         json_set_token_error(token, json, "invalid number");
         return;
     }
