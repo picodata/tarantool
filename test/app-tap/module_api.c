@@ -2287,6 +2287,28 @@ test_tostring(lua_State *L)
 }
 
 static int
+test_varbinary(lua_State *L)
+{
+	static const char expected[] = {'a', '\0', 'b'};
+	uint32_t expected_len = (uint32_t)sizeof(expected);
+
+	luaT_pushvarbinary(L, expected, expected_len);
+	uint32_t actual_len = 0;
+	const char *actual = luaT_tovarbinary(L, -1, &actual_len);
+	fail_unless(actual != NULL);
+	fail_unless(actual_len == expected_len);
+	fail_unless(memcmp(actual, expected, actual_len) == 0);
+	lua_pop(L, 1);
+
+	lua_pushboolean(L, true);
+	fail_unless(luaT_tovarbinary(L, -1, &actual_len) == NULL);
+	lua_pop(L, 1);
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+static int
 test_iscallable(lua_State *L)
 {
 	int exp = lua_toboolean(L, 2);
@@ -3832,6 +3854,7 @@ luaopen_module_api(lua_State *L)
 		{"test_cpcall", test_cpcall},
 		{"test_state", test_state},
 		{"test_tostring", test_tostring},
+		{"test_varbinary", test_varbinary},
 		{"iscallable", test_iscallable},
 		{"iscdata", test_iscdata},
 		{"test_upvalueindex", test_upvalueindex},
