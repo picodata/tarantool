@@ -1,4 +1,4 @@
-1..33
+1..35
 # type: file
 # next: 
 ok 1 - 
@@ -65,3 +65,5 @@ ok 30 - ftell
 ok 31 - log_say
 ok 32 - fseek
 ok 33 - syslog line
+ok 34 - json format bounds
+ok 35 - json format bounds, preformatted message

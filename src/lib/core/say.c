@@ -913,6 +913,7 @@ say_format_json(struct log *log, char *buf, int len, int level,
 	(void)log;
 
 	int total = 0;
+	char *const buf_start = buf;
 	char *buf_end = buf + len;
 
 	/*
@@ -942,8 +943,15 @@ say_format_json(struct log *log, char *buf, int len, int level,
 	 * | head \0| garbage |
 	 *         ^ buf       ^ buf_end
 	 */
+	/*
+	 * SNPRINT() nulls the pointer once the buffer is exhausted, but keeps
+	 * counting the length the text would have taken. Only the bytes really
+	 * in the buffer may be moved around below, so follow the pointer, not
+	 * the total.
+	 */
+	if (buf == NULL)
+		buf = buf_end - 1; /* Full, without the '\0'. */
 	char *msg_ptr = buf;
-	const int head_len = total;
 
 	/* Print error, if any. */
 	if (error) {
@@ -986,13 +994,22 @@ say_format_json(struct log *log, char *buf, int len, int level,
 	 * | head |   tail  \0| garbage |
 	 *         ^ msg_ptr ^ buf       ^ buf_end
 	 */
-
-	const int tail_len = total - head_len;
+	if (buf == NULL)
+		buf = buf_end - 1; /* Full, see the comment above. */
+	const int tail_len = buf - msg_ptr;
 	char *tail_ptr = buf_end - tail_len - 1; /* Reserve space for '\0'. */
 
 	/* Move the tail of the context to the end of the buffer. */
 	memmove(tail_ptr, msg_ptr, tail_len);
 	tail_ptr[tail_len] = '\0';
+	if (tail_len > 0) {
+		/*
+		 * The tail ends with "}\n" unless it got cut off. Put the
+		 * newline back so that a truncated entry does not run into the
+		 * next one in the log.
+		 */
+		tail_ptr[tail_len - 1] = '\n';
+	}
 	int msg_cap = tail_ptr - msg_ptr;
 
 	/* After moving the tail, the buffer looks like this:
@@ -1023,37 +1040,49 @@ say_format_json(struct log *log, char *buf, int len, int level,
 			return -1;
 		}
 
-		msg_len = MIN(msg_len, msg_cap);
+		/* snprintf() terminates, so it wrote msg_cap - 1 at most. */
+		msg_len = MIN(msg_len, MAX(msg_cap - 1, 0));
 		len -= msg_len;
 		total += msg_len;
 		msg_ptr += msg_len;
 	} else {
-		/* Print message header. */
-		SNPRINT(total, snprintf, msg_ptr, msg_cap, "\"message\": \"");
-
+		static const char msg_head[] = "\"message\": \"";
 		static const char msg_tail[] = "\", ";
-		if (msg_cap >= (int)strlen(msg_tail)) {
-			msg_cap -= (int)strlen(msg_tail);
-		}
 
 		/*
-		 * Print the message.
-		 * Need to cast msg_cap to unsigned, because otherwise
-		 * during LTO build stringop-overread warning is triggered.
-		 * Can't use SNPRINT macro here, because it sets the pointer to
-		 * null, if the message didn't fit into the provided buffer,
-		 * but we still need to use the pointer after.
+		 * Print the message only if both its fixed parts and the '\0'
+		 * of vsnprintf() fit into the gap left by the context. An
+		 * entry without the message is still valid json, a cut off one
+		 * is not.
 		 */
-		vsnprintf(msg_ptr, (unsigned)msg_cap, format, ap);
+		if (msg_cap >= (int)(sizeof(msg_head) + sizeof(msg_tail)) - 1) {
+			/* Print message header. */
+			SNPRINT(total, snprintf, msg_ptr, msg_cap, msg_head);
 
-		/* Escape the message. */
-		int msg_len = json_escape_inplace(msg_ptr, msg_cap);
-		len -= msg_len;
-		total += msg_len;
-		msg_ptr += msg_len;
+			if (msg_cap >= (int)strlen(msg_tail)) {
+				msg_cap -= (int)strlen(msg_tail);
+			}
 
-		/* Print message tail. */
-		SNPRINT(total, snprintf, msg_ptr, len, msg_tail);
+			/*
+			 * Print the message.
+			 * Need to cast msg_cap to unsigned, because otherwise
+			 * during LTO build stringop-overread warning is
+			 * triggered. Can't use SNPRINT macro here, because it
+			 * sets the pointer to null, if the message didn't fit
+			 * into the provided buffer, but we still need to use
+			 * the pointer after.
+			 */
+			vsnprintf(msg_ptr, (unsigned)msg_cap, format, ap);
+
+			/* Escape the message. */
+			int msg_len = json_escape_inplace(msg_ptr, msg_cap);
+			total += msg_len;
+			msg_ptr += msg_len;
+
+			/* Print message tail into the room reserved above. */
+			msg_cap = tail_ptr - msg_ptr;
+			SNPRINT(total, snprintf, msg_ptr, msg_cap, msg_tail);
+		}
 	}
 
 	/*
@@ -1064,7 +1093,7 @@ say_format_json(struct log *log, char *buf, int len, int level,
 	 */
 	memmove(msg_ptr, tail_ptr, tail_len + 1);
 
-	return total;
+	return msg_ptr - buf_start + tail_len;
 }
 
 /** Wrapper around log->format_func to be used with SNPRINT. */

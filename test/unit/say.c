@@ -69,6 +69,60 @@ format_func_custom(struct log *log, char *buf, int len, int level,
 	return total;
 }
 
+/** Wrapper to build a va_list for say_format_json(). */
+static int
+format_json(char *buf, int len, const char *module, const char *format, ...)
+{
+	va_list ap;
+	va_start(ap, format);
+	int rc = say_format_json(NULL, buf, len, S_ERROR, module, "say.c", 42,
+				 NULL, format, ap);
+	va_end(ap);
+	return rc;
+}
+
+enum {
+	/* Below that the context head itself does not fit. */
+	JSON_BOUNDS_MIN_LEN = 32,
+	JSON_BOUNDS_MAX_LEN = 320,
+};
+
+/**
+ * Check that say_format_json() stays inside the buffer for every combination
+ * of buffer size and module name length, including the ones that leave no room
+ * for the message, or for the context, at all. The buffer is heap allocated so
+ * that ASAN catches accesses outside of it.
+ */
+static bool
+check_json_bounds(const char *format, const char *arg)
+{
+	bool rc = true;
+	char module[JSON_BOUNDS_MAX_LEN + 1];
+	memset(module, 'A', sizeof(module));
+	for (int len = JSON_BOUNDS_MIN_LEN; len <= JSON_BOUNDS_MAX_LEN; len++) {
+		char *buf = xmalloc(len);
+		for (int i = 0; i <= JSON_BOUNDS_MAX_LEN; i++) {
+			module[i] = '\0';
+			memset(buf, '#', len);
+			int total = format_json(buf, len, module, format, arg);
+			/*
+			 * The formatter must report the number of bytes it
+			 * really wrote, and must leave the buffer null
+			 * terminated right after them.
+			 */
+			if ((total < 0 || total >= len ||
+			     strlen(buf) != (size_t)total) && rc) {
+				note("len %i, module length %i: total %i", len,
+				     i, total);
+				rc = false;
+			}
+			module[i] = 'A';
+		}
+		free(buf);
+	}
+	return rc;
+}
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t cond_sync = PTHREAD_COND_INITIALIZER;
@@ -170,7 +224,7 @@ int main()
 	fiber_init(fiber_c_invoke);
 	say_logger_init("/dev/null", S_INFO, 0, "plain");
 
-	plan(33);
+	plan(35);
 
 #define PARSE_LOGGER_TYPE(input, rc) \
 	ok(parse_logger_type(input) == rc, "%s", input)
@@ -278,6 +332,10 @@ int main()
 	say_logrotate(NULL, NULL, 0);
 	coio_shutdown();
 	log_destroy(&test_log);
+
+	ok(check_json_bounds("%s", "hello"), "json format bounds");
+	ok(check_json_bounds("json", "{\"message\": \"hello\"}"),
+	   "json format bounds, preformatted message");
 
 	fiber_free();
 	memory_free();
