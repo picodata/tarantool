@@ -194,7 +194,7 @@ timezone_tm_lookup(const char *str, size_t len,
 		tm->tm_isdst = !!(found->flags & TZ_DST);
 		return rc;
 	}
-	timezone_t tz = timezone_alloc(str);
+	timezone_t tz = timezone_alloc(timezone_name(found->id));
 	if (tz == NULL)
 		return 0;
 	struct datetime date = {.epoch = 0};
@@ -222,8 +222,7 @@ timezone_epoch_lookup(const char *str, size_t len, time_t base,
 		*gmtoff = found->offset * 60;
 		return rc;
 	}
-	timezone_t tz = NULL;
-	tz = timezone_alloc(str);
+	timezone_t tz = timezone_alloc(timezone_name(found->id));
 	if (tz == NULL)
 		return 0;
 	struct tnt_tm tm = {.tm_epoch = 0};

@@ -592,13 +592,18 @@ interval_from_map_test(void)
 static void
 datetime_parse_unterminated_test(void)
 {
-	plan(4);
-	header();
-
 	const char *samples[] = {
 		"2012-12-24T15:30:00Z",
 		"2012-12-24 15:30 MSK",
+		"2012-12-24 15:30 Europe/Moscow",
+		"2012-12-24 15:30 America/New_York",
+		"2012-12-24 15:30 Europe/Paris",
+		"2012-12-24 15:30 Asia/Tokyo",
+		"2012-12-24 15:30 Africa/Accra",
 	};
+
+	plan(3 * lengthof(samples));
+	header();
 
 	for (size_t i = 0; i < lengthof(samples); i++) {
 		const char *s = samples[i];
@@ -611,13 +616,14 @@ datetime_parse_unterminated_test(void)
 
 		struct datetime got;
 		ssize_t rc = datetime_parse_full(&got, buf, len);
-		is(rc > 0, true, "parses trailing zone without reading past "
-		   "len for '%s'", s);
+		is(rc, (ssize_t)len, "consumes the trailing zone of '%s'", s);
 
 		struct datetime ref;
 		datetime_parse_full(&ref, s, len);
 		is(got.epoch, ref.epoch,
 		   "same epoch as NUL-terminated input for '%s'", s);
+		is(got.tzoffset, ref.tzoffset,
+		   "same tzoffset as NUL-terminated input for '%s'", s);
 	}
 
 	footer();
