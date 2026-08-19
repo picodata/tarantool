@@ -1093,6 +1093,11 @@ say_format_json(struct log *log, char *buf, int len, int level,
 	 */
 	memmove(msg_ptr, tail_ptr, tail_len + 1);
 
+	/*
+	 * total no longer drives the layout (see the SNPRINT() comment above),
+	 * but SNPRINT() still requires an accumulator to report short writes.
+	 */
+	(void)total;
 	return msg_ptr - buf_start + tail_len;
 }
 
