@@ -140,7 +140,7 @@ char_span_alpha(const char *src, size_t len)
 		return 0;
 	for (n = 0; n < len; n++) {
 		char ch = src[n];
-		if (!isalpha(ch) && ch != '/' && ch != '_' && ch != '-' && ch != '+' && ch == ':')
+		if (!isalpha(ch) && ch != '/' && ch != '_' && ch != '-' && ch != '+' && ch != ':')
 			break;
 
 	}

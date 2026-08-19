@@ -76,8 +76,8 @@ struct {
 	S("2012-12-24 14:30 UTC-1"),
 	S("2012-12-24 14:30 UTC-01"),
 	S("2012-12-24 14:30 UTC-01:00"),
-	S("2012-12-24 14:30 UTC−09:00"),
-	S("2012-12-24 14:30 UTC−09:30"), /* Marquesas */
+	S("2012-12-24 14:30 UTC-09:00"),
+	S("2012-12-24 14:30 UTC-09:30"), /* Marquesas */
 	S("2012-12-24 14:30 UTC-0100"),
 	S("2012-12-24 15:30 GMT"),
 	S("2012-12-24 16:30 GMT+1"),
@@ -630,10 +630,51 @@ datetime_parse_unterminated_test(void)
 	check_plan();
 }
 
+static void
+datetime_parse_zone_suffix_test(void)
+{
+	struct {
+		const char *str;
+		const char *prefix;
+	} samples[] = {
+		{"2012-12-24 15:30Z 12:00", "2012-12-24 15:30Z"},
+		{"2012-12-24 15:30 MSK 12:00", "2012-12-24 15:30 MSK"},
+		{"2012-12-24 15:30 MSK, note", "2012-12-24 15:30 MSK"},
+		{"2012-12-24 15:30 UTC 12:00", "2012-12-24 15:30 UTC"},
+		{"2012-12-24 15:30 Europe/Moscow 12:00",
+		 "2012-12-24 15:30 Europe/Moscow"},
+		{"2012-12-24 15:30 America/New_York 12:00",
+		 "2012-12-24 15:30 America/New_York"},
+	};
+
+	plan(4 * lengthof(samples));
+	header();
+
+	for (size_t i = 0; i < lengthof(samples); i++) {
+		const char *s = samples[i].str;
+		const char *prefix = samples[i].prefix;
+		size_t prefix_len = strlen(prefix);
+
+		struct datetime got = {.epoch = 0};
+		ssize_t rc = datetime_parse_full(&got, s, strlen(s));
+		is(rc, (ssize_t)prefix_len, "stops at the end of the zone "
+		   "of '%s'", s);
+
+		struct datetime ref = {.epoch = 0};
+		rc = datetime_parse_full(&ref, prefix, prefix_len);
+		is(rc, (ssize_t)prefix_len, "consumes '%s'", prefix);
+		is(got.epoch, ref.epoch, "same epoch as '%s'", prefix);
+		is(got.tzoffset, ref.tzoffset, "same tzoffset as '%s'", prefix);
+	}
+
+	footer();
+	check_plan();
+}
+
 int
 main(void)
 {
-	plan(8);
+	plan(9);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -642,6 +683,7 @@ main(void)
 	mp_print_test();
 	interval_from_map_test();
 	datetime_parse_unterminated_test();
+	datetime_parse_zone_suffix_test();
 
 	return check_plan();
 }
