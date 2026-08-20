@@ -946,6 +946,7 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 				endEq = 1;
 			}
 		} else if (bStopAtNull) {
+			sqlExprCacheRemove(pParse, regBase + nEq, 1);
 			sqlVdbeAddOp2(v, OP_Null, 0, regBase + nEq);
 			endEq = 0;
 			nConstraint++;

@@ -15,6 +15,7 @@ end)
 g.after_each(function()
     g.server:exec(function()
         box.execute([[DROP TABLE IF EXISTS t]])
+        box.execute([[DROP TABLE IF EXISTS o]])
     end)
 end)
 
@@ -219,5 +220,22 @@ g.test_unique_mixed = function()
         t.assert_equals(box.execute(
             [[SELECT a, b FROM t WHERE a < 3 ORDER BY a ASC, b DESC]]).rows,
             {{1, 20}, {1, 10}, {2, 10}})
+    end)
+end
+
+-- A synthetic NULL range bound must not invalidate a cached outer value.
+g.test_desc_range_preserves_outer_value = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE o (id INT PRIMARY KEY, a INT)]])
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, x INT)]])
+        box.execute([[CREATE INDEX i ON t (x DESC)]])
+        box.execute([[INSERT INTO o VALUES (1, 1), (2, 3)]])
+        box.execute([[INSERT INTO t VALUES (1, 0), (2, 2), (3, NULL)]])
+
+        local rows = box.execute([[
+            SELECT o.a, t.x FROM o CROSS JOIN t INDEXED BY i
+                WHERE t.x < o.a ORDER BY o.a, t.x;
+        ]]).rows
+        t.assert_equals(rows, {{1, 0}, {3, 0}, {3, 2}})
     end)
 end
