@@ -630,7 +630,7 @@ vy_write_iterator_deferred_delete(struct vy_write_iterator *stream,
 				stream->deferred_delete_handler;
 		if (handler != NULL && vy_stmt_type(stmt) != IPROTO_DELETE &&
 		    handler->iface->process(handler, stmt,
-					    stream->deferred_delete.stmt) != 0)
+			vy_stmt_lsn(stream->deferred_delete.stmt)) != 0)
 			return -1;
 		vy_stmt_unref_if_possible(stream->deferred_delete.stmt);
 		stream->deferred_delete = vy_entry_none();

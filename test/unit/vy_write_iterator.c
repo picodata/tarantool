@@ -22,18 +22,16 @@ struct test_handler {
  */
 static int
 test_handler_process(struct vy_deferred_delete_handler *base,
-		     struct tuple *old_stmt, struct tuple *new_stmt)
+		     struct tuple *old_stmt, int64_t lsn)
 {
 	struct test_handler *handler = (struct test_handler *)base;
 
 	fail_if(vy_stmt_type(old_stmt) == IPROTO_DELETE);
-	fail_if(vy_stmt_type(new_stmt) != IPROTO_DELETE &&
-		vy_stmt_type(new_stmt) != IPROTO_REPLACE);
 
 	struct tuple *delete = vy_stmt_new_surrogate_delete(handler->format,
 							    old_stmt);
 	fail_if(delete == NULL);
-	vy_stmt_set_lsn(delete, vy_stmt_lsn(new_stmt));
+	vy_stmt_set_lsn(delete, lsn);
 
 	fail_if(handler->count >= MAX_DEFERRED_COUNT);
 	handler->stmt[handler->count++] = delete;

@@ -112,8 +112,8 @@ enum { VY_DEFERRED_DELETE_BATCH_MAX = 100 };
 struct vy_deferred_delete_stmt {
 	/** Overwritten tuple. */
 	struct tuple *old_stmt;
-	/** Statement that overwrote @old_stmt. */
-	struct tuple *new_stmt;
+	/** LSN to assign to the generated DELETE. */
+	int64_t lsn;
 };
 
 /**
@@ -908,7 +908,7 @@ vy_deferred_delete_process_one(struct space *deferred_delete_space,
 			       uint32_t space_id, struct tuple_format *format,
 			       struct vy_deferred_delete_stmt *stmt)
 {
-	int64_t lsn = vy_stmt_lsn(stmt->new_stmt);
+	int64_t lsn = stmt->lsn;
 	int ret = -1;
 
 	struct tuple *delete;
@@ -1035,7 +1035,6 @@ vy_deferred_delete_batch_free_f(struct cmsg *cmsg)
 	for (int i = 0; i < batch->count; i++) {
 		struct vy_deferred_delete_stmt *stmt = &batch->stmt[i];
 		vy_stmt_unref_if_possible(stmt->old_stmt);
-		vy_stmt_unref_if_possible(stmt->new_stmt);
 	}
 	/*
 	 * Abort the task if the tx thread failed to process
@@ -1081,7 +1080,7 @@ vy_task_deferred_delete_flush(struct vy_task *task)
  */
 static int
 vy_task_deferred_delete_process(struct vy_deferred_delete_handler *handler,
-				struct tuple *old_stmt, struct tuple *new_stmt)
+				struct tuple *old_stmt, int64_t lsn)
 {
 	enum { MAX_IN_PROGRESS = 10 };
 
@@ -1114,8 +1113,7 @@ vy_task_deferred_delete_process(struct vy_deferred_delete_handler *handler,
 	struct vy_deferred_delete_stmt *stmt = &batch->stmt[batch->count++];
 	stmt->old_stmt = old_stmt;
 	vy_stmt_ref_if_possible(old_stmt);
-	stmt->new_stmt = new_stmt;
-	vy_stmt_ref_if_possible(new_stmt);
+	stmt->lsn = lsn;
 
 	if (batch->count == VY_DEFERRED_DELETE_BATCH_MAX)
 		vy_task_deferred_delete_flush(task);

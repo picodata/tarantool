@@ -208,7 +208,9 @@ struct vy_slice;
  *
  * @param handler  Deferred DELETE handler.
  * @param old_stmt Overwritten tuple.
- * @param new_stmt Statement that overwrote @old_stmt.
+ * @param lsn      LSN to assign to the generated DELETE
+ *                 statement, so that it dominates @a old_stmt
+ *                 in the secondary indexes.
  *
  * @retval  0 Success.
  * @retval -1 Error.
@@ -217,7 +219,7 @@ struct vy_slice;
  */
 typedef int
 (*vy_deferred_delete_process_f)(struct vy_deferred_delete_handler *handler,
-				struct tuple *old_stmt, struct tuple *new_stmt);
+				struct tuple *old_stmt, int64_t lsn);
 
 /**
  * Callack invoked by the write iterator to destroy a deferred
