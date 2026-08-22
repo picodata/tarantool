@@ -145,6 +145,8 @@ struct vinyl_iterator {
 	struct iterator base;
 	/** Memory pool the iterator was allocated from. */
 	struct mempool *pool;
+	/** The iterator is closed: next() returns nothing. */
+	bool is_eof;
 	/**
 	 * Iterator position for pagination. Set to none when
 	 * the iterator is created. Points to the last non-none
@@ -3660,7 +3662,7 @@ vinyl_iterator_close(struct vinyl_iterator *it)
 		trigger_clear(&it->on_tx_destroy);
 	}
 	it->tx = NULL;
-	it->base.next = exhausted_iterator_next;
+	it->is_eof = true;
 }
 
 /**
@@ -3730,6 +3732,10 @@ vinyl_iterator_next(struct iterator *base, struct tuple **ret)
 
 	assert(base->next == vinyl_iterator_next);
 	struct vinyl_iterator *it = (struct vinyl_iterator *)base;
+	if (it->is_eof) {
+		*ret = NULL;
+		return 0;
+	}
 	struct vy_lsm *lsm = it->iterator.lsm;
 	/*
 	 * Make sure the LSM tree isn't deleted while we are
@@ -3788,7 +3794,7 @@ vinyl_iterator_free(struct iterator *base)
 {
 	assert(base->free == vinyl_iterator_free);
 	struct vinyl_iterator *it = (struct vinyl_iterator *)base;
-	if (base->next != exhausted_iterator_next)
+	if (!it->is_eof)
 		vinyl_iterator_close(it);
 	if (it->pos.stmt != NULL)
 		tuple_unref(it->pos.stmt);
@@ -3856,6 +3862,7 @@ vinyl_index_create_iterator(struct index *base, enum iterator_type type,
 	it->base.position = vinyl_iterator_position;
 	it->base.free = vinyl_iterator_free;
 	it->pool = &env->iterator_pool;
+	it->is_eof = false;
 	it->pos = vy_entry_none();
 
 	if (tx != NULL) {

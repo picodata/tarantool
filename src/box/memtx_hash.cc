@@ -90,6 +90,10 @@ struct hash_iterator {
 	struct light_index_iterator iterator;
 	/** Memory pool the iterator was allocated from. */
 	struct mempool *pool;
+	/** The first probe was made: GT continues as GE. */
+	bool is_started;
+	/** The scan hit its end: next() returns nothing. */
+	bool is_eof;
 };
 
 static_assert(sizeof(struct hash_iterator) <= MEMTX_ITERATOR_SIZE,
@@ -135,21 +139,20 @@ hash_iterator_gt_base(struct iterator *ptr, struct tuple **ret)
 static int									\
 name(struct iterator *iterator, struct tuple **ret)				\
 {										\
+	struct hash_iterator *it = (struct hash_iterator *)iterator;		\
 	struct txn *txn = in_txn();						\
 	struct space *space = space_by_id(iterator->space_id);			\
 	struct index *idx = iterator->index;					\
-	bool is_first = true;							\
 	do {									\
 		int rc;								\
-		if (is_first) {							\
+		if (!it->is_started) {						\
 			rc = name##_base(iterator, ret);			\
-			iterator->next_internal = hash_iterator_ge;		\
+			it->is_started = true;					\
 		} else {							\
 			rc = hash_iterator_ge_base(iterator, ret);		\
 		}								\
 		if (rc != 0 || *ret == NULL)					\
 			return rc;						\
-		is_first = false;						\
 		*ret = memtx_tx_tuple_clarify(txn, space, *ret, idx, 0);	\
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/\
 		memtx_tx_story_gc();						\
@@ -167,7 +170,12 @@ WRAP_ITERATOR_METHOD(hash_iterator_gt);
 static int
 hash_iterator_eq(struct iterator *it, struct tuple **ret)
 {
-	it->next_internal = exhausted_iterator_next;
+	struct hash_iterator *hash_it = (struct hash_iterator *)it;
+	if (hash_it->is_eof) {
+		*ret = NULL;
+		return 0;
+	}
+	hash_it->is_eof = true;
 	/* always returns zero. */
 	hash_iterator_ge_base(it, ret);
 	if (*ret == NULL)
@@ -450,6 +458,8 @@ memtx_hash_index_create_iterator(struct index *base, enum iterator_type type,
 	iterator_create(&it->base, base);
 	it->pool = &alloc_meta->iterator_pool;
 	it->base.free = hash_iterator_free;
+	it->is_started = false;
+	it->is_eof = false;
 	light_index_iterator_begin(&index->hash_table, &it->iterator);
 
 	switch (type) {

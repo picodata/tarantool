@@ -1097,8 +1097,6 @@ disabled_index_replace(struct index *index, struct tuple *old_tuple,
 		       struct tuple *new_tuple, enum dup_replace_mode mode,
 		       struct tuple **result, struct tuple **successor);
 int
-exhausted_iterator_next(struct iterator *it, struct tuple **ret);
-int
 exhausted_index_read_view_iterator_next_raw(struct index_read_view_iterator *it,
 					    struct read_view_tuple *result);
 /** Unsupported feature error is returned. */

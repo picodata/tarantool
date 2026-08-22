@@ -1054,13 +1054,6 @@ disabled_index_replace(struct index *index, struct tuple *old_tuple,
 	return 0;
 }
 
-int
-exhausted_iterator_next(struct iterator *it, struct tuple **ret)
-{
-	(void)it;
-	*ret = NULL;
-	return 0;
-}
 
 int
 exhausted_index_read_view_iterator_next_raw(struct index_read_view_iterator *it,
