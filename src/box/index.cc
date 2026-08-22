@@ -576,6 +576,7 @@ iterator_create(struct iterator *it, struct index *index)
 	it->next_internal = NULL;
 	it->next = NULL;
 	it->free = NULL;
+	it->pool = NULL;
 	it->space_cache_version = space_cache_version;
 	it->space_id = index->def->space_id;
 	it->index_id = index->def->iid;

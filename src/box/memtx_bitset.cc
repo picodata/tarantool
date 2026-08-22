@@ -164,8 +164,6 @@ value_to_tuple(size_t value)
 struct bitset_index_iterator {
 	struct iterator base; /* Must be the first member. */
 	struct tt_bitset_iterator bitset_it;
-	/** Memory pool the iterator was allocated from. */
-	struct mempool *pool;
 };
 
 static_assert(sizeof(struct bitset_index_iterator) <= MEMTX_ITERATOR_SIZE,
@@ -185,7 +183,7 @@ bitset_index_iterator_free(struct iterator *iterator)
 	struct bitset_index_iterator *it = bitset_index_iterator(iterator);
 
 	tt_bitset_iterator_destroy(&it->bitset_it);
-	mempool_free(it->pool, it);
+	mempool_free(iterator->pool, it);
 }
 
 static int
@@ -366,7 +364,7 @@ memtx_bitset_index_create_iterator(struct index *base, enum iterator_type type,
 	}
 
 	iterator_create(&it->base, base);
-	it->pool = &alloc_meta->iterator_pool;
+	it->base.pool = &alloc_meta->iterator_pool;
 	it->base.next_internal = bitset_index_iterator_next;
 	it->base.next = memtx_iterator_next;
 	it->base.position = generic_iterator_position;

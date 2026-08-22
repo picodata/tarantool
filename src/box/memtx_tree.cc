@@ -287,8 +287,6 @@ struct tree_iterator {
 	 * restore the iterator position.
 	 */
 	struct tuple *last_func_key;
-	/** Memory pool the iterator was allocated from. */
-	struct mempool *pool;
 };
 
 static_assert(sizeof(struct tree_iterator<false>) <= MEMTX_ITERATOR_SIZE,
@@ -365,7 +363,7 @@ tree_iterator_free(struct iterator *iterator)
 		tuple_unref(it->last.tuple);
 	if (it->last_func_key != NULL)
 		tuple_unref(it->last_func_key);
-	mempool_free(it->pool, it);
+	mempool_free(iterator->pool, it);
 }
 
 /*
@@ -1641,7 +1639,7 @@ memtx_tree_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &alloc_meta->iterator_pool;
+	it->base.pool = &alloc_meta->iterator_pool;
 	it->base.next = memtx_iterator_next;
 	it->base.free = tree_iterator_free<USE_HINT>;
 	if (base->def->key_def->for_func_index) {

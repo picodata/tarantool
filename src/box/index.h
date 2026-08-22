@@ -43,6 +43,7 @@ extern "C" {
 
 struct tuple;
 struct engine;
+struct mempool;
 struct space;
 struct space_read_view;
 struct index;
@@ -319,6 +320,11 @@ struct iterator {
 	int (*position)(struct iterator *it, const char **pos, uint32_t *size);
 	/** Destroy the iterator. */
 	void (*free)(struct iterator *);
+	/**
+	 * Memory pool the iterator was allocated from, or NULL
+	 * if it was not allocated from a pool.
+	 */
+	struct mempool *pool;
 	/** Space cache version at the time of the last index lookup. */
 	uint32_t space_cache_version;
 	/** ID of the space the iterator is for. */

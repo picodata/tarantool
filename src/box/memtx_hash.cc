@@ -88,8 +88,6 @@ struct memtx_hash_index {
 struct hash_iterator {
 	struct iterator base; /* Must be the first member. */
 	struct light_index_iterator iterator;
-	/** Memory pool the iterator was allocated from. */
-	struct mempool *pool;
 	/** The first probe was made: GT continues as GE. */
 	bool is_started;
 	/** The scan hit its end: next() returns nothing. */
@@ -105,7 +103,7 @@ hash_iterator_free(struct iterator *iterator)
 {
 	assert(iterator->free == hash_iterator_free);
 	struct hash_iterator *it = (struct hash_iterator *) iterator;
-	mempool_free(it->pool, it);
+	mempool_free(iterator->pool, it);
 }
 
 static int
@@ -456,7 +454,7 @@ memtx_hash_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &alloc_meta->iterator_pool;
+	it->base.pool = &alloc_meta->iterator_pool;
 	it->base.free = hash_iterator_free;
 	it->is_started = false;
 	it->is_eof = false;

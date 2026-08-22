@@ -143,8 +143,6 @@ vy_gc(struct vy_env *env, struct vy_recovery *recovery,
 
 struct vinyl_iterator {
 	struct iterator base;
-	/** Memory pool the iterator was allocated from. */
-	struct mempool *pool;
 	/** The iterator is closed: next() returns nothing. */
 	bool is_eof;
 	/**
@@ -3798,7 +3796,7 @@ vinyl_iterator_free(struct iterator *base)
 		vinyl_iterator_close(it);
 	if (it->pos.stmt != NULL)
 		tuple_unref(it->pos.stmt);
-	mempool_free(it->pool, it);
+	mempool_free(base->pool, it);
 }
 
 static struct iterator *
@@ -3861,7 +3859,7 @@ vinyl_index_create_iterator(struct index *base, enum iterator_type type,
 	it->base.next = vinyl_iterator_next;
 	it->base.position = vinyl_iterator_position;
 	it->base.free = vinyl_iterator_free;
-	it->pool = &env->iterator_pool;
+	it->base.pool = &env->iterator_pool;
 	it->is_eof = false;
 	it->pos = vy_entry_none();
 

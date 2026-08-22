@@ -67,8 +67,6 @@ struct sysview_iterator {
 	struct iterator base;
 	struct iterator *source;
 	struct space *space;
-	/** Memory pool the iterator was allocated from. */
-	struct mempool *pool;
 };
 
 static inline struct sysview_iterator *
@@ -82,7 +80,7 @@ sysview_iterator_free(struct iterator *ptr)
 {
 	struct sysview_iterator *it = sysview_iterator(ptr);
 	iterator_delete(it->source);
-	mempool_free(it->pool, it);
+	mempool_free(ptr->pool, it);
 }
 
 static int
@@ -137,7 +135,7 @@ sysview_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &sysview->iterator_pool;
+	it->base.pool = &sysview->iterator_pool;
 	it->base.next = sysview_iterator_next;
 	it->base.free = sysview_iterator_free;
 

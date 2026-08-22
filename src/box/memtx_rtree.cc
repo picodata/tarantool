@@ -137,8 +137,6 @@ extract_rectangle(struct rtree_rect *rect, struct tuple *tuple,
 struct index_rtree_iterator {
         struct iterator base;
         struct rtree_iterator impl;
-	/** Memory pool the iterator was allocated from. */
-	struct mempool *pool;
 };
 
 static void
@@ -146,7 +144,7 @@ index_rtree_iterator_free(struct iterator *i)
 {
 	struct index_rtree_iterator *itr = (struct index_rtree_iterator *)i;
 	rtree_iterator_destroy(&itr->impl);
-	mempool_free(itr->pool, itr);
+	mempool_free(i->pool, itr);
 }
 
 static int
@@ -374,7 +372,7 @@ memtx_rtree_index_create_iterator(struct index *base, enum iterator_type type,
 		return NULL;
 	}
 	iterator_create(&it->base, base);
-	it->pool = &alloc_meta->rtree_iterator_pool;
+	it->base.pool = &alloc_meta->rtree_iterator_pool;
 	it->base.next_internal = index_rtree_iterator_next;
 	it->base.next = memtx_iterator_next;
 	it->base.position = generic_iterator_position;
