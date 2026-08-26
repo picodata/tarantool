@@ -52,6 +52,7 @@ static int exprCodeVector(Parse * pParse, Expr * p, int *piToFree);
 static enum field_type
 sql_highest_type(enum field_type a, struct Expr *expr)
 {
+	expr = sqlExprSkipCollate(expr);
 	if (a == FIELD_TYPE_ANY || expr->op == TK_VARIABLE)
 		return FIELD_TYPE_ANY;
 	if (expr->op == TK_NULL)
@@ -67,6 +68,27 @@ sql_highest_type(enum field_type a, struct Expr *expr)
 	if (!sql_type_is_numeric(a) || !sql_type_is_numeric(b))
 		return FIELD_TYPE_SCALAR;
 	return sql_type_result(a, b);
+}
+
+enum field_type
+sql_expr_list_type(struct ExprList *list)
+{
+	assert(list != NULL);
+	assert(list->nExpr > 0);
+	uint32_t i = 0;
+	uint32_t count = list->nExpr;
+	while (i < count &&
+	       sqlExprSkipCollate(list->a[i].pExpr)->op == TK_NULL)
+		++i;
+	if (i == count)
+		return FIELD_TYPE_ANY;
+	struct Expr *expr = sqlExprSkipCollate(list->a[i].pExpr);
+	enum field_type type = sql_expr_type(expr);
+	if (expr->op == TK_VARIABLE)
+		type = FIELD_TYPE_ANY;
+	for (++i; i < count; ++i)
+		type = sql_highest_type(type, list->a[i].pExpr);
+	return type;
 }
 
 enum field_type
@@ -4021,6 +4043,18 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 					sqlExprCachePop(pParse);
 				}
 				sqlVdbeResolveLabel(v, endCoalesce);
+				/*
+				 * A parse-only SQL_EXPR has unresolved
+				 * types. Keep the selected value's runtime
+				 * type in that case.
+				 */
+				if (!ExprHasProperty(pExpr, EP_Resolved))
+					break;
+				enum field_type *type =
+					sql_xmalloc0(sizeof(*type));
+				type[0] = sql_expr_type(pExpr);
+				sqlVdbeAddOp4(v, OP_ApplyType, target, 1, 0,
+					      (char *)type, P4_DYNAMIC);
 				break;
 			}
 

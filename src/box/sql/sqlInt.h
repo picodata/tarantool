@@ -3961,6 +3961,13 @@ enum field_type
 sql_expr_type(struct Expr *pExpr);
 
 /**
+ * Return the common type of expressions in the given list.
+ * Untyped NULL expressions do not affect the result type.
+ */
+enum field_type
+sql_expr_list_type(struct ExprList *list);
+
+/**
  * Convert z to a 64-bit signed or unsigned integer.
  * z must be decimal. This routine does *not* accept
  * hexadecimal notation. Under the hood it calls

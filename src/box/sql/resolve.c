@@ -654,7 +654,10 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 				pNC->nErr++;
 				return WRC_Abort;
 			}
-			pExpr->type = func->def->returns;
+			if (sql_func_flag_is_set(func, SQL_FUNC_COALESCE))
+				pExpr->type = sql_expr_list_type(pList);
+			else
+				pExpr->type = func->def->returns;
 			/*
 			 * In case a user-defined aggregate function was called,
 			 * the result type will be the result type of the
