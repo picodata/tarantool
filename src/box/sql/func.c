@@ -1676,8 +1676,9 @@ likeFunc(sql_context *context, int argc, const struct Mem *argv)
 		const char *str = argv[2].z;
 		int32_t pos = 0;
 		int32_t end = argv[2].n;
-		U8_NEXT((uint8_t *)str, pos, end, escape);
-		if (pos != end || end == 0) {
+		if (end != 0)
+			U8_NEXT((uint8_t *)str, pos, end, escape);
+		if (end == 0 || pos != end) {
 			diag_set(ClientError, ER_SQL_EXECUTE, "ESCAPE "\
 				 "expression must be a single character");
 			context->is_aborted = true;
