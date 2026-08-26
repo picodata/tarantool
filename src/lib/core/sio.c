@@ -283,6 +283,18 @@ sio_setfl(int fd, int flag, int on)
 }
 
 int
+sio_setcloexec(int fd)
+{
+	int flags = fcntl(fd, F_GETFD);
+	if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
+		diag_set(SocketError, sio_socketname(fd),
+			 "fcntl(..., F_SETFD, FD_CLOEXEC)");
+		return -1;
+	}
+	return 0;
+}
+
+int
 sio_setsockopt(int fd, int level, int optname,
 	       const void *optval, socklen_t optlen)
 {

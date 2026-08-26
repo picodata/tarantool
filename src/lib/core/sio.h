@@ -165,6 +165,13 @@ int sio_getfl(int fd);
 /** Set socket flags. */
 int sio_setfl(int fd, int flag, int on);
 
+/**
+ * Set FD_CLOEXEC on a socket so that it is not inherited by a process
+ * image replacing this one via exec(3).
+ */
+int
+sio_setcloexec(int fd);
+
 /** Set an option on a socket. */
 int
 sio_setsockopt(int fd, int level, int optname,
