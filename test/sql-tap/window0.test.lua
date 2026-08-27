@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(7)
+test:plan(8)
 
 test:execsql( [[
 DROP TABLE IF EXISTS "TMP_3781021201_1136";
@@ -75,6 +75,12 @@ FROM (
   FROM "TMP_3781021201_1136"
 )
     ]], {})
+
+test:do_execsql_test(
+    "IN with window columns",
+    [[
+SELECT c1 IN (c1, c1), max('') OVER () FROM (SELECT 1 c1);
+    ]], {true, ''})
 
 test:execsql( [[
 DROP TABLE IF EXISTS t1;

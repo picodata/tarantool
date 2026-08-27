@@ -2233,8 +2233,7 @@ sqlExprCanBeNull(const Expr * p)
 	case TK_BLOB:
 		return 0;
 	case TK_WIN_COLUMN:
-		assert(p->pLeft);
-		return sqlExprCanBeNull(p->pLeft);
+		return 1;
 	case TK_COLUMN_REF:
 		assert(p->y.space_def != 0);
 		return ExprHasProperty(p, EP_CanBeNull) ||
