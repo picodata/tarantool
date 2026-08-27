@@ -290,12 +290,13 @@ sql_expr_coll(Parse *parse, Expr *p, bool *is_explicit_coll, uint32_t *coll_id,
 	*coll = NULL;
 	while (p != NULL) {
 		int op = p->op;
+		if (op == TK_REGISTER)
+			op = p->op2;
 		if (op == TK_CAST || op == TK_UPLUS) {
 			p = p->pLeft;
 			continue;
 		}
-		if (op == TK_COLLATE ||
-		    (op == TK_REGISTER && p->op2 == TK_COLLATE)) {
+		if (op == TK_COLLATE) {
 			*coll = sql_get_coll_seq(parse, p->u.zToken, coll_id);
 			if (*coll == NULL)
 				return -1;
@@ -306,10 +307,10 @@ sql_expr_coll(Parse *parse, Expr *p, bool *is_explicit_coll, uint32_t *coll_id,
 			break;
 		}
 		if ((op == TK_AGG_COLUMN || op == TK_COLUMN_REF ||
-		     op == TK_REGISTER || op == TK_TRIGGER) &&
+		     op == TK_TRIGGER) &&
 		    p->y.space_def != NULL) {
 			/*
-			 * op==TK_REGISTER && p->y.space_def!=0
+			 * p->op==TK_REGISTER && p->y.space_def!=0
 			 * happens when pExpr was originally
 			 * a TK_COLUMN_REF but was previously
 			 * evaluated and cached in a register.

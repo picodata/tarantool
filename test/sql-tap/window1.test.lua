@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(88)
+test:plan(90)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -1105,6 +1105,27 @@ SELECT * FROM (
 ) WHERE c>10;
     ]],
     {15,30}
+)
+
+-- A window function used as the CASE operand is evaluated once and
+-- temporarily converted to TK_REGISTER. Make sure its window definition is
+-- not mistaken for a space definition while deriving the comparison
+-- collation.
+test:do_execsql_test(
+    "window1-63.1",
+    [[
+SELECT CASE max(1) OVER () WHEN 1 THEN 1 END;
+    ]],
+    {1}
+)
+
+-- BETWEEN uses the same temporary-register path as CASE.
+test:do_execsql_test(
+    "window1-63.2",
+    [[
+SELECT max(1) OVER () BETWEEN 1 AND 1;
+    ]],
+    {true}
 )
 
 test:finish_test()
