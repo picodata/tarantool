@@ -2867,6 +2867,43 @@ multiSelect(Parse * pParse,	/* Parsing context */
 	assert(p->pEList && pPrior->pEList);
 	assert(p->pEList->nExpr == pPrior->pEList->nExpr);
 
+	/*
+	 * JSON does not unify with any other type across compound branches.
+	 * The dedup path types the ephemeral column and rejects a mix, but
+	 * UNION ALL streams branches straight to the destination, so check
+	 * here too. A literal NULL branch adopts the column's type.
+	 *
+	 * multiSelect() recurses into pPrior, so scan only at the outermost
+	 * call (p->pNext == NULL): a NULL branch between a JSON and a non-JSON
+	 * one defeats adjacent-pair checking, so the scan must see the whole
+	 * chain.
+	 */
+	if (p->pNext == NULL) {
+		for (int i = 0; i < p->pEList->nExpr; ++i) {
+			bool has_json = false;
+			bool has_other = false;
+			for (struct Select *s = p; s != NULL; s = s->pPrior) {
+				if (i >= s->pEList->nExpr)
+					continue;
+				struct Expr *e = s->pEList->a[i].pExpr;
+				if (e->op == TK_NULL)
+					continue;
+				if (sql_expr_type(e) == FIELD_TYPE_JSON)
+					has_json = true;
+				else
+					has_other = true;
+			}
+			if (has_json && has_other) {
+				diag_set(ClientError, ER_SQL_PARSER_GENERIC,
+					 "JSON cannot be combined with a "
+					 "non-JSON type in a compound SELECT");
+				pParse->is_aborted = true;
+				rc = 1;
+				goto multi_select_end;
+			}
+		}
+	}
+
 	if (p->selFlags & SF_Recursive) {
 		generateWithRecursiveQuery(pParse, p, &dest);
 	} else
@@ -3175,8 +3212,24 @@ multiSelect(Parse * pParse,	/* Parsing context */
 			pParse->is_aborted = true;
 			goto multi_select_end;
 		}
-		for (int i = 0; i < nCol; ++i)
+		for (int i = 0; i < nCol; ++i) {
 			info->coll_ids[i] = multi_select_coll_seq(pParse, p, i);
+			/*
+			 * Ephemeral columns default to SCALAR, which JSON is
+			 * not, so a column that is JSON in any branch must be
+			 * typed JSON to hold its MP_EXT values. A mix was
+			 * rejected above, so one reaching here is JSON-or-NULL
+			 * in every branch.
+			 */
+			for (struct Select *s = p; s != NULL; s = s->pPrior) {
+				if (i < s->pEList->nExpr &&
+				    sql_expr_type(s->pEList->a[i].pExpr) ==
+				    FIELD_TYPE_JSON) {
+					info->types[i] = FIELD_TYPE_JSON;
+					break;
+				}
+			}
+		}
 		bool is_info_used = false;
 		for (struct Select *pLoop = p; pLoop; pLoop = pLoop->pPrior) {
 			for (int i = 0; i < 2; i++) {

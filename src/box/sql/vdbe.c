@@ -1539,9 +1539,9 @@ case OP_Getitem: {
 		pOut = vdbe_prepare_null_out(p, pOp->p2);
 		break;
 	}
-	if (!mem_is_container(value)) {
+	if (!mem_is_container(value) && !mem_is_json(value)) {
 		diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(value),
-			 "map or array");
+			 "map, array or json");
 		goto abort_due_to_error;
 	}
 

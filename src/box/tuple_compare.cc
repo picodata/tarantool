@@ -38,6 +38,7 @@
 #include "mp_extension_types.h"
 #include "mp_uuid.h"
 #include "mp_datetime.h"
+#include "mp_json.h"
 
 /* {{{ tuple_compare */
 
@@ -62,6 +63,7 @@ enum mp_class {
 	MP_CLASS_INTERVAL,
 	MP_CLASS_ARRAY,
 	MP_CLASS_MAP,
+	MP_CLASS_JSON,
 	mp_class_max,
 };
 
@@ -79,16 +81,6 @@ static enum mp_class mp_classes[] = {
 	/* .MP_EXT     = */ mp_class_max,
 };
 
-static enum mp_class mp_ext_classes[] = {
-	/* .MP_UNKNOWN_EXTENSION = */ mp_class_max, /* unsupported */
-	/* .MP_DECIMAL		 = */ MP_CLASS_NUMBER,
-	/* .MP_UUID		 = */ MP_CLASS_UUID,
-	/* .MP_ERROR		 = */ mp_class_max,
-	/* .MP_DATETIME		 = */ MP_CLASS_DATETIME,
-	/* .MP_COMPRESSION	 = */ mp_class_max,
-	/* .MP_INTERVAL		 = */ MP_CLASS_INTERVAL,
-};
-
 static enum mp_class
 mp_classof(enum mp_type type)
 {
@@ -102,7 +94,20 @@ mp_extension_class(const char *data)
 	int8_t type;
 	mp_decode_extl(&data, &type);
 	assert(type >= 0 && type < mp_extension_type_MAX);
-	return mp_ext_classes[type];
+	switch (type) {
+	case MP_DECIMAL:
+		return MP_CLASS_NUMBER;
+	case MP_UUID:
+		return MP_CLASS_UUID;
+	case MP_DATETIME:
+		return MP_CLASS_DATETIME;
+	case MP_INTERVAL:
+		return MP_CLASS_INTERVAL;
+	case MP_JSON:
+		return MP_CLASS_JSON;
+	default:
+		return mp_class_max;
+	}
 }
 
 static int
@@ -408,6 +413,23 @@ mp_compare_datetime(const char *lhs, const char *rhs)
 	return datetime_compare(&lhs_dt, &rhs_dt);
 }
 
+/**
+ * Compare two whole MP_EXT/MP_JSON tuple fields, stripping the envelope the
+ * comparator no longer takes.
+ */
+static int
+mp_compare_json_field(const char *lhs, const char *rhs)
+{
+	uint32_t lhs_len;
+	uint32_t rhs_len;
+	const char *lhs_inner = mp_decode_json(&lhs, &lhs_len);
+	const char *rhs_inner = mp_decode_json(&rhs, &rhs_len);
+	assert(lhs_inner != NULL && rhs_inner != NULL);
+	/* JSON is taken as is, see doc/json-perimeter.md#storage-invariant. */
+	return mp_compare_json(json_norm_from_trusted(lhs_inner, lhs_len),
+			       json_norm_from_trusted(rhs_inner, rhs_len));
+}
+
 typedef int (*mp_compare_f)(const char *, const char *);
 static mp_compare_f mp_class_comparators[] = {
 	/* .MP_CLASS_NIL    = */ NULL,
@@ -420,6 +442,7 @@ static mp_compare_f mp_class_comparators[] = {
 	/* .MP_CLASS_INTERVAL=*/ NULL,
 	/* .MP_CLASS_ARRAY  = */ NULL,
 	/* .MP_CLASS_MAP    = */ NULL,
+	/* .MP_CLASS_JSON   = */ mp_compare_json_field,
 };
 
 static int
@@ -499,6 +522,8 @@ tuple_compare_field(const char *field_a, const char *field_b,
 		return mp_compare_uuid(field_a, field_b);
 	case FIELD_TYPE_DATETIME:
 		return mp_compare_datetime(field_a, field_b);
+	case FIELD_TYPE_JSON:
+		return mp_compare_json_field(field_a, field_b);
 	default:
 		unreachable();
 		return 0;
@@ -540,6 +565,8 @@ tuple_compare_field_with_type(const char *field_a, enum mp_type a_type,
 		return mp_compare_uuid(field_a, field_b);
 	case FIELD_TYPE_DATETIME:
 		return mp_compare_datetime(field_a, field_b);
+	case FIELD_TYPE_JSON:
+		return mp_compare_json_field(field_a, field_b);
 	default:
 		unreachable();
 		return 0;
@@ -2032,6 +2059,8 @@ field_hint(const char *field, struct coll *coll)
 		return field_hint_uuid(field);
 	case FIELD_TYPE_DATETIME:
 		return field_hint_datetime(field);
+	case FIELD_TYPE_JSON:
+		return HINT_NONE;
 	default:
 		unreachable();
 	}
@@ -2159,6 +2188,9 @@ key_def_set_hint_func(struct key_def *def)
 		break;
 	case FIELD_TYPE_DATETIME:
 		key_def_set_hint_func<FIELD_TYPE_DATETIME>(def);
+		break;
+	case FIELD_TYPE_JSON:
+		key_def_set_hint_func<FIELD_TYPE_JSON>(def);
 		break;
 	default:
 		/* Invalid key definition. */

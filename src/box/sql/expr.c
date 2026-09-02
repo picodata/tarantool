@@ -129,8 +129,21 @@ sql_expr_type(struct Expr *pExpr)
 		enum field_type lhs_type = sql_expr_type(pExpr->pLeft);
 		enum field_type rhs_type = sql_expr_type(pExpr->pRight);
 		return sql_type_result(rhs_type, lhs_type);
-	case TK_GETITEM:
+	case TK_GETITEM: {
+		/*
+		 * Subscripting a JSON value yields JSON, so a chained
+		 * subscript and ORDER BY/GROUP BY on the result see a
+		 * comparable type rather than the opaque ANY.
+		 */
+		assert(pExpr->x.pList != NULL);
+		struct ExprList *list = pExpr->x.pList;
+		int count = list->nExpr;
+		assert(count >= 1);
+		struct Expr *value = list->a[count - 1].pExpr;
+		if (sql_expr_type(value) == FIELD_TYPE_JSON)
+			return FIELD_TYPE_JSON;
 		return FIELD_TYPE_ANY;
+	}
 	case TK_CONCAT:
 		return FIELD_TYPE_STRING;
 	case TK_CASE: {
@@ -2684,6 +2697,35 @@ expr_in_type(struct Expr *pExpr)
 	return zRet;
 }
 
+/**
+ * Ephemeral columns built for an IN operator default to SCALAR, but a JSON
+ * value only fits a JSON column.
+ */
+static void
+sql_in_promote_json_column(struct sql_space_info *info, int idx,
+			   struct Expr *a, struct Expr *b)
+{
+	if (sql_expr_type(a) == FIELD_TYPE_JSON ||
+	    sql_expr_type(b) == FIELD_TYPE_JSON)
+		info->types[idx] = FIELD_TYPE_JSON;
+}
+
+/**
+ * A JSON operand anywhere in "x IN (list)" means the ephemeral column built
+ * to hold the list must itself be JSON.
+ */
+static bool
+sql_in_list_has_json(struct Expr *left, struct ExprList *list)
+{
+	if (sql_expr_type(left) == FIELD_TYPE_JSON)
+		return true;
+	for (int i = 0; i < list->nExpr; i++) {
+		if (sql_expr_type(list->a[i].pExpr) == FIELD_TYPE_JSON)
+			return true;
+	}
+	return false;
+}
+
 /*
  * Generate code for scalar subqueries used as a subquery expression, EXISTS,
  * or IN operators.  Examples:
@@ -2803,6 +2845,9 @@ sqlCodeSubselect(Parse * pParse,	/* Parsing context */
 						if (sql_binary_compare_coll_seq(pParse, p, pEList->a[i].pExpr,
 										&info->coll_ids[i]) != 0)
 							return 0;
+						Expr *re = pEList->a[i].pExpr;
+						sql_in_promote_json_column(
+							info, i, p, re);
 					}
 				}
 			} else if (ALWAYS(pExpr->x.pList != 0)) {
@@ -2824,6 +2869,13 @@ sqlCodeSubselect(Parse * pParse,	/* Parsing context */
 						  &info->coll_ids[0],
 						  &unused_coll) != 0)
 					return 0;
+				/*
+				 * As in the IN (SELECT ...) case, a JSON value
+				 * list needs a JSON-typed ephemeral column to
+				 * hold its MP_EXT values.
+				 */
+				if (sql_in_list_has_json(pExpr->pLeft, pList))
+					info->types[0] = FIELD_TYPE_JSON;
 
 				/* Loop through each expression in <exprlist>. */
 				r1 = sqlGetTempReg(pParse);
@@ -3393,10 +3445,11 @@ expr_code_getitem(struct Parse *parser, struct Expr *expr, int reg)
 			       field_type_MAX;
 	bool indexable_type = type == FIELD_TYPE_MAP ||
 			      type == FIELD_TYPE_ARRAY ||
-			      type == FIELD_TYPE_ANY;
+			      type == FIELD_TYPE_ANY ||
+			      type == FIELD_TYPE_JSON;
 	if (value->op != TK_VARIABLE && !indexable_type) {
 		diag_set(ClientError, ER_SQL_PARSER_GENERIC, "Selecting is "
-			 "only possible from map and array values");
+			 "only possible from map, array and json values");
 		parser->is_aborted = true;
 		return;
 	}

@@ -172,6 +172,13 @@ field_type1_contains_type2(enum field_type type1, enum field_type type2)
 	return field_type_compatibility[idx];
 }
 
+bool
+field_type_is_comparable(enum field_type type)
+{
+	return field_type1_contains_type2(FIELD_TYPE_SCALAR, type) ||
+	       type == FIELD_TYPE_JSON;
+}
+
 /**
  * Table of field type index lookup compatibility.
  * For an i row and j column:

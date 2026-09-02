@@ -65,7 +65,7 @@ end
 g.test_containers_error = function()
     g.server:exec(function()
         local _, err = box.execute([[SELECT 1[1];]])
-        local res = "Selecting is only possible from map and array values"
+        local res = "Selecting is only possible from map, array and json values"
         t.assert_equals(err.message, res)
 
         _, err = box.execute([[SELECT -1[1];]])
@@ -105,8 +105,8 @@ g.test_containers_error = function()
         -- value produces a type mismatch error instead.
         _, err = box.execute([[SELECT CAST(1 AS ANY)[1];]])
         t.assert_equals(err.message,
-                         "Type mismatch: can not convert any(1) to map " ..
-                         "or array")
+                         "Type mismatch: can not convert any(1) to map, " ..
+                         "array or json")
 
         _, err = box.execute([[SELECT NULL[1];]])
         t.assert_equals(err.message, res)
@@ -129,7 +129,8 @@ g.test_containers_followers = function()
         -- following [] is only checked at runtime.
         sql = [[SELECT ([1, 2, 3][1])[2];]]
         local _, err = box.execute(sql)
-        local res = "Type mismatch: can not convert any(1) to map or array"
+        local res =
+            "Type mismatch: can not convert any(1) to map, array or json"
         t.assert_equals(err.message, res)
     end)
 end

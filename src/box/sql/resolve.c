@@ -1161,8 +1161,7 @@ sqlResolveOrderGroupBy(Parse * pParse,	/* Parsing context.  Leave error messages
 		 * may be resolved later.
 		 */
 		enum field_type type = sql_expr_type(pItem->pExpr);
-		if (!field_type1_contains_type2(FIELD_TYPE_SCALAR, type) &&
-		    type != FIELD_TYPE_ANY) {
+		if (!field_type_is_comparable(type) && type != FIELD_TYPE_ANY) {
 			diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
 				 field_type_strs[type], "comparable type");
 			pParse->is_aborted = true;

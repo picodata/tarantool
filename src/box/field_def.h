@@ -114,6 +114,14 @@ bool
 field_type1_contains_type2(enum field_type type1, enum field_type type2);
 
 /**
+ * Check if values of @a type can be compared and ordered, i.e. used as a key
+ * part of an ephemeral space (set operations, DISTINCT, IN, ...). True for the
+ * scalar types and for JSON; false for ANY/ARRAY/MAP.
+ */
+bool
+field_type_is_comparable(enum field_type type);
+
+/**
  * Check if type1 is index-lookup-compatible with type2, meaning that
  * we may find value of type1 in an index of values of type2.
  *

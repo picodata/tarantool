@@ -83,6 +83,7 @@ enum mem_class {
 	MEM_CLASS_BIN,
 	MEM_CLASS_UUID,
 	MEM_CLASS_DATETIME,
+	MEM_CLASS_JSON,
 	mem_class_max,
 };
 
@@ -107,6 +108,8 @@ mem_type_class(enum mem_type type)
 		return MEM_CLASS_UUID;
 	case MEM_TYPE_DATETIME:
 		return MEM_CLASS_DATETIME;
+	case MEM_TYPE_JSON:
+		return MEM_CLASS_JSON;
 	default:
 		break;
 	}
@@ -1468,44 +1471,65 @@ mem_to_str(struct Mem *mem)
 }
 
 /**
- * Produce a JSON value from a MAP or ARRAY MEM (plain MessagePack): normalize
- * the inner value, structurally validate it, then wrap it in the MP_EXT/MP_JSON
- * envelope. The MEM takes ownership of the freshly encoded bytes. This is the
- * single TO-JSON producer for the SQL write path.
+ * Produce a JSON value from a non-NULL MEM: take its plain MessagePack
+ * representation (the bytes themselves for a MAP/ARRAY, a freshly
+ * encoded scalar otherwise: a STRING becomes a JSON string scalar
+ * verbatim), normalize the inner value, structurally validate it,
+ * then wrap it in the MP_EXT/MP_JSON envelope.
+ * The MEM takes ownership of the freshly encoded bytes. A source with
+ * no JSON representation (UUID/DATETIME/INTERVAL/VARBINARY) is
+ * rejected by validation.
+ * This is the single TO-JSON producer for the SQL write path.
  */
 static int
 mem_to_json(struct Mem *mem)
 {
-	assert(mem->type == MEM_TYPE_MAP || mem->type == MEM_TYPE_ARRAY);
+	assert(mem->type != MEM_TYPE_NULL && mem->type != MEM_TYPE_JSON);
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
+	const char *value;
+	uint32_t value_len;
+	if (mem->type == MEM_TYPE_MAP || mem->type == MEM_TYPE_ARRAY) {
+		value = mem->z;
+		value_len = mem->n;
+	} else {
+		value = mem_to_mp(mem, &value_len, region);
+		if (value == NULL) {
+			region_truncate(region, region_svp);
+			return -1;
+		}
+	}
 	/*
 	 * One normalizing pass, which both rewrites and rejects.
 	 * Normalization never grows a value, so the input size is enough.
 	 */
-	char *norm = region_alloc(region, mem->n);
+	char *norm = region_alloc(region, value_len);
 	if (norm == NULL) {
 		region_truncate(region, region_svp);
-		diag_set(OutOfMemory, mem->n, "region_alloc", "norm");
+		diag_set(OutOfMemory, value_len, "region_alloc", "norm");
 		return -1;
 	}
-	char *norm_end = tnt_json_normalize(mem->z, mem->n, norm,
-					    norm + mem->n, NULL);
+	char *norm_end = tnt_json_normalize(value, value_len, norm,
+					    norm + value_len, NULL);
 	if (norm_end == NULL) {
 		region_truncate(region, region_svp);
 		/*
 		 * A MAP/ARRAY's own kind always has a JSON representation, so
-		 * a failure here is necessarily about some element nested
-		 * inside it, not the container itself; name that distinctly
-		 * from a whole value with no JSON representation at all, so
-		 * the message doesn't blame a castable container for an
-		 * uncastable element.
+		 * a failure here is about some element nested inside it. Name
+		 * that distinctly, so the message does not blame a castable
+		 * container for an uncastable element.
 		 */
-		const char *kind = mem->type == MEM_TYPE_ARRAY ?
-			"array" : "map";
-		diag_set(ClientError, ER_SQL_EXECUTE,
-			 tt_sprintf("%s value is not a valid json: "
-				    "an element is not representable", kind));
+		if (mem->type == MEM_TYPE_MAP || mem->type == MEM_TYPE_ARRAY) {
+			const char *kind = mem->type == MEM_TYPE_ARRAY ?
+				"array" : "map";
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 tt_sprintf("%s value is not a valid json: "
+					    "an element is not representable",
+					    kind));
+		} else {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "value is not a valid json");
+		}
 		return -1;
 	}
 	uint32_t norm_len = (uint32_t)(norm_end - norm);
@@ -1514,11 +1538,78 @@ mem_to_json(struct Mem *mem)
 	return 0;
 }
 
+/**
+ * Extract a scalar from a JSON value (extraction-strict): the kind of the inner
+ * value must match the requested target family: a JSON number extracts only
+ * to a numeric type, a JSON bool only to BOOLEAN, a JSON string only to TEXT
+ * (unquoted). A container or null inner value, or any other kind/target
+ * mismatch, is an error.
+ * The decoded inner value is finished off with the ordinary scalar conversion,
+ * which, given the kind is already gated, performs only the numeric
+ * sub-conversion, never a loose string parse.
+ */
+static int
+mem_from_json(struct Mem *mem, enum field_type type)
+{
+	assert(mem->type == MEM_TYPE_JSON);
+	const char *p = mem->z;
+	uint32_t inner_len;
+	const char *inner = mp_decode_json(&p, &inner_len);
+	assert(inner != NULL);
+	enum mp_type mp = mp_typeof(*inner);
+	bool ok;
+	switch (type) {
+	case FIELD_TYPE_STRING:
+		ok = mp == MP_STR;
+		break;
+	case FIELD_TYPE_BOOLEAN:
+		ok = mp == MP_BOOL;
+		break;
+	case FIELD_TYPE_UNSIGNED:
+	case FIELD_TYPE_INTEGER:
+	case FIELD_TYPE_DOUBLE:
+	case FIELD_TYPE_DECIMAL:
+	case FIELD_TYPE_NUMBER:
+		/* A decimal is the only ext kind a JSON number can be. */
+		ok = mp == MP_UINT || mp == MP_INT || mp == MP_DOUBLE ||
+		     mp == MP_EXT;
+		break;
+	default:
+		ok = false;
+	}
+	if (!ok)
+		return -1;
+
+	struct Mem tmp;
+	mem_create(&tmp);
+	uint32_t len;
+	if (mem_from_mp(&tmp, inner, &len) != 0) {
+		mem_destroy(&tmp);
+		return -1;
+	}
+	mem_move(mem, &tmp);
+	return mem_cast_explicit(mem, type);
+}
+
 int
 mem_cast_explicit(struct Mem *mem, enum field_type type)
 {
 	if (mem->type == MEM_TYPE_NULL)
 		return 0;
+	if (mem->type == MEM_TYPE_JSON) {
+		switch (type) {
+		case FIELD_TYPE_STRING:
+		case FIELD_TYPE_BOOLEAN:
+		case FIELD_TYPE_UNSIGNED:
+		case FIELD_TYPE_INTEGER:
+		case FIELD_TYPE_DOUBLE:
+		case FIELD_TYPE_DECIMAL:
+		case FIELD_TYPE_NUMBER:
+			return mem_from_json(mem, type);
+		default:
+			break;
+		}
+	}
 	switch (type) {
 	case FIELD_TYPE_UNSIGNED:
 		switch (mem->type) {
@@ -1614,9 +1705,15 @@ mem_cast_explicit(struct Mem *mem, enum field_type type)
 			return -1;
 		mem->flags &= ~MEM_Any;
 		return 0;
+	case FIELD_TYPE_JSON:
+		if (mem->type == MEM_TYPE_JSON) {
+			mem->flags &= ~MEM_Any;
+			return 0;
+		}
+		return mem_to_json(mem);
 	case FIELD_TYPE_SCALAR:
-		if ((mem->type &
-		     (MEM_TYPE_MAP | MEM_TYPE_ARRAY | MEM_TYPE_INTERVAL)) != 0)
+		if ((mem->type & (MEM_TYPE_MAP | MEM_TYPE_ARRAY |
+				  MEM_TYPE_INTERVAL | MEM_TYPE_JSON)) != 0)
 			return -1;
 		mem->flags |= MEM_Scalar;
 		mem->flags &= ~(MEM_Number | MEM_Any);
@@ -1732,12 +1829,10 @@ mem_cast_implicit(struct Mem *mem, enum field_type type)
 	case FIELD_TYPE_JSON:
 		if (mem->type == MEM_TYPE_JSON)
 			return 0;
-		if (mem->type == MEM_TYPE_MAP || mem->type == MEM_TYPE_ARRAY)
-			return mem_to_json(mem);
-		return -1;
+		return mem_to_json(mem);
 	case FIELD_TYPE_SCALAR:
-		if ((mem->type &
-		     (MEM_TYPE_MAP | MEM_TYPE_ARRAY | MEM_TYPE_INTERVAL)) != 0)
+		if ((mem->type & (MEM_TYPE_MAP | MEM_TYPE_ARRAY |
+				  MEM_TYPE_INTERVAL | MEM_TYPE_JSON)) != 0)
 			return -1;
 		mem->flags |= MEM_Scalar;
 		mem->flags &= ~(MEM_Number | MEM_Any);
@@ -2654,6 +2749,31 @@ mem_cmp_datetime(const struct Mem *a, const struct Mem *b)
 	return datetime_compare(&a->u.dt, &b->u.dt);
 }
 
+/** Compare two MEMs with JSON. */
+static int
+mem_cmp_json(const struct Mem *a, const struct Mem *b)
+{
+	assert((a->type & b->type & MEM_TYPE_JSON) != 0);
+	/*
+	 * mem->z holds the full MP_EXT/MP_JSON value, so strip the envelope
+	 * the comparator no longer wants.
+	 *
+	 * Proof: a MEM_TYPE_JSON mem is only ever built from a constructor's
+	 * output, by mem_set_json_from_inner() or by a copy of bytes that came
+	 * from one, so its payload is in normal form.
+	 */
+	const char *pa = a->z;
+	const char *pb = b->z;
+	uint32_t alen;
+	uint32_t blen;
+	const char *ia = mp_decode_json(&pa, &alen);
+	const char *ib = mp_decode_json(&pb, &blen);
+	assert(ia != NULL && ib != NULL);
+	/* JSON is taken as is, see doc/json-perimeter.md#mem-invariant. */
+	return mp_compare_json(json_norm_from_trusted(ia, alen),
+			       json_norm_from_trusted(ib, blen));
+}
+
 int
 mem_cmp_scalar(const struct Mem *a, const struct Mem *b,
 	       const struct coll *coll)
@@ -2677,6 +2797,8 @@ mem_cmp_scalar(const struct Mem *a, const struct Mem *b,
 		return mem_cmp_uuid(a, b);
 	case MEM_CLASS_DATETIME:
 		return mem_cmp_datetime(a, b);
+	case MEM_CLASS_JSON:
+		return mem_cmp_json(a, b);
 	default:
 		unreachable();
 	}
@@ -2761,7 +2883,7 @@ mem_cmp_msgpack(const struct Mem *a, const char **b, int *result,
 			return -1;
 		}
 		*b += len;
-		mem.type = MEM_TYPE_BIN;
+		mem.type = type == MP_JSON ? MEM_TYPE_JSON : MEM_TYPE_BIN;
 		mem.z = (char *)buf;
 		mem.n = *b - buf;
 		mem.flags = MEM_Ephem;
@@ -2796,6 +2918,18 @@ mem_cmp(const struct Mem *a, const struct Mem *b, int *result,
 			 "comparable type");
 		return -1;
 	}
+	/*
+	 * JSON is not a SCALAR, so a JSON value only compares with another
+	 * JSON value. Catch a JSON against a non-JSON here, before the SCALAR
+	 * path below: that path would rank the two by class rather than
+	 * raising a type error whenever one side is flagged MEM_Scalar, which
+	 * happens for a SCALAR column or CAST(x AS SCALAR).
+	 */
+	if ((class_a == MEM_CLASS_JSON) != (class_b == MEM_CLASS_JSON)) {
+		diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(b),
+			 mem_type_class_to_str(a));
+		return -1;
+	}
 	if (((a->flags | b->flags) & MEM_Scalar) != 0) {
 		*result = mem_cmp_scalar(a, b, coll);
 		return 0;
@@ -2823,6 +2957,9 @@ mem_cmp(const struct Mem *a, const struct Mem *b, int *result,
 		break;
 	case MEM_CLASS_DATETIME:
 		*result = mem_cmp_datetime(a, b);
+		break;
+	case MEM_CLASS_JSON:
+		*result = mem_cmp_json(a, b);
 		break;
 	default:
 		unreachable();
@@ -3327,6 +3464,42 @@ error:
 	return NULL;
 }
 
+/*
+ * Extract an array index from a subscript key on the PostgreSQL text model: an
+ * integer key is used directly, a string key parsed as a signed base-10
+ * integer. False (yielding SQL NULL) for any other key type, an unparseable
+ * string, or a value outside int64. The caller applies its own convention: an
+ * MP_ARRAY subscript is 1-based and rejects negatives, a JSON one is 0-based
+ * and counts a negative index from the end.
+ */
+static bool
+mem_subscript_index(const struct Mem *key, int64_t *out)
+{
+	struct Mem tmp;
+	if (mem_is_str(key)) {
+		mem_create(&tmp);
+		mem_copy_as_ephemeral(&tmp, key);
+		if (str_to_int(&tmp) != 0)
+			return false;
+		key = &tmp;
+	}
+	if (mem_is_uint(key)) {
+		/*
+		 * str_to_int() keeps a value above INT64_MAX unsigned; no
+		 * array is that long, so it cannot be an index.
+		 */
+		if (key->u.u > (uint64_t)INT64_MAX)
+			return false;
+		*out = (int64_t)key->u.u;
+		return true;
+	}
+	if (mem_is_nint(key)) {
+		*out = key->u.i;
+		return true;
+	}
+	return false;
+}
+
 /* Locate an element in a MAP or ARRAY using the given key.*/
 static int
 mp_getitem(const char **data, const struct Mem *key)
@@ -3337,11 +3510,14 @@ mp_getitem(const char **data, const struct Mem *key)
 	}
 	if (mp_typeof(**data) == MP_ARRAY) {
 		uint32_t size = mp_decode_array(data);
-		if (!mem_is_uint(key) || key->u.u == 0 || key->u.u > size) {
+		int64_t idx;
+		/* An MP_ARRAY subscript is 1-based and has no negative form. */
+		if (!mem_subscript_index(key, &idx) || idx <= 0 ||
+		    (uint64_t)idx > size) {
 			*data = NULL;
 			return 0;
 		}
-		for (uint32_t i = 0; i < key->u.u - 1; ++i)
+		for (int64_t i = 1; i < idx; ++i)
 			mp_next(data);
 		return 0;
 	}
@@ -3363,28 +3539,120 @@ mp_getitem(const char **data, const struct Mem *key)
 	return 0;
 }
 
+/*
+ * Locate a JSON sub-value with PostgreSQL jsonb subscript semantics, where the
+ * key is text: an object is looked up by the stringized key, an array by the
+ * key parsed to a 0-based index (a negative one counts from the end). Any miss
+ * or out-of-range index sets *data = NULL. The plain MAP/ARRAY path
+ * (mp_getitem) keeps its own 1-based convention.
+ */
+static int
+mp_json_getitem(const char **data, const struct Mem *key)
+{
+	enum mp_type type = mp_typeof(**data);
+	if (type == MP_ARRAY) {
+		int64_t idx;
+		if (!mem_subscript_index(key, &idx)) {
+			*data = NULL;
+			return 0;
+		}
+		uint32_t size = mp_decode_array(data);
+		if (idx < 0)
+			idx += (int64_t)size;
+		if (idx < 0 || (uint64_t)idx >= size) {
+			*data = NULL;
+			return 0;
+		}
+		for (int64_t i = 0; i < idx; ++i)
+			mp_next(data);
+		return 0;
+	}
+	if (type == MP_MAP) {
+		const char *kstr;
+		uint32_t klen;
+		char buf[24];
+		struct Mem tmp;
+		mem_create(&tmp);
+		if (mem_is_str(key)) {
+			kstr = key->z;
+			klen = key->n;
+		} else if (mem_is_uint(key)) {
+			klen = snprintf(buf, sizeof(buf), "%llu",
+					(unsigned long long)key->u.u);
+			kstr = buf;
+		} else if (mem_is_nint(key)) {
+			klen = snprintf(buf, sizeof(buf), "%lld",
+					(long long)key->u.i);
+			kstr = buf;
+		} else {
+			mem_copy_as_ephemeral(&tmp, key);
+			if (mem_to_str(&tmp) != 0) {
+				mem_destroy(&tmp);
+				*data = NULL;
+				return 0;
+			}
+			kstr = tmp.z;
+			klen = tmp.n;
+		}
+		uint32_t size = mp_decode_map(data);
+		for (uint32_t i = 0; i < size; ++i) {
+			assert(mp_typeof(**data) == MP_STR);
+			uint32_t mlen;
+			const char *mkey = mp_decode_str(data, &mlen);
+			/* Keys ascend by length, so this settles a miss. */
+			if (mlen > klen)
+				break;
+			if (mlen == klen && memcmp(mkey, kstr, klen) == 0) {
+				mem_destroy(&tmp);
+				return 0;
+			}
+			mp_next(data);
+		}
+		mem_destroy(&tmp);
+		*data = NULL;
+		return 0;
+	}
+	*data = NULL;
+	return 0;
+}
+
 int
 mem_getitem(const struct Mem *mem, const struct Mem *keys, int count,
 	    struct Mem *res)
 {
 	assert(count > 0);
-	assert(mem_is_map(mem) || mem_is_array(mem));
+	assert(mem_is_map(mem) || mem_is_array(mem) || mem_is_json(mem));
 	const char *data = mem->z;
-	Mem tmp;
+	/*
+	 * Strip the MP_EXT header once: the inner value and everything nested
+	 * in it is plain msgpack, so the key walk below is shared with
+	 * MAP/ARRAY.
+	 */
+	bool is_json = mem_is_json(mem);
+	if (is_json) {
+		uint32_t inner_len;
+		data = mp_decode_json(&data, &inner_len);
+		assert(data != NULL);
+	}
 	for (int i = 0; i < count && data != NULL; ++i) {
-		const Mem *key = &keys[i];
-		if (mp_typeof(*data) == MP_ARRAY && mem_is_str(key)) {
-			mem_create(&tmp);
-			mem_copy_as_ephemeral(&tmp, &keys[i]);
-			if (str_to_int(&tmp) != 0)
-				mem_set_null(&tmp);
-			key = &tmp;
-		}
-		if (mp_getitem(&data, key) != 0)
+		int rc = is_json ? mp_json_getitem(&data, &keys[i]) :
+				   mp_getitem(&data, &keys[i]);
+		if (rc != 0)
 			return -1;
 	}
 	if (data == NULL) {
 		mem_set_null(res);
+		return 0;
+	}
+	if (is_json) {
+		/*
+		 * A subtree of a valid JSON value is itself valid, so re-wrap
+		 * it verbatim (a present null becomes JSON null).
+		 */
+		const char *start = data;
+		mp_next(&data);
+		uint32_t len = (uint32_t)(data - start);
+		mem_set_json_from_inner(res, start, len);
 		return 0;
 	}
 	uint32_t len;
