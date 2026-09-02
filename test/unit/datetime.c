@@ -20,11 +20,14 @@ static const char sample[] = "2012-12-24T15:30Z";
 void
 cord_on_yield(void) {}
 
-#define S(s) {s, sizeof(s) - 1}
-struct {
+struct datetime_sample {
 	const char *str;
 	size_t len;
-} tests[] = {
+};
+
+#define S(s) {s, sizeof(s) - 1}
+/** Literals accepted in full, all of them denoting the same moment. */
+struct datetime_sample tests[] = {
 	S("2012-12-24 15:30Z"),
 	S("2012-12-24 15:30z"),
 	S("2012-12-24 15:30"),
@@ -69,6 +72,23 @@ struct {
 	S("2012-12-24 16:30 +01:00"),
 	S("2012-12-24 14:30 -01:00"),
 	S("2012-12-24 15:30 UTC"),
+	S("2012-12-24 15:30 GMT"),
+	S("2012-12-24 14:30 -01:00"),
+	S("2012-12-24 16:30:00 +01:00"),
+	S("2012-12-24 14:30:00 -01:00"),
+	S("2012-12-24 16:30:00.123456 +01:00"),
+	S("2012-12-24 14:30:00.123456 -01:00"),
+	S("2012-12-24 15:30:00.123456 -00:00"),
+	S("20121224T1630+01:00"),
+	S("2012-12-24T1630+01:00"),
+	S("20121224T16:30+01"),
+	S("20121224T16:30 +01"),
+};
+
+/**
+ * A numeric offset attached to a zone name is not recognized yet.
+ */
+struct datetime_sample unsupported_tests[] = {
 	S("2012-12-24 16:30 UTC+1"),
 	S("2012-12-24 16:30 UTC+01"),
 	S("2012-12-24 16:30 UTC+0100"),
@@ -79,7 +99,6 @@ struct {
 	S("2012-12-24 14:30 UTC-09:00"),
 	S("2012-12-24 14:30 UTC-09:30"), /* Marquesas */
 	S("2012-12-24 14:30 UTC-0100"),
-	S("2012-12-24 15:30 GMT"),
 	S("2012-12-24 16:30 GMT+1"),
 	S("2012-12-24 16:30 GMT+01"),
 	S("2012-12-24 16:30 GMT+0100"),
@@ -92,16 +111,6 @@ struct {
 	S("2012-12-24 14:30 GMT-01"),
 	S("2012-12-24 14:30 GMT-01:00"),
 	S("2012-12-24 14:30 GMT-0100"),
-	S("2012-12-24 14:30 -01:00"),
-	S("2012-12-24 16:30:00 +01:00"),
-	S("2012-12-24 14:30:00 -01:00"),
-	S("2012-12-24 16:30:00.123456 +01:00"),
-	S("2012-12-24 14:30:00.123456 -01:00"),
-	S("2012-12-24 15:30:00.123456 -00:00"),
-	S("20121224T1630+01:00"),
-	S("2012-12-24T1630+01:00"),
-	S("20121224T16:30+01"),
-	S("20121224T16:30 +01"),
 };
 #undef S
 
@@ -111,14 +120,15 @@ datetime_test(void)
 	size_t index;
 	struct datetime date_expected;
 
-	plan(539);
+	plan(7 * lengthof(tests) + lengthof(unsupported_tests));
 	datetime_parse_full(&date_expected, sample, sizeof(sample) - 1);
 
 	for (index = 0; index < lengthof(tests); index++) {
-		struct datetime date;
-		size_t len = datetime_parse_full(&date, tests[index].str,
+		struct datetime date = {.epoch = 0};
+		ssize_t rc = datetime_parse_full(&date, tests[index].str,
 						 tests[index].len);
-		is(len > 0, true, "correct parse_datetime return value "
+		is(rc, (ssize_t)tests[index].len,
+		   "correct parse_datetime return value "
 		   "for '%s'", tests[index].str);
 		is(date.epoch, date_expected.epoch,
 		   "correct parse_datetime output "
@@ -130,20 +140,30 @@ datetime_test(void)
 		 * time fields
 		 */
 		static char buff[DT_TO_STRING_BUFSIZE];
-		len = datetime_strftime(&date, buff, sizeof(buff), "%F %T%z");
+		size_t len = datetime_strftime(&date, buff, sizeof(buff),
+					       "%F %T%z");
 		ok(len > 0, "strftime");
-		struct datetime date_strp;
+		struct datetime date_strp = {.epoch = 0};
 		len = datetime_strptime(&date_strp, buff, "%F %T%z");
-		is(len > 0, true, "correct parse_strptime return value "
+		is(len, strlen(buff), "correct parse_strptime return value "
 		   "for '%s'", buff);
 		is(date.epoch, date_strp.epoch,
 		   "reversible seconds via datetime_strptime for '%s'", buff);
-		struct datetime date_parsed;
-		len = datetime_parse_full(&date_parsed, buff, len);
-		is(len > 0, true, "correct datetime_parse_full return value "
+		struct datetime date_parsed = {.epoch = 0};
+		rc = datetime_parse_full(&date_parsed, buff, len);
+		is(rc, (ssize_t)len, "correct datetime_parse_full return value "
 		   "for '%s'", buff);
 		is(date.epoch, date_parsed.epoch,
 		   "reversible seconds via datetime_parse_full for '%s'", buff);
+	}
+
+	for (index = 0; index < lengthof(unsupported_tests); index++) {
+		struct datetime date = {.epoch = 0};
+		ssize_t rc = datetime_parse_full(&date,
+						 unsupported_tests[index].str,
+						 unsupported_tests[index].len);
+		is(rc, -1, "rejected zone offset in parse_datetime "
+		   "for '%s'", unsupported_tests[index].str);
 	}
 	check_plan();
 }
