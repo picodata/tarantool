@@ -51,6 +51,7 @@
 #include "mp_json.h"
 #include "mp_json_norm.h"
 #include "box/msgpack.h"
+#include "json_parse.h"
 
 #define CMP_OLD_NEW(a, b, type) (((a) > (type)(b)) - ((a) < (type)(b)))
 
@@ -630,20 +631,30 @@ mem_set_json_allocated(struct Mem *mem, char *value, size_t size)
 	set_msgpack_value(mem, value, size, 0, MEM_TYPE_JSON);
 }
 
-/** Set @a mem to the JSON value whose inner bytes are @a value. */
-static void
-mem_set_json_from_inner(struct Mem *mem, const char *value, uint32_t len)
+void
+mem_set_json(struct Mem *mem, struct json_norm value)
 {
-	/*
-	 * Proof: every caller passes bytes a constructor just produced,
-	 * tnt_json_parse() or tnt_json_normalize(), which is what the
-	 * function's name says its argument is.
-	 */
-	struct json_norm inner = json_norm_from_trusted(value, len);
-	uint32_t total = mp_sizeof_json(inner);
+	uint32_t total = mp_sizeof_json(value);
 	char *buf = sql_xmalloc(total);
-	mp_encode_json(buf, inner);
+	mp_encode_json(buf, value);
 	mem_set_json_allocated(mem, buf, total);
+}
+
+int
+mem_set_json_text(struct Mem *mem, const char *text, uint32_t len)
+{
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+	uint32_t parsed_len;
+	char *parsed = tnt_json_parse(text, len, &parsed_len);
+	if (parsed == NULL) {
+		region_truncate(region, region_svp);
+		return -1;
+	}
+	/* JSON is normalized here, see doc/json-perimeter.md#sql-json-text. */
+	mem_set_json(mem, json_norm_from_trusted(parsed, parsed_len));
+	region_truncate(region, region_svp);
+	return 0;
 }
 
 void
@@ -1471,20 +1482,49 @@ mem_to_str(struct Mem *mem)
 }
 
 /**
- * Produce a JSON value from a non-NULL MEM: take its plain MessagePack
- * representation (the bytes themselves for a MAP/ARRAY, a freshly
- * encoded scalar otherwise: a STRING becomes a JSON string scalar
- * verbatim), normalize the inner value, structurally validate it,
- * then wrap it in the MP_EXT/MP_JSON envelope.
- * The MEM takes ownership of the freshly encoded bytes. A source with
- * no JSON representation (UUID/DATETIME/INTERVAL/VARBINARY) is
- * rejected by validation.
- * This is the single TO-JSON producer for the SQL write path.
+ * Normalize @a value, a plain MessagePack value, into a heap-allocated
+ * MP_EXT/MP_JSON envelope owned by @a mem. Encoded in place rather than
+ * normalized into a temporary buffer and passed to mem_set_json(), which
+ * would copy the whole value a second time.
+ *
+ * @retval 0 on success, -1 if @a value is not a JSON value. Sets no diag:
+ *         the caller names the source kind in the message.
+ */
+static int
+mem_set_json_normalized(struct Mem *mem, const char *value, uint32_t value_len)
+{
+	char *buf = sql_xmalloc(mp_sizeof_json_len(value_len));
+	uint32_t size = mp_encode_json_normalized(buf, value, value_len, NULL);
+	if (size == 0) {
+		sql_xfree(buf);
+		return -1;
+	}
+	mem_set_json_allocated(mem, buf, size);
+	return 0;
+}
+
+/**
+ * Produce a JSON value from a non-NULL MEM. A STRING is JSON text and is
+ * parsed as such; any other source is taken as plain MessagePack (its own
+ * bytes for a MAP/ARRAY, a freshly encoded scalar otherwise) and then
+ * normalized and validated. Either way the MEM owns the resulting
+ * MP_EXT/MP_JSON envelope. Malformed text and a source with no JSON
+ * representation (UUID/DATETIME/INTERVAL/VARBINARY) are rejected.
+ *
+ * The single TO-JSON producer, reached only from an explicit CAST or
+ * JSON_PARSE(): mem_cast_implicit() converts nothing to JSON, so no
+ * assignment or IN probe can produce one behind the query's back.
  */
 static int
 mem_to_json(struct Mem *mem)
 {
 	assert(mem->type != MEM_TYPE_NULL && mem->type != MEM_TYPE_JSON);
+	/*
+	 * A string is JSON text. tnt_json_parse() already normalizes, so the
+	 * shared path below is only for the non-text sources.
+	 */
+	if (mem->type == MEM_TYPE_STR)
+		return mem_set_json_text(mem, mem->z, mem->n);
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
 	const char *value;
@@ -1500,18 +1540,10 @@ mem_to_json(struct Mem *mem)
 		}
 	}
 	/*
-	 * One normalizing pass, which both rewrites and rejects.
-	 * Normalization never grows a value, so the input size is enough.
+	 * JSON is normalized here,
+	 * see doc/json-perimeter.md#sql-cast-container.
 	 */
-	char *norm = region_alloc(region, value_len);
-	if (norm == NULL) {
-		region_truncate(region, region_svp);
-		diag_set(OutOfMemory, value_len, "region_alloc", "norm");
-		return -1;
-	}
-	char *norm_end = tnt_json_normalize(value, value_len, norm,
-					    norm + value_len, NULL);
-	if (norm_end == NULL) {
+	if (mem_set_json_normalized(mem, value, value_len) != 0) {
 		region_truncate(region, region_svp);
 		/*
 		 * A MAP/ARRAY's own kind always has a JSON representation, so
@@ -1532,21 +1564,41 @@ mem_to_json(struct Mem *mem)
 		}
 		return -1;
 	}
-	uint32_t norm_len = (uint32_t)(norm_end - norm);
-	mem_set_json_from_inner(mem, norm, norm_len);
 	region_truncate(region, region_svp);
 	return 0;
 }
 
 /**
- * Extract a scalar from a JSON value (extraction-strict): the kind of the inner
- * value must match the requested target family: a JSON number extracts only
- * to a numeric type, a JSON bool only to BOOLEAN, a JSON string only to TEXT
- * (unquoted). A container or null inner value, or any other kind/target
- * mismatch, is an error.
- * The decoded inner value is finished off with the ordinary scalar conversion,
- * which, given the kind is already gated, performs only the numeric
- * sub-conversion, never a loose string parse.
+ * Render a JSON value as its canonical JSON text (the same text QUOTE()
+ * produces). Unlike the scalar reinterpretation below this is total: every
+ * JSON kind has a text form, and a JSON string keeps its quotes and escapes.
+ * The quotes are what make it parse back into an equal value, so this is the
+ * exact inverse of CAST(text AS JSON); unquoting would erase the
+ * string/number distinction and make the round trip lossy.
+ */
+static int
+json_to_str(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_JSON);
+	int size = mp_snprint(NULL, 0, mem->z);
+	if (size < 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "failed to render JSON value");
+		return -1;
+	}
+	char *buf = sql_xmalloc(size + 1);
+	mp_snprint(buf, size + 1, mem->z);
+	/* Rendered before the store, which frees the bytes just read. */
+	mem_set_str0_allocated(mem, buf);
+	return 0;
+}
+
+/**
+ * Reinterpret a JSON scalar as the SQL scalar denoting the same value.
+ * Kind-strict: a JSON number reinterprets only as a numeric type and a JSON
+ * bool only as BOOLEAN; a container or null inner value, or any other
+ * kind/target mismatch, is an error. TEXT is not a target here, it renders the
+ * whole value instead (see json_to_str()).
  */
 static int
 mem_from_json(struct Mem *mem, enum field_type type)
@@ -1559,9 +1611,6 @@ mem_from_json(struct Mem *mem, enum field_type type)
 	enum mp_type mp = mp_typeof(*inner);
 	bool ok;
 	switch (type) {
-	case FIELD_TYPE_STRING:
-		ok = mp == MP_STR;
-		break;
 	case FIELD_TYPE_BOOLEAN:
 		ok = mp == MP_BOOL;
 		break;
@@ -1599,6 +1648,7 @@ mem_cast_explicit(struct Mem *mem, enum field_type type)
 	if (mem->type == MEM_TYPE_JSON) {
 		switch (type) {
 		case FIELD_TYPE_STRING:
+			return json_to_str(mem);
 		case FIELD_TYPE_BOOLEAN:
 		case FIELD_TYPE_UNSIGNED:
 		case FIELD_TYPE_INTEGER:
@@ -1829,7 +1879,7 @@ mem_cast_implicit(struct Mem *mem, enum field_type type)
 	case FIELD_TYPE_JSON:
 		if (mem->type == MEM_TYPE_JSON)
 			return 0;
-		return mem_to_json(mem);
+		return -1;
 	case FIELD_TYPE_SCALAR:
 		if ((mem->type & (MEM_TYPE_MAP | MEM_TYPE_ARRAY |
 				  MEM_TYPE_INTERVAL | MEM_TYPE_JSON)) != 0)
@@ -2754,14 +2804,6 @@ static int
 mem_cmp_json(const struct Mem *a, const struct Mem *b)
 {
 	assert((a->type & b->type & MEM_TYPE_JSON) != 0);
-	/*
-	 * mem->z holds the full MP_EXT/MP_JSON value, so strip the envelope
-	 * the comparator no longer wants.
-	 *
-	 * Proof: a MEM_TYPE_JSON mem is only ever built from a constructor's
-	 * output, by mem_set_json_from_inner() or by a copy of bytes that came
-	 * from one, so its payload is in normal form.
-	 */
 	const char *pa = a->z;
 	const char *pb = b->z;
 	uint32_t alen;
@@ -3652,7 +3694,8 @@ mem_getitem(const struct Mem *mem, const struct Mem *keys, int count,
 		const char *start = data;
 		mp_next(&data);
 		uint32_t len = (uint32_t)(data - start);
-		mem_set_json_from_inner(res, start, len);
+		/* JSON is taken as is, see doc/json-perimeter.md#closure. */
+		mem_set_json(res, json_norm_from_trusted(start, len));
 		return 0;
 	}
 	uint32_t len;
@@ -3900,9 +3943,10 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 				if (json_norm_handle(status, err_off,
 						     "a Lua function") != 0)
 					goto error;
-				mem_set_json_from_inner(&val[i],
-							field.sval.data,
-							field.sval.len);
+				struct json_norm norm =
+					json_norm_from_trusted(field.sval.data,
+							       field.sval.len);
+				mem_set_json(&val[i], norm);
 			} else {
 				diag_set(ClientError, ER_SQL_EXECUTE,
 					 "Unsupported type passed from Lua");

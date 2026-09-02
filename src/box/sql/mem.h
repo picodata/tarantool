@@ -33,6 +33,7 @@
 #include "datetime.h"
 #include "core/decimal.h"
 #include "tt_uuid.h"
+#include "mp_json.h"
 
 struct sql;
 struct Vdbe;
@@ -532,6 +533,25 @@ mem_set_json_static(struct Mem *mem, char *value, size_t size);
  */
 void
 mem_set_json_allocated(struct Mem *mem, char *value, size_t size);
+
+/*
+ * Clear MEM and set it to JSON built from @a value, an inner value already in
+ * normal form (no MP_EXT header). It is wrapped into a heap-allocated
+ * MP_EXT/MP_JSON value owned by MEM, so @a value does not have to outlive the
+ * call. Taking a json_norm means a JSON MEM cannot be built out of bytes
+ * nobody ever parsed.
+ */
+void
+mem_set_json(struct Mem *mem, struct json_norm value);
+
+/**
+ * Clear MEM and set it to JSON parsed from the text @a text of @a len bytes.
+ * @a text may point into @a mem itself.
+ *
+ * @retval 0 on success, -1 with a diag set if the text is not valid JSON.
+ */
+int
+mem_set_json_text(struct Mem *mem, const char *text, uint32_t len);
 
 /** Clear MEM and set it to invalid state. */
 void

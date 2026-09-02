@@ -52,6 +52,8 @@ local check_symbols = {
     'tnt_mp_sizeof_error',
     'tnt_mp_sizeof_decimal',
     'tnt_mp_sizeof_uuid',
+    'tnt_mp_snprint_json',
+    'tnt_mp_compare_json',
 
     'uuid_nil',
     'tt_uuid_create',
@@ -95,6 +97,7 @@ local check_symbols = {
     'box_txn_current_stmt',
     'box_txn_stmt_old_tuple',
     'box_txn_stmt_new_tuple',
+    'tnt_json_parse',
 
     'crypto_ERR_error_string',
     'crypto_ERR_get_error',
@@ -144,9 +147,39 @@ local check_symbols = {
 -- TODO gh-7640 LuaJIT: ffi.C.dlsym() doesn't work on FreeBSD
 jit.off()
 
-test:plan(#check_symbols)
+-- tnt_json_parse() (box/sql/json_parse.h) is exported for Picodata but ships
+-- no installed header, so its consumer has to hand-write the prototype. This
+-- cdef is that prototype, kept in the same tree as json_parse.h so the two
+-- go stale together rather than silently: a signature change here that
+-- doesn't match the C declaration fails to compile below.
+ffi.cdef([[
+    char *tnt_json_parse(const char *text, uint32_t len, uint32_t *out_len);
+    size_t box_region_used(void);
+    void box_region_truncate(size_t size);
+]])
+
+local function test_tnt_json_parse(test)
+    test:plan(2)
+
+    local out_len = ffi.new('uint32_t[1]')
+
+    -- json_parse.h mandates a region savepoint around every call, taken
+    -- before and reclaimed after, whether or not the parse succeeds.
+    local svp = ffi.C.box_region_used()
+    local mp = ffi.C.tnt_json_parse('[1,2,3]', 7, out_len)
+    test:ok(mp ~= nil and out_len[0] > 0, 'valid document parses')
+    ffi.C.box_region_truncate(svp)
+
+    svp = ffi.C.box_region_used()
+    mp = ffi.C.tnt_json_parse('not json', 8, out_len)
+    test:ok(mp == nil, 'malformed document is rejected')
+    ffi.C.box_region_truncate(svp)
+end
+
+test:plan(#check_symbols + 1)
 for _, sym in ipairs(check_symbols) do
     check_symbol(sym)
 end
+test:test('tnt_json_parse', test_tnt_json_parse)
 
 os.exit(test:check() and 0 or 1)

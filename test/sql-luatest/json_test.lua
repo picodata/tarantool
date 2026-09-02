@@ -65,7 +65,8 @@ end
 g.test_json_store_map_literal = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'b': 2, 'a': 1})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'b': 2, 'a': 1} AS JSON))]])
         local res = box.execute([[SELECT data FROM t WHERE id = 1]])
         t.assert_equals(res.metadata[1].type, 'json')
         -- Keys are normalized (sorted); tostring gives canonical JSON text.
@@ -76,7 +77,7 @@ end
 g.test_json_store_array_literal = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, [3, 1, 2])]])
+        box.execute([=[INSERT INTO t VALUES (1, CAST([3, 1, 2] AS JSON))]=])
         local res = box.execute([[SELECT data FROM t WHERE id = 1]])
         t.assert_equals(tostring(res.rows[1][1]), '[3, 1, 2]')
     end)
@@ -85,7 +86,9 @@ end
 g.test_json_store_nested = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'users': [{'name': 'Bob'}]})]])
+        box.execute([=[
+            INSERT INTO t VALUES (1, CAST({'users': [{'name': 'Bob'}]} AS JSON))
+        ]=])
         local res = box.execute([[SELECT data FROM t WHERE id = 1]])
         t.assert_equals(tostring(res.rows[1][1]),
                         '{"users": [{"name": "Bob"}]}')
@@ -95,15 +98,15 @@ end
 g.test_json_typeof = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'a': 1})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'a': 1} AS JSON))]])
         local res = box.execute([[SELECT TYPEOF(data) FROM t WHERE id = 1]])
         t.assert_equals(res.rows[1][1], 'json')
     end)
 end
 
---
--- Reject non-JSON ext types and non-string keys on insert.
---
+-- Reject non-JSON ext types and non-string keys on insert. Nothing is
+-- implicitly converted to JSON, so these are refused by the type system rather
+-- than by the storage validator, and the message says so.
 g.test_json_reject_non_json_types = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
@@ -112,23 +115,25 @@ g.test_json_reject_non_json_types = function()
         local res, err = box.execute(
             "INSERT INTO t VALUES (1, CAST('" .. uuid .. "' AS UUID))")
         t.assert_equals(res, nil)
-        t.assert_str_contains(err.message, 'Type mismatch')
+        t.assert_str_contains(err.message, 'to json')
 
         res, err = box.execute(
             [[INSERT INTO t VALUES (2, CAST('2026-01-01' AS DATETIME))]])
         t.assert_equals(res, nil)
-        t.assert_str_contains(err.message, 'Type mismatch')
+        t.assert_str_contains(err.message, 'to json')
 
         res, err = box.execute([[INSERT INTO t VALUES (3, x'DEADBEEF')]])
         t.assert_equals(res, nil)
-        t.assert_str_contains(err.message, 'Type mismatch')
+        t.assert_str_contains(err.message, 'to json')
     end)
 end
 
+-- An integer key is rejected by the cast itself: a JSON object keys on strings.
 g.test_json_reject_integer_key = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        local res, err = box.execute([[INSERT INTO t VALUES (1, {1: 'x'})]])
+        local res, err = box.execute(
+            [[INSERT INTO t VALUES (1, CAST({1: 'x'} AS JSON))]])
         t.assert_equals(res, nil)
         t.assert_str_contains(err.message, 'json')
     end)
@@ -236,7 +241,7 @@ local function stored_json(value_sql)
     return g.server:exec(function(value_sql)
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
         box.execute(string.format(
-            [[INSERT INTO t VALUES (1, %s)]], value_sql))
+            [[INSERT INTO t VALUES (1, CAST(%s AS JSON))]], value_sql))
         local res = box.execute([[SELECT data FROM t WHERE id = 1]])
         local out = tostring(res.rows[1][1])
         box.execute([[DROP TABLE t]])
@@ -361,7 +366,7 @@ g.test_json_null_not_short_circuit = function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
         box.execute([[INSERT INTO t VALUES (1, json_null())]])
         box.execute([[INSERT INTO t VALUES (2, NULL)]])
-        box.execute([[INSERT INTO t VALUES (3, {'a': 1})]])
+        box.execute([[INSERT INTO t VALUES (3, CAST({'a': 1} AS JSON))]])
 
         -- IS NOT NULL keeps the JSON-null and object rows, drops only SQL NULL.
         local res = box.execute(
@@ -403,7 +408,8 @@ end)
 g.test_json_tuple_decode = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'b': 2, 'a': 1})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'b': 2, 'a': 1} AS JSON))]])
         local tuple = box.space.T:get(1)
         t.assert_equals(tostring(tuple[2]), '{"a": 1, "b": 2}')
         box.execute([[DROP TABLE t]])
@@ -414,7 +420,8 @@ end
 g.test_json_roundtrip = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'b': 2, 'a': 1})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'b': 2, 'a': 1} AS JSON))]])
         local s = box.space.T
         local val = s:get(1)[2]
         -- Re-encode the cdata on the write path.
@@ -429,7 +436,7 @@ end
 g.test_json_netbox_read = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t2 (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t2 VALUES (1, {'x': 5})]])
+        box.execute([[INSERT INTO t2 VALUES (1, CAST({'x': 5} AS JSON))]])
     end)
     local conn = g.server.net_box
     local tuple = conn.space.T2:get(1)
@@ -443,7 +450,8 @@ end
 g.test_json_netbox_roundtrip = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t3 (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t3 VALUES (1, {'b': 2, 'a': 1})]])
+        box.execute(
+            [[INSERT INTO t3 VALUES (1, CAST({'b': 2, 'a': 1} AS JSON))]])
     end)
     local conn = g.server.net_box
     local val = conn.space.T3:get(1)[2]
@@ -491,7 +499,7 @@ g.test_json_arg_to_lua_func_keeps_tag = function()
             exports = {'SQL'},
             is_deterministic = true})
         box.execute([[CREATE TABLE tf (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO tf VALUES (1, {'a': 1})]])
+        box.execute([[INSERT INTO tf VALUES (1, CAST({'a': 1} AS JSON))]])
         -- An object argument keeps its tag rather than decoding to a table.
         local r = box.execute(
             [[SELECT JSON_IS_JSON(data) FROM tf WHERE id = 1]])
@@ -555,7 +563,8 @@ end
 g.test_json_lua_serializers = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'b': 2, 'a': 1})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'b': 2, 'a': 1} AS JSON))]])
         local val = box.space.T:get(1)[2] -- JSON object cdata {"a":1,"b":2}
 
         -- json.encode emits the JSON value inline (valid JSON), not as a
@@ -796,9 +805,11 @@ g.test_comparison_operators = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, a JSON, b JSON)]])
         -- reordered keys normalize equal.
-        box.execute([[INSERT INTO t VALUES (1, {'x':1,'y':2}, {'y':2,'x':1})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'x':1,'y':2} AS JSON),
+                                               CAST({'y':2,'x':1} AS JSON))]])
         -- distinct values.
-        box.execute([[INSERT INTO t VALUES (2, {'a':1}, {'a':2})]])
+        box.execute([[INSERT INTO t VALUES (2, CAST({'a':1} AS JSON),
+                                               CAST({'a':2} AS JSON))]])
         local res = box.execute(
             [[SELECT id, a = b, a <> b, a < b, a > b FROM t ORDER BY id]])
         -- row 1: equal objects.
@@ -806,6 +817,51 @@ g.test_comparison_operators = function()
         -- row 2: {"a":1} < {"a":2}.
         t.assert_equals(res.rows[2], {2, false, true, true, false})
         box.execute([[DROP TABLE t]])
+    end)
+end
+
+-- Nothing is converted to JSON to make a comparison work: a comparison follows
+-- the same rule as an assignment, and a JSON operand only compares against
+-- another JSON value. A map or array literal is refused exactly as it is
+-- against another map, and a scalar is refused in either direction. The cast
+-- form is what compares.
+g.test_comparison_needs_a_cast = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, j JSON)]])
+        box.execute(
+            [=[INSERT INTO t VALUES (1, CAST({'b': 2, 'a': 1} AS JSON))]=])
+        box.execute([==[INSERT INTO t VALUES (2, CAST([1, 2] AS JSON))]==])
+
+        -- A container literal is not comparable, against JSON or anything
+        -- else, in either operand order.
+        local _, err = box.execute([=[SELECT j = {'a': 1} FROM t
+                                      WHERE id = 1]=])
+        t.assert_str_contains(err.message, 'comparable type')
+        _, err = box.execute([=[SELECT {'a': 1} = j FROM t WHERE id = 1]=])
+        t.assert_str_contains(err.message, 'comparable type')
+        _, err = box.execute([=[SELECT {'a': 1} = {'a': 1}]=])
+        t.assert_str_contains(err.message, 'comparable type')
+
+        -- A scalar against JSON is a type error, both ways round.
+        _, err = box.execute([[SELECT j = 1 FROM t WHERE id = 1]])
+        t.assert_str_contains(err.message, 'to json')
+        _, err = box.execute([[SELECT 1 = j FROM t WHERE id = 1]])
+        t.assert_str_contains(err.message, 'to number')
+
+        -- Cast, and it compares. Key order does not matter, and ordering
+        -- works as well as equality.
+        local res = box.execute([=[SELECT j = CAST({'a': 1, 'b': 2} AS JSON)
+                                   FROM t WHERE id = 1]=])
+        t.assert_equals(res.rows[1][1], true)
+        res = box.execute([=[SELECT CAST({'b': 2, 'a': 1} AS JSON) = j
+                             FROM t WHERE id = 1]=])
+        t.assert_equals(res.rows[1][1], true)
+        res = box.execute([==[SELECT j = CAST([1, 2] AS JSON) FROM t
+                              WHERE id = 2]==])
+        t.assert_equals(res.rows[1][1], true)
+        res = box.execute([=[SELECT j < CAST({'z': 9} AS JSON) FROM t
+                             WHERE id = 1]=])
+        t.assert_equals(res.rows[1][1], false)
     end)
 end
 
@@ -863,12 +919,57 @@ g.test_option_d_numeric_equality = function()
     end)
 end
 
+-- A double counts as the decimal its shortest round-trip digits spell, as
+-- when PostgreSQL turns a float8 into jsonb, whatever kind it meets. 2^53
+-- as a double, an integer and a decimal used to be equal pairwise except
+-- double vs decimal, which left DISTINCT and GROUP BY with no right answer.
+g.test_numbers_equal_across_kinds_are_one_group = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
+        box.execute([[INSERT INTO t VALUES
+            (1, CAST('9007199254740992e0' AS JSON)),
+            (2, CAST('9007199254740992' AS JSON)),
+            (3, CAST('9007199254740992.0' AS JSON)),
+            (4, CAST('0.1e0' AS JSON)),
+            (5, CAST('0.1' AS JSON)),
+            (6, CAST('1152921504606846976e0' AS JSON)),
+            (7, CAST('1152921504606847000' AS JSON))]])
+        local r = box.execute([[SELECT COUNT(*) FROM t GROUP BY data
+                                ORDER BY data]])
+        t.assert_equals(r.rows, {{2}, {3}, {2}})
+        r = box.execute([[SELECT COUNT(*) FROM (SELECT DISTINCT data FROM t)]])
+        t.assert_equals(r.rows, {{3}})
+        box.execute([[DROP TABLE t]])
+    end)
+end
+
+-- A double renders with the fewest digits that read back as it, so its text
+-- read back is equal to it. Fourteen digits, as before, lost the last ones.
+g.test_double_text_reads_back_equal = function()
+    g.server:exec(function()
+        local cases = {
+            {'1.0000000000000002e0', '1.0000000000000002'},
+            {'9007199254740992e0', '9007199254740992'},
+            {'0.1e0', '0.1'},
+            {'1.7976931348623157e308', '1.7976931348623157e+308'},
+            {'5e-324', '5e-324'},
+        }
+        for _, c in ipairs(cases) do
+            local r = box.execute(([[SELECT CAST(j AS TEXT),
+                                            CAST(CAST(j AS TEXT) AS JSON) = j
+                                     FROM (SELECT CAST('%s' AS JSON) AS j)]])
+                                  :format(c[1]))
+            t.assert_equals(r.rows[1], {c[2], true}, c[1])
+        end
+    end)
+end
+
 -- Comparing a JSON value to a non-JSON scalar is a type error
 -- unless explicitly cast.
 g.test_json_vs_scalar_type_error = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'a':1})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'a':1} AS JSON))]])
         -- box.execute returns (nil, err); also tolerate a raised error.
         local r, e = box.execute([[SELECT data = 5 FROM t]])
         t.assert_equals(r, nil)
@@ -1063,7 +1164,9 @@ end)
 g.test_subscript_object_key = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'name': 'Alice', 'age': 30})]])
+        box.execute([[
+            INSERT INTO t VALUES (1, CAST({'name': 'Alice', 'age': 30} AS JSON))
+        ]])
         local res = box.execute([=[SELECT data['name'] FROM t WHERE id = 1]=])
         -- JSON string scalar; tostring gives canonical JSON text (quoted).
         t.assert_equals(tostring(res.rows[1][1]), '"Alice"')
@@ -1076,7 +1179,7 @@ end
 g.test_subscript_array_index_0based = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([=[INSERT INTO t VALUES (1, [10, 20, 30])]=])
+        box.execute([=[INSERT INTO t VALUES (1, CAST([10, 20, 30] AS JSON))]=])
         local res = box.execute([=[SELECT data[0], data[1], data[2] FROM t]=])
         t.assert_equals(tostring(res.rows[1][1]), '10')
         t.assert_equals(tostring(res.rows[1][2]), '20')
@@ -1089,7 +1192,9 @@ end
 g.test_subscript_result_is_json = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'key': {'nested': 'value'}})]])
+        box.execute([[
+            INSERT INTO t VALUES (1, CAST({'key': {'nested': 'value'}} AS JSON))
+        ]])
         -- Static type drives metadata (enables ORDER BY/chaining on
         -- subscripts).
         local res = box.execute([=[SELECT data['key'] FROM t WHERE id = 1]=])
@@ -1106,8 +1211,8 @@ end
 g.test_subscript_chained_multikey = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES
-            (1, {'users': [{'name': 'Bob'}, {'name': 'Carol'}]})]])
+        box.execute([[INSERT INTO t VALUES (1,
+            CAST({'users': [{'name': 'Bob'}, {'name': 'Carol'}]} AS JSON))]])
         local res = box.execute(
             [=[SELECT data['users'][0]['name'] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(res.rows[1][1]), '"Bob"')
@@ -1122,7 +1227,9 @@ end
 g.test_subscript_nested_object = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'a': {'b': {'c': 'deep'}}})]])
+        box.execute([[
+            INSERT INTO t VALUES (1, CAST({'a': {'b': {'c': 'deep'}}} AS JSON))
+        ]])
         local res = box.execute(
             [=[SELECT data['a']['b']['c'] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(res.rows[1][1]), '"deep"')
@@ -1134,7 +1241,8 @@ end
 g.test_subscript_missing_key = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'name': 'Alice'})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'name': 'Alice'} AS JSON))]])
         local res = box.execute(
             [=[SELECT data['nonexistent'] FROM t WHERE id = 1]=])
         t.assert_equals(res.rows[1][1], box.NULL)
@@ -1147,7 +1255,7 @@ end
 g.test_subscript_array_out_of_range = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([=[INSERT INTO t VALUES (1, [1, 2, 3])]=])
+        box.execute([=[INSERT INTO t VALUES (1, CAST([1, 2, 3] AS JSON))]=])
         -- index 0 is the first element now.
         local r0 = box.execute([=[SELECT data[0] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(r0.rows[1][1]), '1')
@@ -1171,8 +1279,8 @@ g.test_subscript_on_scalar = function()
             return j
         end
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        -- Scalar JSON number 42 (0x2a); implicit scalar->JSON is a later phase,
-        -- so build the value directly as an mp_json cdata.
+        -- Scalar JSON number 42 (0x2a), built directly as an mp_json cdata so
+        -- the test does not depend on the cast path.
         box.space.T:insert({1, jraw('\x2a')})
         local res = box.execute([=[SELECT data['key'] FROM t WHERE id = 1]=])
         t.assert_equals(res.rows[1][1], box.NULL)
@@ -1184,8 +1292,8 @@ end
 g.test_subscript_key_kind_mismatch = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'a': 1})]])
-        box.execute([=[INSERT INTO t VALUES (2, [1, 2])]=])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'a': 1} AS JSON))]])
+        box.execute([=[INSERT INTO t VALUES (2, CAST([1, 2] AS JSON))]=])
         -- object subscripted by an integer index.
         local r1 = box.execute([=[SELECT data[1] FROM t WHERE id = 1]=])
         t.assert_equals(r1.rows[1][1], box.NULL)
@@ -1201,7 +1309,7 @@ end
 g.test_subscript_present_json_null = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'key': null})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'key': null} AS JSON))]])
         local res = box.execute(
             [=[SELECT data['key'] IS NULL FROM t WHERE id = 1]=])
         t.assert_equals(res.rows[1][1], false)
@@ -1218,7 +1326,7 @@ g.test_subscript_returns_normalized = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
         box.execute([[INSERT INTO t VALUES
-            (1, {'outer': {'zz': 1, 'aa': 2, 'm': 3}})]])
+            (1, CAST({'outer': {'zz': 1, 'aa': 2, 'm': 3}} AS JSON))]])
         local res = box.execute([=[SELECT data['outer'] FROM t WHERE id = 1]=])
         -- normalized order: m (len 1), aa (len 2), zz (len 2, 'aa' < 'zz').
         t.assert_equals(tostring(res.rows[1][1]), '{"m": 3, "aa": 2, "zz": 1}')
@@ -1230,9 +1338,10 @@ end
 g.test_subscript_order_by = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'value': 'string'})]])
-        box.execute([[INSERT INTO t VALUES (2, {'value': 42})]])
-        box.execute([[INSERT INTO t VALUES (3, {'value': null})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'value': 'string'} AS JSON))]])
+        box.execute([[INSERT INTO t VALUES (2, CAST({'value': 42} AS JSON))]])
+        box.execute([[INSERT INTO t VALUES (3, CAST({'value': null} AS JSON))]])
         -- JSONB rank: null < string < number.
         local res = box.execute([=[SELECT id FROM t ORDER BY data['value']]=])
         t.assert_equals(res.rows, {{3}, {1}, {2}})
@@ -1245,7 +1354,7 @@ g.test_subscript_parenthesized = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
         box.execute([[INSERT INTO t VALUES
-            (1, {'users': [{'name': 'Bob'}]})]])
+            (1, CAST({'users': [{'name': 'Bob'}]} AS JSON))]])
         local res = box.execute(
             [=[SELECT (data['users'])[0]['name'] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(res.rows[1][1]), '"Bob"')
@@ -1258,7 +1367,7 @@ end
 g.test_subscript_past_missing_key = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'a': {'b': 1}})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'a': {'b': 1}} AS JSON))]])
         local res = box.execute(
             [=[SELECT data['missing']['b'] FROM t WHERE id = 1]=])
         t.assert_equals(res.rows[1][1], box.NULL)
@@ -1272,7 +1381,7 @@ g.test_subscript_sql_null_operand = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
         box.execute([[INSERT INTO t VALUES (1, NULL)]])
-        box.execute([[INSERT INTO t VALUES (2, {'a': 42})]])
+        box.execute([[INSERT INTO t VALUES (2, CAST({'a': 42} AS JSON))]])
         -- SQL NULL row: subscript returns SQL NULL rather than erroring.
         local r1 = box.execute([=[SELECT data['a'] FROM t WHERE id = 1]=])
         t.assert_equals(r1.rows[1][1], box.NULL)
@@ -1313,7 +1422,7 @@ end
 g.test_subscript_array_string_index = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([=[INSERT INTO t VALUES (1, [10, 20, 30])]=])
+        box.execute([=[INSERT INTO t VALUES (1, CAST([10, 20, 30] AS JSON))]=])
         local r0 = box.execute([=[SELECT data['0'] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(r0.rows[1][1]), '10')
         local r1 = box.execute([=[SELECT data['2'] FROM t WHERE id = 1]=])
@@ -1337,7 +1446,7 @@ end
 g.test_subscript_array_negative_index = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([=[INSERT INTO t VALUES (1, [10, 20, 30])]=])
+        box.execute([=[INSERT INTO t VALUES (1, CAST([10, 20, 30] AS JSON))]=])
         local rlast = box.execute([=[SELECT data[-1] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(rlast.rows[1][1]), '30')
         local rfirst = box.execute([=[SELECT data[-3] FROM t WHERE id = 1]=])
@@ -1353,7 +1462,8 @@ end
 g.test_subscript_object_integer_key = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'0': 'zero', 'a': 1})]])
+        box.execute(
+            [[INSERT INTO t VALUES (1, CAST({'0': 'zero', 'a': 1} AS JSON))]])
         -- integer 0 stringizes to key "0".
         local r0 = box.execute([=[SELECT data[0] FROM t WHERE id = 1]=])
         t.assert_equals(tostring(r0.rows[1][1]), '"zero"')
@@ -1432,23 +1542,37 @@ g.test_cast_to_json_map_normalized = function()
     end)
 end
 
---
--- TO JSON: types with no JSON representation are rejected.
---
+-- TO JSON: types with no JSON representation are rejected. They encode to
+-- MessagePack that is not a valid JSON value, so validation reports that.
 g.test_cast_to_json_unsupported_errors = function()
     g.server:exec(function()
         local _, err = box.execute([[SELECT CAST(uuid() AS JSON)]])
-        t.assert_str_contains(err.message, 'can not convert')
-        t.assert_str_contains(err.message, 'to json')
+        t.assert_str_contains(err.message, 'not a valid json')
 
         _, err = box.execute([[SELECT CAST(now() AS JSON)]])
-        t.assert_str_contains(err.message, 'to json')
+        t.assert_str_contains(err.message, 'not a valid json')
 
         _, err = box.execute([[SELECT CAST((now() - now()) AS JSON)]])
-        t.assert_str_contains(err.message, 'to json')
+        t.assert_str_contains(err.message, 'not a valid json')
 
         _, err = box.execute([[SELECT CAST(x'31' AS JSON)]])
-        t.assert_str_contains(err.message, 'to json')
+        t.assert_str_contains(err.message, 'not a valid json')
+    end)
+end
+
+-- TO JSON: a container whose own kind is representable but whose nested
+-- content is not (here, a VARBINARY element/value) is reported as a nested
+-- failure, distinct from the whole-value message above, so a castable
+-- array/map is not blamed as if it were the uncastable part.
+g.test_cast_to_json_nested_unsupported_errors = function()
+    g.server:exec(function()
+        local _, err = box.execute([[SELECT CAST([1, 2, x'31'] AS JSON)]])
+        t.assert_str_contains(err.message, 'array value is not a valid json')
+        t.assert_str_contains(err.message, 'element')
+
+        _, err = box.execute([[SELECT CAST({'a': x'31'} AS JSON)]])
+        t.assert_str_contains(err.message, 'map value is not a valid json')
+        t.assert_str_contains(err.message, 'element')
     end)
 end
 
@@ -1475,30 +1599,58 @@ g.test_cast_null_to_json_is_sql_null = function()
     end)
 end
 
---
--- CAST(text AS JSON), text is wrapped as a JSON string scalar, never
--- parsed, so an array- or object-looking string stays a string.
---
-g.test_cast_text_to_json_string_scalar = function()
+-- CAST(text AS JSON) parses the text as a JSON document, so an array- or
+-- object-looking string becomes the structured value, and a quoted string
+-- becomes a JSON string scalar.
+g.test_cast_text_to_json_parses = function()
     g.server:exec(function()
-        local res = box.execute([[SELECT CAST('hello' AS JSON)]])
+        -- A quoted JSON string parses to a JSON string scalar.
+        local res = box.execute([[SELECT CAST('"hello"' AS JSON)]])
+        t.assert_equals(res.metadata[1].type, 'json')
         t.assert_equals(tostring(res.rows[1][1]), '"hello"')
 
+        -- An array-looking string parses to a JSON array.
         res = box.execute([=[SELECT CAST('[1,2,3]' AS JSON)]=])
-        t.assert_equals(tostring(res.rows[1][1]), '"[1,2,3]"')
+        t.assert_equals(tostring(res.rows[1][1]), '[1, 2, 3]')
 
-        res = box.execute([[SELECT CAST('{"a":1}' AS JSON)]])
-        t.assert_equals(tostring(res.rows[1][1]), [==["{\"a\":1}"]==])
+        -- An object-looking string parses to a JSON object (keys sorted).
+        res = box.execute([[SELECT CAST('{"b":2,"a":1}' AS JSON)]])
+        t.assert_equals(tostring(res.rows[1][1]), '{"a": 1, "b": 2}')
+
+        -- Scalar-looking strings parse to the matching JSON scalar.
+        res = box.execute([[SELECT CAST('42' AS JSON)]])
+        t.assert_equals(tostring(res.rows[1][1]), '42')
+        res = box.execute([[SELECT CAST('true' AS JSON)]])
+        t.assert_equals(tostring(res.rows[1][1]), 'true')
+
+        -- Bare (unquoted) text is not valid JSON, so it errors.
+        local _, err = box.execute([[SELECT CAST('hello' AS JSON)]])
+        t.assert_str_contains(err.message, 'Failed to parse JSON')
     end)
 end
 
---
--- FROM JSON: a JSON number extracts to every numeric SQL type.
---
-g.test_from_json_number_extracts_to_numeric = function()
+-- CAST(text AS JSON) can fail with a code other than ER_JSON_PARSE: an
+-- out-of-range integer literal is ER_INT_LITERAL_MAX, and an over-precision
+-- or over-magnitude decimal literal is ER_INVALID_DEC. A client keying on
+-- 275 alone to mean "malformed document" would misclassify both.
+g.test_cast_text_to_json_number_error_codes = function()
+    g.server:exec(function()
+        local _, err = box.execute(
+            [[SELECT CAST('18446744073709551616' AS JSON)]])
+        t.assert_str_contains(err.message, 'exceeds the supported range')
+
+        _, err = box.execute([[SELECT CAST(
+            '100000000000000000000000000000000000000000000000000.0'
+            AS JSON)]])
+        t.assert_str_contains(err.message, 'Invalid decimal')
+    end)
+end
+
+-- FROM JSON: a JSON number reinterprets as every numeric SQL type.
+g.test_from_json_number_reinterprets_as_numeric = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'n': 42})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'n': 42} AS JSON))]])
 
         local res = box.execute([=[SELECT CAST(data['n'] AS INTEGER) FROM t]=])
         t.assert_equals(res.rows[1][1], 42)
@@ -1513,27 +1665,82 @@ g.test_from_json_number_extracts_to_numeric = function()
     end)
 end
 
---
--- FROM JSON: a JSON bool extracts to BOOLEAN.
---
-g.test_from_json_bool_extracts_to_boolean = function()
+-- FROM JSON: a JSON bool reinterprets as BOOLEAN.
+g.test_from_json_bool_reinterprets_as_boolean = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'b': true})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'b': true} AS JSON))]])
         local res = box.execute([=[SELECT CAST(data['b'] AS BOOLEAN) FROM t]=])
         t.assert_equals(res.rows[1][1], true)
     end)
 end
 
---
--- FROM JSON: a JSON string extracts to TEXT, unquoted.
---
-g.test_from_json_string_extracts_to_text = function()
+-- FROM JSON: TEXT renders the whole value as canonical JSON text. Unlike the
+-- scalar reinterpretations this is total, so every kind has a result and a
+-- container is no exception.
+g.test_from_json_to_text_serializes = function()
+    g.server:exec(function()
+        local cases = {
+            {'"hi"', '"hi"'},
+            {'"a\\"b"', '"a\\"b"'},
+            {'42', '42'},
+            {'1.5', '1.5'},
+            {'true', 'true'},
+            {'null', 'null'},
+            {'{"b": 2, "a": 1}', '{"a": 1, "b": 2}'},
+            {'[1, 2]', '[1, 2]'},
+        }
+        for _, case in ipairs(cases) do
+            local res = box.execute(
+                ("SELECT CAST(CAST('%s' AS JSON) AS TEXT)"):format(case[1]))
+            t.assert_equals(res.metadata[1].type, 'string')
+            t.assert_equals(res.rows[1][1], case[2])
+        end
+
+        local res = box.execute([[SELECT CAST(json_null() AS TEXT)]])
+        t.assert_equals(res.rows[1][1], 'null')
+    end)
+end
+
+-- The rendered text is the same text QUOTE() produces, and it parses back into
+-- an equal JSON value: quotes are kept, so the round trip is exact and a JSON
+-- string stays distinct from the number that prints the same.
+g.test_from_json_to_text_round_trips = function()
+    g.server:exec(function()
+        local res = box.execute([[
+            SELECT CAST(CAST('{"b": 2, "a": 1}' AS JSON) AS TEXT)
+                     = QUOTE(CAST('{"b": 2, "a": 1}' AS JSON))
+        ]])
+        t.assert_equals(res.rows[1][1], true)
+
+        res = box.execute([[
+            SELECT CAST(CAST(CAST('"1"' AS JSON) AS TEXT) AS JSON)
+                     = CAST('"1"' AS JSON),
+                   CAST(CAST(CAST('"1"' AS JSON) AS TEXT) AS JSON)
+                     = CAST('1' AS JSON)
+        ]])
+        t.assert_equals(res.rows[1], {true, false})
+    end)
+end
+
+-- A projection over a column holding several JSON kinds renders every row, so
+-- the statement does not live or die on the rows it happens to read.
+g.test_from_json_to_text_over_mixed_column = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'s': 'hi'})]])
-        local res = box.execute([=[SELECT CAST(data['s'] AS TEXT) FROM t]=])
-        t.assert_equals(res.rows[1][1], 'hi')
+        box.execute([[INSERT INTO t VALUES (1, CAST('"Bob"' AS JSON))]])
+        box.execute([[INSERT INTO t VALUES (2, CAST('42' AS JSON))]])
+        box.execute([[INSERT INTO t VALUES (3, CAST('{"a": 1}' AS JSON))]])
+        box.execute([[INSERT INTO t VALUES (4, json_null())]])
+        local res = box.execute(
+            [[SELECT CAST(data AS TEXT) FROM t ORDER BY id]])
+        t.assert_equals(res.rows,
+                        {{'"Bob"'}, {'42'}, {'{"a": 1}'}, {'null'}})
+
+        -- The result is an ordinary TEXT value, usable as one.
+        res = box.execute(
+            [[SELECT CAST(data AS TEXT) || '!' FROM t WHERE id = 2]])
+        t.assert_equals(res.rows[1][1], '42!')
     end)
 end
 
@@ -1541,21 +1748,19 @@ end
 g.test_from_json_to_json_identity = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'n': 42})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'n': 42} AS JSON))]])
         local res = box.execute([=[SELECT CAST(data['n'] AS JSON) FROM t]=])
         t.assert_equals(res.metadata[1].type, 'json')
         t.assert_equals(tostring(res.rows[1][1]), '42')
     end)
 end
 
---
--- FROM JSON is extraction-strict: the inner kind must match the target.
---
+-- FROM JSON is kind-strict: the inner kind must match the target.
 g.test_from_json_mismatch_errors = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES
-                      (1, {'n': 42, 'b': true, 's': 'hi', 'nul': null})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST(
+            {'n': 42, 'b': true, 's': 'hi', 'nul': null} AS JSON))]])
 
         local _, err = box.execute(
             [=[SELECT CAST(data['n'] AS BOOLEAN) FROM t]=])
@@ -1571,93 +1776,152 @@ g.test_from_json_mismatch_errors = function()
         t.assert_equals(err.message,
                         'Type mismatch: can not convert json("hi") to integer')
 
-        _, err = box.execute([=[SELECT CAST(data['n'] AS TEXT) FROM t]=])
-        t.assert_equals(err.message,
-                        'Type mismatch: can not convert json(42) to string')
-
         -- A present JSON null is a value, not SQL NULL: it errors, not NULLs.
-        _, err = box.execute([=[SELECT CAST(data['nul'] AS TEXT) FROM t]=])
+        _, err = box.execute([=[SELECT CAST(data['nul'] AS INTEGER) FROM t]=])
         t.assert_equals(err.message,
-                        'Type mismatch: can not convert json(null) to string')
+                        'Type mismatch: can not convert json(null) to integer')
     end)
 end
 
---
--- Guard: rendering a whole JSON container as TEXT is deferred -> error.
---
-g.test_guard_json_container_to_text_errors = function()
+-- Nothing is implicitly converted on assignment, container literals included.
+-- Every source here is a SQL value that merely has a JSON counterpart, not a
+-- JSON document, so storing one asks for the conversion with CAST.
+g.test_nothing_converts_to_json_implicitly = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute(
-            [=[INSERT INTO t VALUES (1, {'arr': [1, 2], 'm': {'x': 1}})]=])
+        for i, literal in ipairs({'42', 'true', '1.5', "{'a': 1}",
+                                  '[10, 20]'}) do
+            local res, err = box.execute(
+                ('INSERT INTO t VALUES (%d, %s)'):format(i, literal))
+            t.assert_equals(res, nil, literal)
+            t.assert_str_contains(err.message, 'to json', false, literal)
+        end
+        t.assert_equals(box.execute([[SELECT count(*) FROM t]]).rows, {{0}})
 
-        local _, err = box.execute(
-            [=[SELECT CAST(data['arr'] AS TEXT) FROM t]=])
-        t.assert_equals(err.message,
-                        'Type mismatch: can not convert json([1, 2]) to string')
-
-        _, err = box.execute([=[SELECT CAST(data['m'] AS TEXT) FROM t]=])
-        t.assert_equals(err.message,
-                'Type mismatch: can not convert json({"x": 1}) to string')
-    end)
-end
-
---
--- Implicit on assignment: scalars and text inserted into a JSON column are
--- wrapped as JSON scalars.
---
-g.test_implicit_scalars_to_json_column = function()
-    g.server:exec(function()
-        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, n JSON, b JSON,
-                      s JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, 42, true, 'hello')]])
-        local res = box.execute([[SELECT n, b, s FROM t]])
+        -- The cast is the way in, and it stores the matching JSON scalar.
+        box.execute([[INSERT INTO t VALUES (1, CAST(42 AS JSON)),
+                      (2, CAST(true AS JSON)), (3, CAST(1.5 AS JSON))]])
+        local res = box.execute([[SELECT data FROM t ORDER BY id]])
         t.assert_equals(tostring(res.rows[1][1]), '42')
-        t.assert_equals(tostring(res.rows[1][2]), 'true')
-        t.assert_equals(tostring(res.rows[1][3]), '"hello"')
+        t.assert_equals(tostring(res.rows[2][1]), 'true')
+        t.assert_equals(tostring(res.rows[3][1]), '1.5')
     end)
 end
 
---
--- Implicit on assignment: an object-looking string is stored as a
--- JSON string scalar, not parsed into an object.
---
-g.test_implicit_text_object_is_string = function()
+-- Cast a container literal and it stores as a JSON container, subscriptable
+-- by key and by index.
+g.test_cast_container_literal_is_container = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, '{"a":1}')]])
-        local res = box.execute([[SELECT data FROM t]])
-        t.assert_equals(tostring(res.rows[1][1]), [==["{\"a\":1}"]==])
-        -- It is a string scalar, so subscripting it yields SQL NULL.
-        local r2 = box.execute([=[SELECT data['a'] FROM t]=])
-        t.assert_equals(r2.rows[1][1], box.NULL)
-    end)
-end
-
---
--- Implicit on assignment: a container literal is stored as a JSON container.
---
-g.test_implicit_container_literal_is_object = function()
-    g.server:exec(function()
-        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
-        box.execute([[INSERT INTO t VALUES (1, {'a': 1})]])
+        box.execute([[INSERT INTO t VALUES (1, CAST({'a': 1} AS JSON))]])
         local res = box.execute([=[SELECT data['a'] FROM t]=])
         t.assert_equals(tostring(res.rows[1][1]), '1')
+
+        box.execute([=[INSERT INTO t VALUES (2, CAST([10, 20] AS JSON))]=])
+        local r2 = box.execute([=[SELECT data[0] FROM t WHERE id = 2]=])
+        t.assert_equals(tostring(r2.rows[1][1]), '10')
     end)
 end
 
---
--- Implicit on assignment: types with no JSON representation are still rejected.
---
-g.test_implicit_unsupported_rejected = function()
+-- Text is refused like every other source, and is the strongest case for the
+-- rule: it would have to be parsed, and whether that succeeds depends on the
+-- text. Implicit, a query over a TEXT column would live or die on the rows it
+-- happens to read.
+g.test_no_implicit_text_to_json = function()
     g.server:exec(function()
         box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
 
-        local _, err = box.execute([[INSERT INTO t VALUES (1, uuid())]])
-        t.assert_str_contains(err.message, 'to json')
+        -- Well-formed JSON text is rejected just like anything else: this
+        -- is a type rule, not a parse result.
+        local res, err = box.execute([[INSERT INTO t VALUES (1, '{"a":1}')]])
+        t.assert_equals(res, nil)
+        t.assert_equals(err.message, 'Type mismatch: can not convert ' ..
+                        'string(\'{"a":1}\') to json')
 
-        _, err = box.execute([[INSERT INTO t VALUES (2, x'31')]])
-        t.assert_str_contains(err.message, 'to json')
+        res, err = box.execute([[INSERT INTO t VALUES (2, 'hello')]])
+        t.assert_equals(res, nil)
+        t.assert_str_contains(err.message, 'Type mismatch')
+
+        -- A TEXT column is rejected the same way, at the same point.
+        box.execute([[CREATE TABLE u (id INT PRIMARY KEY, s TEXT)]])
+        box.execute([[INSERT INTO u VALUES (1, '{"a":1}')]])
+        res, err = box.execute([[INSERT INTO t SELECT id, s FROM u]])
+        t.assert_equals(res, nil)
+        t.assert_str_contains(err.message, 'Type mismatch')
+
+        t.assert_equals(box.execute([[SELECT count(*) FROM t]]).rows, {{0}})
+
+        -- Both explicit forms still parse the text.
+        box.execute([[INSERT INTO t VALUES (1, CAST('{"a":1}' AS JSON))]])
+        box.execute([[INSERT INTO t VALUES (2, JSON_PARSE('{"b":2}'))]])
+        local rows = box.execute([[SELECT data FROM t ORDER BY id]]).rows
+        t.assert_equals(tostring(rows[1][1]), '{"a": 1}')
+        t.assert_equals(tostring(rows[2][1]), '{"b": 2}')
+    end)
+end
+
+-- IN against a JSON set: a STRING probe is a type error, not a per-row parse
+-- attempt, whether it arrives as a literal, a bound parameter or a typed
+-- column. An explicitly built probe still finds its match.
+g.test_in_json_string_probe_is_type_error = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, j JSON)]])
+        box.execute([[INSERT INTO t VALUES (1, CAST('[1,2,3]' AS JSON))]])
+        box.execute([[CREATE TABLE u (id INT PRIMARY KEY, s TEXT)]])
+        box.execute([[INSERT INTO u VALUES (1, '[1,2,3]')]])
+
+        -- A literal.
+        local res, err = box.execute(
+            [[SELECT '[1,2,3]' IN (SELECT j FROM t)]])
+        t.assert_equals(res, nil)
+        t.assert_str_contains(err.message:lower(), 'type mismatch')
+
+        -- A bound parameter has no declared type of its own, so nothing
+        -- casts the probe and the JSON-typed ephemeral set rejects it
+        -- itself. Still an error, in the index's wording rather than the
+        -- type system's.
+        res, err = box.execute([[SELECT ? IN (SELECT j FROM t)]], {'[1,2,3]'})
+        t.assert_equals(res, nil)
+        t.assert_str_contains(err.message:lower(),
+                              'does not match index part type')
+
+        -- A typed column.
+        res, err = box.execute([[SELECT s FROM u
+                                  WHERE s IN (SELECT j FROM t)]])
+        t.assert_equals(res, nil)
+        t.assert_str_contains(err.message:lower(), 'type mismatch')
+
+        -- An explicit cast is the way to probe with text.
+        local ok = box.execute(
+            [[SELECT CAST('[1,2,3]' AS JSON) IN (SELECT j FROM t)]])
+        t.assert_equals(ok.rows[1][1], true)
+        ok = box.execute(
+            [[SELECT JSON_PARSE('[9,9,9]') IN (SELECT j FROM t)]])
+        t.assert_equals(ok.rows[1][1], false)
+    end)
+end
+
+-- IN against a JSON set is a comparison, so it follows the comparison rule
+-- rather than the assignment one: a scalar probe is a type error, exactly as
+-- `= j` is. Through the assignment cast, `7 IN (SELECT j)` used to answer
+-- true where `7 = j` errored.
+g.test_in_json_scalar_probe_is_type_error = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, j JSON)]])
+        box.execute([[INSERT INTO t VALUES (1, CAST(7 AS JSON))]])
+
+        for _, probe in ipairs({'7', '8', 'true', '1.5', "x'07'"}) do
+            local res, err = box.execute(
+                ('SELECT %s IN (SELECT j FROM t)'):format(probe))
+            t.assert_equals(res, nil, probe)
+            t.assert_str_contains(err.message, 'to json', false, probe)
+        end
+
+        -- The cast is the way in, and then the lookup answers.
+        local res = box.execute([[SELECT CAST(7 AS JSON) IN (SELECT j FROM t)]])
+        t.assert_equals(res.rows[1][1], true)
+        res = box.execute([[SELECT CAST(8 AS JSON) IN (SELECT j FROM t)]])
+        t.assert_equals(res.rows[1][1], false)
     end)
 end
 
@@ -1828,7 +2092,7 @@ end
 g.test_union_mixed_kinds = function()
     g.server:exec(function()
         local res = box.execute([=[
-            SELECT CAST(5 AS JSON) UNION SELECT CAST('x' AS JSON)
+            SELECT CAST(5 AS JSON) UNION SELECT CAST('"x"' AS JSON)
             UNION SELECT CAST([1] AS JSON) UNION SELECT CAST({'a': 1} AS JSON)
             ORDER BY 1]=])
         local out = {}
@@ -2167,37 +2431,8 @@ g.after_each(function()
     end)
 end)
 
---
--- Deferred: CAST(text AS JSON) wraps the text as a JSON
--- string scalar and never parses it -- '[1,2,3]' becomes the 7-char
--- string, not an array.
---
-g.test_cast_text_to_json_is_string_scalar = function()
-    g.server:exec(function()
-        local r1 = box.execute([[SELECT CAST('hello' AS JSON)]])
-        t.assert_equals(r1.metadata[1].type, 'json')
-        t.assert_equals(tostring(r1.rows[1][1]), '"hello"')
-        -- A bracketed string is a string scalar, not a parsed array.
-        local r2 = box.execute([=[SELECT CAST('[1,2,3]' AS JSON)]=])
-        t.assert_equals(tostring(r2.rows[1][1]), '"[1,2,3]"')
-    end)
-end
-
---
--- Deferred: rendering a whole JSON container to TEXT is not supported.
---
-g.test_cast_json_container_to_text_errors = function()
-    g.server:exec(function()
-        local _, err = box.execute(
-            [[SELECT CAST(CAST({'a': 1} AS JSON) AS TEXT)]])
-        t.assert_not_equals(err, nil)
-    end)
-end
-
---
 -- Deferred: a JSON column cannot be a PRIMARY KEY (SQL); the table is not
 -- created.
---
 g.test_sql_primary_key_on_json_rejected = function()
     g.server:exec(function()
         local _, err = box.execute(
@@ -2268,5 +2503,205 @@ g.test_vinyl_primary_key_on_json_rejected = function()
         local ok, err = pcall(s.create_index, s, 'p', {parts = {{1, 'json'}}})
         t.assert_equals(ok, false)
         t.assert_str_contains(string.lower(tostring(err)), 'json')
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- json_parse
+--------------------------------------------------------------------------------
+
+local g = t.group('json_parse')
+
+g.before_all(function()
+    g.server = json_server
+end)
+
+-- Drop any tables a test created, so a mid-test failure cannot cascade.
+g.after_each(function()
+    g.server:exec(function()
+        if box.space.T ~= nil then
+            box.space.T:drop()
+        end
+    end)
+end)
+
+-- JSON_PARSE parses text into a structured JSON value and reports type json.
+g.test_json_parse_containers = function()
+    g.server:exec(function()
+        local res = box.execute([=[SELECT JSON_PARSE('[1,2,3]')]=])
+        t.assert_equals(res.metadata[1].type, 'json')
+        t.assert_equals(tostring(res.rows[1][1]), '[1, 2, 3]')
+
+        -- Object keys are normalized (sorted).
+        res = box.execute([[SELECT JSON_PARSE('{"b":2,"a":1}')]])
+        t.assert_equals(tostring(res.rows[1][1]), '{"a": 1, "b": 2}')
+
+        -- Nested containers round-trip.
+        res = box.execute([=[SELECT JSON_PARSE('[{"x":[1,2]}]')]=])
+        t.assert_equals(tostring(res.rows[1][1]), '[{"x": [1, 2]}]')
+    end)
+end
+
+-- JSON_PARSE of scalar text yields the matching JSON scalar.
+g.test_json_parse_scalars = function()
+    g.server:exec(function()
+        local res = box.execute([[SELECT JSON_PARSE('"hello"')]])
+        t.assert_equals(tostring(res.rows[1][1]), '"hello"')
+
+        res = box.execute([[SELECT JSON_PARSE('42')]])
+        t.assert_equals(tostring(res.rows[1][1]), '42')
+
+        res = box.execute([[SELECT JSON_PARSE('-5')]])
+        t.assert_equals(tostring(res.rows[1][1]), '-5')
+
+        res = box.execute([[SELECT JSON_PARSE('12.5')]])
+        t.assert_equals(tostring(res.rows[1][1]), '12.5')
+
+        res = box.execute([[SELECT JSON_PARSE('true')]])
+        t.assert_equals(tostring(res.rows[1][1]), 'true')
+
+        res = box.execute([[SELECT JSON_PARSE('null')]])
+        -- A JSON null is a value, distinct from SQL NULL.
+        t.assert_equals(tostring(res.rows[1][1]), 'null')
+        t.assert_equals(res.rows[1][1] == box.NULL, false)
+    end)
+end
+
+-- The number kind follows the lexical rule: a fractional literal is a JSON
+-- number that reinterprets as DECIMAL, so JSON_PARSE feeds the kind-strict
+-- cast.
+g.test_json_parse_number_reinterprets = function()
+    g.server:exec(function()
+        local res = box.execute(
+            [[SELECT CAST(JSON_PARSE('12.5') AS DECIMAL)]])
+        t.assert_equals(tostring(res.rows[1][1]), '12.5')
+
+        res = box.execute([[SELECT CAST(JSON_PARSE('42') AS INTEGER)]])
+        t.assert_equals(res.rows[1][1], 42)
+    end)
+end
+
+-- SQL NULL passes through as SQL NULL (the argument is not parsed).
+g.test_json_parse_null_argument = function()
+    g.server:exec(function()
+        local res = box.execute([[SELECT JSON_PARSE(NULL)]])
+        t.assert_equals(res.rows[1][1], box.NULL)
+    end)
+end
+
+-- A JSON_PARSE result is a genuine JSON value: it stores in a JSON column and
+-- subscripts like any other (0-based).
+g.test_json_parse_result_is_real_json = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE t (id INT PRIMARY KEY, data JSON)]])
+        box.execute([=[INSERT INTO t VALUES (1, JSON_PARSE('[10,20,30]'))]=])
+        local res = box.execute([=[SELECT data[1] FROM t]=])
+        t.assert_equals(tostring(res.rows[1][1]), '20')
+    end)
+end
+
+-- Malformed and structurally invalid text is a parse error (ER_JSON_PARSE).
+g.test_json_parse_syntax_errors = function()
+    g.server:exec(function()
+        for _, text in ipairs({'hello', '', '[1,2', '{"a":}', '1 2',
+                               '{"a" 1}'}) do
+            local _, err = box.execute(
+                [[SELECT JSON_PARSE(']] .. text .. [[')]])
+            t.assert_not_equals(err, nil, text)
+            t.assert_str_contains(err.message, 'Failed to parse JSON', false,
+                                  text)
+        end
+    end)
+end
+
+-- RFC 8259 admits only %x20 and above unescaped inside a string, so a raw
+-- control character is a parse error even though the shared cjson lexer takes
+-- it as an ordinary byte for Lua's json.decode(). The escape spelling of the
+-- same character is accepted and renders identically.
+g.test_json_parse_raw_control_char = function()
+    g.server:exec(function()
+        for name, ch in pairs({LF = '\n', CR = '\r', TAB = '\t',
+                               NUL_NEXT = '\1', US = '\31'}) do
+            local _, err = box.execute([[SELECT JSON_PARSE(?)]],
+                                       {'"a' .. ch .. 'b"'})
+            t.assert_not_equals(err, nil, name)
+            t.assert_str_contains(err.message, 'control character in string',
+                                  false, name)
+        end
+
+        -- 0x20 is the first byte the grammar admits raw, and DEL is not a
+        -- control character as far as JSON is concerned.
+        local res = box.execute([[SELECT JSON_PARSE(?)]], {'"a b"'})
+        t.assert_equals(tostring(res.rows[1][1]), '"a b"')
+        res = box.execute([[SELECT JSON_PARSE(?)]], {'"a\127b"'})
+        t.assert_equals(res.rows[1][1] ~= nil, true)
+
+        -- Written as an escape it is accepted, and renders back as one.
+        res = box.execute([[SELECT JSON_PARSE(?)]], {'"a\\nb"'})
+        t.assert_equals(tostring(res.rows[1][1]), '"a\\nb"')
+
+        -- Lua's json.decode() keeps taking the raw byte: only we are strict.
+        t.assert_equals(require('json').decode('"a\nb"'), 'a\nb')
+    end)
+end
+
+-- A zero byte reads as the end of the text inside the lexer, so a document
+-- that stops at one is truncated rather than complete. A bound parameter can
+-- carry a NUL, and this is the validation gate for the JSON type.
+g.test_json_parse_embedded_zero_byte = function()
+    g.server:exec(function()
+        local texts = {'1\0garbage', '{"a":1}\0 {', '[1,2]\0', '1\0'}
+        for _, text in ipairs(texts) do
+            local _, err = box.execute([[SELECT JSON_PARSE(?)]], {text})
+            t.assert_not_equals(err, nil, text)
+            t.assert_str_contains(err.message, 'embedded zero byte', false,
+                                  text)
+        end
+
+        -- The same text without the tail is still accepted.
+        local res = box.execute([[SELECT JSON_PARSE(?)]], {'{"a":1}'})
+        t.assert_equals(tostring(res.rows[1][1]), '{"a": 1}')
+
+        -- CAST is the same gate, and it is the storage path.
+        local _, err = box.execute([[SELECT CAST(? AS JSON)]],
+                                   {'[1,2]\0trailing'})
+        t.assert_str_contains(err.message, 'embedded zero byte')
+    end)
+end
+
+-- An integer literal outside [int64_min, uint64_max] is a range error, exactly
+-- like a SQL integer literal.
+g.test_json_parse_integer_overflow = function()
+    g.server:exec(function()
+        local _, err = box.execute(
+            [[SELECT JSON_PARSE('18446744073709551616')]])
+        t.assert_str_contains(err.message, 'exceeds the supported range')
+
+        _, err = box.execute([[SELECT JSON_PARSE('-9223372036854775809')]])
+        t.assert_str_contains(err.message, 'exceeds the supported range')
+    end)
+end
+
+-- A fractional literal whose magnitude, or whose significant-digit count,
+-- exceeds the decimal range is ER_INVALID_DEC, exactly like a SQL decimal
+-- literal.
+g.test_json_parse_decimal_overflow = function()
+    g.server:exec(function()
+        local _, err = box.execute([[SELECT JSON_PARSE(
+            '100000000000000000000000000000000000000000000000000.0')]])
+        t.assert_str_contains(err.message, 'Invalid decimal')
+
+        _, err = box.execute([[SELECT JSON_PARSE(
+            '0.123456789012345678901234567890123456789')]])
+        t.assert_str_contains(err.message, 'Invalid decimal')
+    end)
+end
+
+-- A number that overflows to Inf (NaN/Inf are not valid JSON) is rejected.
+g.test_json_parse_non_finite_rejected = function()
+    g.server:exec(function()
+        local _, err = box.execute([[SELECT JSON_PARSE('1e400')]])
+        t.assert_str_contains(err.message, 'Failed to parse JSON')
+        t.assert_str_contains(err.message, 'NaN or Inf')
     end)
 end

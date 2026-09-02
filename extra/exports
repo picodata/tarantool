@@ -569,6 +569,8 @@ tnt_interval_to_string
 tnt_interval_interval_sub
 tnt_interval_interval_add
 tnt_interval_unpack
+tnt_json_parse
+tnt_mp_compare_json
 tnt_mp_decode_double
 tnt_mp_decode_extl
 tnt_mp_decode_float
@@ -586,6 +588,7 @@ tnt_mp_sizeof_error
 tnt_mp_sizeof_interval
 tnt_mp_sizeof_json
 tnt_mp_sizeof_uuid
+tnt_mp_snprint_json
 tnt_mp_verify_json
 tnt_rl_get_screen_size
 tnt_ssl_cert_paths_discover

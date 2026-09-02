@@ -1472,12 +1472,26 @@ case OP_MustBeInt: {            /* jump, in1 */
  */
 case OP_Cast: {                  /* in1 */
 	pIn1 = &aMem[pOp->p1];
+	/*
+	 * The cast starts with an empty diag, so an empty one afterwards means
+	 * this conversion set no error of its own: a JSON parse error keeps
+	 * its message, a bare type mismatch gets the generic one. Park any
+	 * error already there rather than dropping it, since a statement that
+	 * succeeds must leave box.error.last() alone.
+	 */
+	struct diag save_diag;
+	diag_create(&save_diag);
+	diag_move(diag_get(), &save_diag);
 	rc = mem_cast_explicit(pIn1, pOp->p2);
 	UPDATE_MAX_BLOBSIZE(pIn1);
-	if (rc == 0)
+	if (rc == 0) {
+		diag_move(&save_diag, diag_get());
 		break;
-	diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(pIn1),
-		 field_type_strs[pOp->p2]);
+	}
+	diag_destroy(&save_diag);
+	if (diag_is_empty(diag_get()))
+		diag_set(ClientError, ER_SQL_TYPE_MISMATCH, mem_str(pIn1),
+			 field_type_strs[pOp->p2]);
 	goto abort_due_to_error;
 }
 
@@ -2153,6 +2167,11 @@ case OP_ApplyType: {
 		assert(pIn1 <= &p->aMem[(p->nMem+1 - p->nCursor)]);
 		assert(memIsValid(pIn1));
 		if (mem_cast_implicit(pIn1, type) != 0) {
+			/*
+			 * An implicit conversion reports nothing of its own,
+			 * unlike the explicit one in OP_Cast, so this is the
+			 * only wording and no diag has to be parked for it.
+			 */
 			diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
 				 mem_str(pIn1), field_type_strs[type]);
 			goto abort_due_to_error;

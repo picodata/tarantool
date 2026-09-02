@@ -51,6 +51,7 @@ set(sql_sources
     sql/global.c
     sql/hash.c
     sql/insert.c
+    sql/json_parse.c
     sql/main.c
     sql/malloc.c
     sql/mem.c

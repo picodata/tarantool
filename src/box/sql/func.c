@@ -1321,6 +1321,26 @@ func_json_null(struct sql_context *ctx, int argc, const struct Mem *argv)
 			    sizeof(json_null_mp));
 }
 
+/**
+ * Implementation of the JSON_PARSE() function.
+ *
+ * Parses the string argument as a JSON document. The numeric-literal rules
+ * match SQL's own, and a malformed document or an out-of-range literal raises
+ * the error SQL raises for that literal. SQL NULL yields SQL NULL.
+ */
+static void
+func_json_parse(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 1);
+	(void)argc;
+	const struct Mem *arg = &argv[0];
+	if (mem_is_null(arg))
+		return;
+	assert(mem_is_str(arg));
+	if (mem_set_json_text(ctx->pOut, arg->z, arg->n) != 0)
+		ctx->is_aborted = true;
+}
+
 /** Implementation of the VERSION() function. */
 static void
 func_version(struct sql_context *ctx, int argc, const struct Mem *argv)
@@ -2032,6 +2052,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"HEX", 1, 1, 0, true, 0, NULL},
 	{"IFNULL", 2, 2, SQL_FUNC_COALESCE, true, 0, NULL},
 	{"JSON_NULL", 0, 0, 0, true, 0, NULL},
+	{"JSON_PARSE", 1, 1, 0, true, 0, NULL},
 	{"LAST_VALUE", 1, 1, SQL_FUNC_WINDOW, false, 0, NULL},
 	{"LEAST", 2, SQL_MAX_FUNCTION_ARG, SQL_FUNC_NEEDCOLL, true, 0, NULL},
 	{"LENGTH", 1, 1, SQL_FUNC_LENGTH, true, 0, NULL},
@@ -2165,6 +2186,8 @@ static struct sql_func_definition definitions[] = {
 	{"IFNULL", 2, {field_type_MAX, field_type_MAX}, FIELD_TYPE_SCALAR,
 	 sql_builtin_stub, NULL, NULL, NULL},
 	{"JSON_NULL", 0, {}, FIELD_TYPE_JSON, func_json_null, NULL, NULL, NULL},
+	{"JSON_PARSE", 1, {FIELD_TYPE_STRING}, FIELD_TYPE_JSON, func_json_parse,
+	 NULL, NULL, NULL},
 
 	{"LAST_VALUE", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER,
 	 step_last_value, fin_last_value, value_last_value, inverse_last_value},

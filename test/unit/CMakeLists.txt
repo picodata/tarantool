@@ -214,6 +214,10 @@ create_unit_test(PREFIX mp_json
                  SOURCES mp_json.c core_test_utils.c
                  LIBRARIES core unit
 )
+create_unit_test(PREFIX json_parse
+                 SOURCES json_parse.c box_test_utils.c
+                 LIBRARIES unit box core
+)
 create_unit_test(PREFIX mp_error
                  SOURCES mp_error.cc core_test_utils.c
                  LIBRARIES box_error core unit

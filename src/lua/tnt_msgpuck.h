@@ -97,6 +97,21 @@ tnt_mp_sizeof_json(uint32_t data_len);
 int
 tnt_mp_verify_json(const char *data, uint32_t len, uint32_t *err_off);
 
+/** Wrapper around mp_snprint_json(). Refuses a non-normalized payload. */
+int
+tnt_mp_snprint_json(char *buf, int size, const char **data, uint32_t len);
+
+/**
+ * Wrapper around mp_compare_json(): compare two JSON inner values the way
+ * storage and SQL do. Both must be in normal form, as for box_insert(); this
+ * does not check it.
+ *
+ * @return <0, 0 or >0 as @a a is less than, equal to or greater than @a b.
+ */
+int
+tnt_mp_compare_json(const char *a, uint32_t a_len, const char *b,
+		    uint32_t b_len);
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
