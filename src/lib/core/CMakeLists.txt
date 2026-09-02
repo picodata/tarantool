@@ -30,6 +30,8 @@ set(core_sources
     port.c
     decimal.c
     mp_decimal.c
+    mp_json.c
+    mp_json_norm.c
     cord_buf.c
     datetime.c
     iostream.c

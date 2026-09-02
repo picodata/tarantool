@@ -676,6 +676,8 @@ decimal_sqrt
 decimal_len
 decimal_pack
 CTID_DECIMAL
+# picodata json
+tnt_json_normalize
 # picodata tuple
 tuple_field_raw_by_full_path
 box_tuple_data_offset

@@ -210,6 +210,10 @@ create_unit_test(PREFIX decimal
                  SOURCES decimal.c
                  LIBRARIES core unit
 )
+create_unit_test(PREFIX mp_json
+                 SOURCES mp_json.c core_test_utils.c
+                 LIBRARIES core unit
+)
 create_unit_test(PREFIX mp_error
                  SOURCES mp_error.cc core_test_utils.c
                  LIBRARIES box_error core unit

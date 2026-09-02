@@ -47,6 +47,7 @@ enum mp_extension_type {
     MP_DATETIME = 4,
     MP_COMPRESSION = 5,
     MP_INTERVAL = 6,
+    MP_JSON = 20,
     mp_extension_type_MAX,
 };
 
