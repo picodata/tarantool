@@ -43,6 +43,7 @@ first_token_n(const char *str, size_t len, bool allow_invalid,
 	json.end = str + len;
 	json.tmp = &lexer_tmp;
 	json.decode_invalid_numbers = allow_invalid;
+	json.reject_control_chars = false;
 	json.line_count = 1;
 	json.cur_line_ptr = str;
 
@@ -50,6 +51,23 @@ first_token_n(const char *str, size_t len, bool allow_invalid,
 	 * Callers reuse one token across calls, so poison it first: a field the
 	 * lexer forgets to fill must not read back as the previous token's.
 	 */
+	memset(out, 0xa5, sizeof(*out));
+	json_next_token(&json, out);
+}
+
+/* The same, under the strict grammar (reject_control_chars set). */
+static void
+first_token_strict(const char *str, size_t len, json_token_t *out)
+{
+	json_parse_t json;
+	json.ptr = str;
+	json.end = str + len;
+	json.tmp = &lexer_tmp;
+	json.decode_invalid_numbers = false;
+	json.reject_control_chars = true;
+	json.line_count = 1;
+	json.cur_line_ptr = str;
+
 	memset(out, 0xa5, sizeof(*out));
 	json_next_token(&json, out);
 }
@@ -179,6 +197,66 @@ test_strings(void)
 
 	first_token("\"\"", false, &t);
 	ok(token_str_eq(&t, ""), "empty string");
+
+	check_plan();
+	footer();
+}
+
+/*
+ * RFC 8259 lets a string carry only %x20 and above unescaped, but this lexer
+ * has always taken a raw control character as an ordinary byte, so a consumer
+ * promising the strict grammar sets reject_control_chars. Both readings are
+ * pinned here: the flag must change nothing outside a raw control character.
+ */
+static void
+test_control_chars_in_strings(void)
+{
+	plan(11);
+	header();
+
+	json_token_t t;
+	/* "a<LF>b": accepted by default, refused under the strict grammar. */
+	const char *raw_lf = "\"a\nb\"";
+	first_token(raw_lf, false, &t);
+	ok(token_str_eq(&t, "a\nb"), "raw LF accepted by default");
+	first_token_strict(raw_lf, strlen(raw_lf), &t);
+	is(t.type, JSON_T_ERROR, "raw LF rejected under strict");
+	is(strcmp(t.value.string, "control character in string"), 0,
+	   "raw LF message");
+	is(t.start, raw_lf + 2, "raw LF reported at the offending byte");
+
+	/* Every byte below 0x20 goes, up to the boundary. */
+	const char *raw_tab = "\"a\tb\"";
+	first_token_strict(raw_tab, strlen(raw_tab), &t);
+	is(t.type, JSON_T_ERROR, "raw TAB rejected under strict");
+	const char *raw_us = "\"\x1f\"";
+	first_token_strict(raw_us, strlen(raw_us), &t);
+	is(t.type, JSON_T_ERROR, "raw U+001F rejected under strict");
+	/*
+	 * 0x20 is the first legal one, and 0x7f (DEL) is not a control
+	 * character as far as JSON is concerned.
+	 */
+	first_token_strict("\" \"", 3, &t);
+	ok(token_str_eq(&t, " "), "space accepted under strict");
+	first_token_strict("\"\x7f\"", 3, &t);
+	ok(token_str_eq(&t, "\x7f"), "DEL accepted under strict");
+
+	/* An escape may still produce one; strict only bans the raw byte. */
+	first_token_strict("\"a\\nb\"", 6, &t);
+	ok(token_str_eq(&t, "a\nb"), "escaped LF accepted under strict");
+	/*
+	 * The decoding loop is a separate scan from the escape-free one, so a
+	 * raw control character has to be caught there too. This text reaches
+	 * it by carrying an escape first.
+	 */
+	const char *after_escape = "\"\\n\nb\"";
+	first_token_strict(after_escape, strlen(after_escape), &t);
+	is(t.type, JSON_T_ERROR, "raw LF after an escape rejected");
+
+	/* NUL keeps its own message: it ends the scan whatever the flag. */
+	first_token_strict("\"a\0b\"", 5, &t);
+	is(strcmp(t.value.string, "unexpected end of string"), 0,
+	   "embedded NUL still ends the string");
 
 	check_plan();
 	footer();
@@ -351,6 +429,7 @@ error_column(const char *str)
 	json.end = str + strlen(str);
 	json.tmp = &lexer_tmp;
 	json.decode_invalid_numbers = false;
+	json.reject_control_chars = false;
 	json.line_count = 1;
 	json.cur_line_ptr = str;
 
@@ -390,10 +469,11 @@ main(void)
 	fiber_init(fiber_c_invoke);
 	lexer_env_create();
 
-	plan(7);
+	plan(8);
 	test_scalars();
 	test_numbers();
 	test_strings();
+	test_control_chars_in_strings();
 	test_invalid_numbers();
 	test_invalid_numbers_allowed();
 	test_no_sentinel();

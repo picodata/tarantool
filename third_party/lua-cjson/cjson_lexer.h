@@ -43,6 +43,11 @@ typedef struct {
      * terminator; a decoded string is never longer than its source text. */
     strbuf_t *tmp;
     bool decode_invalid_numbers; /* Accept the literal nan/inf words */
+    /* Reject a raw control character (U+0000..U+001F) unescaped inside a
+     * string, which RFC 8259 forbids and this lexer has always accepted. Off
+     * by default, so json.decode() keeps taking the texts it always has; a
+     * consumer that promises the strict grammar turns it on. */
+    bool reject_control_chars;
     int line_count;
     const char *cur_line_ptr;
 } json_parse_t;

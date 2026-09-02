@@ -273,6 +273,12 @@ static void json_set_token_error(json_token_t *token, json_parse_t *json,
     token->num_at_end = false;
 }
 
+/* A byte RFC 8259 admits inside a string only as an escape. */
+static inline bool json_is_control_char(char ch)
+{
+    return (unsigned char)ch < 0x20;
+}
+
 static void json_next_string_token(json_parse_t *json, json_token_t *token)
 {
     char ch;
@@ -291,7 +297,11 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
     const char *body = json->ptr;
     const char *p = body;
     const char *end = json->end;
-    while (p < end && *p != '"' && *p != '\\' && *p != '\0')
+    /* A raw control character stops the run only under the strict grammar,
+     * otherwise NUL alone does. One bound keeps the common scan at three
+     * comparisons either way. */
+    unsigned char raw_min = json->reject_control_chars ? 0x20 : 0x01;
+    while (p < end && *p != '"' && *p != '\\' && (unsigned char)*p >= raw_min)
         p++;
     if (p == end || *p == '\0') {
         /* Premature end of the string; report it where the scan stopped. */
@@ -304,6 +314,13 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
         token->type = JSON_T_STRING;
         token->value.string = body;
         token->string_len = (int)(p - body);
+        return;
+    }
+    if (json_is_control_char(*p)) {
+        /* Reachable only under the flag: nothing else stops the run above
+         * on a control character, and NUL returned already. */
+        json->ptr = p;
+        json_set_token_error(token, json, "control character in string");
         return;
     }
 
@@ -350,6 +367,11 @@ static void json_next_string_token(json_parse_t *json, json_token_t *token)
 
             /* Skip '\' */
             json->ptr++;
+        } else if (json->reject_control_chars && json_is_control_char(ch)) {
+            /* A control character an escape produced is legal, so this test
+             * belongs on the raw branch rather than on the appended byte. */
+            json_set_token_error(token, json, "control character in string");
+            return;
         }
         /* Append normal character or translated single character
          * Unicode escapes are handled above */

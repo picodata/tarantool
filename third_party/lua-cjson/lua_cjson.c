@@ -585,6 +585,10 @@ static int json_decode(lua_State *l)
     ctx.cfg = cfg;
     const char *data = luaL_checklstring(l, 1, &json_len);
     ctx.lex.decode_invalid_numbers = cfg->decode_invalid_numbers;
+    /* json.decode() has always taken a raw control character inside a string
+     * as an ordinary byte. Keep it that way; only tnt_json_parse() asks for
+     * the strict grammar. */
+    ctx.lex.reject_control_chars = false;
     ctx.current_depth = 0;
     ctx.lex.ptr = data;
     ctx.lex.end = data + json_len;
