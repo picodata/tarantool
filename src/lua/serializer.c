@@ -567,6 +567,11 @@ luaL_tofield(struct lua_State *L, struct luaL_serializer *cfg, int index,
 			} else if (ctypeid == CTID_INTERVAL) {
 				field->ext_type = MP_INTERVAL;
 				field->interval = (struct interval *)cdata;
+			} else if (ctypeid == CTID_JSON) {
+				field->ext_type = MP_JSON;
+				field->sval.data = luaT_tojson(
+					L, index, &field->sval.len);
+				assert(field->sval.data != NULL);
 			} else {
 				field->ext_type = MP_UNKNOWN_EXTENSION;
 			}

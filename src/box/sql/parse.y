@@ -256,7 +256,7 @@ columnlist ::= tcons.
   CONFLICT DEFERRED END ENGINE FAIL
   IGNORE INITIALLY INSTEAD NO MATCH PLAN
   QUERY KEY OFFSET RAISE RELEASE REPLACE RESTRICT ROWS
-  RENAME CTIME_KW IF ENABLE DISABLE UUID
+  RENAME CTIME_KW IF ENABLE DISABLE UUID JSON
   .
 %wildcard WILDCARD.
 
@@ -1756,6 +1756,7 @@ typedef(A) ::= BOOL . { A.type = FIELD_TYPE_BOOLEAN; }
 typedef(A) ::= BOOLEAN . { A.type = FIELD_TYPE_BOOLEAN; }
 typedef(A) ::= VARBINARY . { A.type = FIELD_TYPE_VARBINARY; }
 typedef(A) ::= UUID . { A.type = FIELD_TYPE_UUID; }
+typedef(A) ::= JSON . { A.type = FIELD_TYPE_JSON; }
 typedef(A) ::= ANY . { A.type = FIELD_TYPE_ANY; }
 typedef(A) ::= ARRAY . { A.type = FIELD_TYPE_ARRAY; }
 typedef(A) ::= MAP . { A.type = FIELD_TYPE_MAP; }

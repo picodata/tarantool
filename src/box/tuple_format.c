@@ -37,6 +37,7 @@
 #include "tuple_builder.h"
 #include "tuple_constraint.h"
 #include "tt_static.h"
+#include "mp_json.h"
 
 #include <PMurHash.h>
 
@@ -528,8 +529,35 @@ tuple_format_create(struct tuple_format *format, struct key_def *const *keys,
 				return -1;
 			}
 			size_t size = fields[i].default_value_size;
-			char *buf = xmalloc(size);
-			memcpy(buf, default_value, size);
+			char *buf = NULL;
+			if (field->type == FIELD_TYPE_JSON) {
+				const char *p = default_value;
+				uint32_t inner_len;
+				const char *inner = mp_decode_json(&p,
+								   &inner_len);
+				uint32_t env_size = 0;
+				if (inner != NULL) {
+					uint32_t max_size =
+						mp_sizeof_json_len(inner_len);
+					buf = xmalloc(max_size);
+					env_size = mp_encode_json_normalized(
+						buf, inner, inner_len, NULL);
+				}
+				if (env_size == 0) {
+					free(buf);
+					diag_set(ClientError,
+						 ER_DEFAULT_VALUE_TYPE,
+						 tuple_field_path(field,
+								  format),
+						 field_type_strs[field->type],
+						 mp_type_strs[MP_EXT]);
+					return -1;
+				}
+				size = env_size;
+			} else {
+				buf = xmalloc(size);
+				memcpy(buf, default_value, size);
+			}
 			field->default_value = buf;
 			field->default_value_size = size;
 			format->default_field_count = i + 1;

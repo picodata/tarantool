@@ -41,12 +41,17 @@ extern "C" {
 #endif /* defined(__cplusplus) */
 
 /**
- * Module-internal contract of the JSON normalizer. The only legitimate
- * includers are mp_json.c and test/unit/mp_json.c: the public entry
- * point is tnt_json_normalize() in mp_json.h, and nothing outside this module
- * may ask whether bytes are normalized and branch on the answer. That is the
- * defect this design exists to remove, so a third includer is a design change
- * and not a convenience.
+ * How the JSON normalizer works inside; the public way in is
+ * tnt_json_normalize() in mp_json.h. Nothing outside this module may ask
+ * whether bytes are normalized and branch on the answer: that is the defect
+ * this design exists to remove, so a new includer is a design change, not a
+ * convenience. The legitimate ones are mp_json.c, test/unit/mp_json.c
+ * and src/lua/tnt_msgpuck.c.
+ *
+ * tnt_msgpuck.c is on that list for a single call. tnt_mp_snprint_json()
+ * renders for external modules, which have no way to know whether their bytes
+ * are in normal form, and it cannot fix them in place. So it asks, and then
+ * refuses to render; it never takes a second route to accepting the value.
  *
  * The normal form is one rule, not a list:
  *

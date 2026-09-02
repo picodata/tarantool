@@ -48,6 +48,9 @@
 #include "mp_decimal.h"
 #include "mp_uuid.h"
 #include "mp_util.h"
+#include "mp_json.h"
+#include "mp_json_norm.h"
+#include "box/msgpack.h"
 
 #define CMP_OLD_NEW(a, b, type) (((a) > (type)(b)) - ((a) < (type)(b)))
 
@@ -121,6 +124,8 @@ mem_is_field_compatible(const struct Mem *mem, enum field_type type)
 		return (field_ext_type[type] & (1U << MP_DATETIME)) != 0;
 	if (mem->type == MEM_TYPE_INTERVAL)
 		return (field_ext_type[type] & (1U << MP_INTERVAL)) != 0;
+	if (mem->type == MEM_TYPE_JSON)
+		return (field_ext_type[type] & (1U << MP_JSON)) != 0;
 	enum mp_type mp_type = mem_mp_type(mem);
 	assert(mp_type != MP_EXT);
 	return field_mp_plain_type_is_compatible(type, mp_type, true);
@@ -157,6 +162,7 @@ mem_snprintf(char *buf, size_t size, const struct Mem *mem)
 		break;
 	case MEM_TYPE_MAP:
 	case MEM_TYPE_ARRAY:
+	case MEM_TYPE_JSON:
 		res = mp_snprint(buf, size, mem->z);
 		break;
 	case MEM_TYPE_UUID:
@@ -251,6 +257,8 @@ mem_type_class_to_str(const struct Mem *mem)
 		return "datetime";
 	case MEM_TYPE_INTERVAL:
 		return "interval";
+	case MEM_TYPE_JSON:
+		return "json";
 	default:
 		break;
 	}
@@ -535,6 +543,11 @@ static inline void
 set_msgpack_value(struct Mem *mem, char *value, size_t size, int alloc_type,
 		  enum mem_type type)
 {
+	/*
+	 * See doc/json-perimeter.md#mem-invariant. Debug only, like the one
+	 * in mem_from_mp_ephemeral().
+	 */
+	assert(mp_verify_json(value, value + size, NULL) == JSON_NORM_OK);
 	if (alloc_type == MEM_Ephem || alloc_type == MEM_Static)
 		set_bin_const(mem, value, size, alloc_type);
 	else
@@ -566,6 +579,8 @@ mem_set_map_allocated(struct Mem *mem, char *value, size_t size)
 void
 mem_copy_map(struct Mem *mem, const char *value, size_t size)
 {
+	/* JSON is taken as is, see doc/json-perimeter.md#mem-invariant. */
+	assert(mp_verify_json(value, value + size, NULL) == JSON_NORM_OK);
 	mem_copy_bytes(mem, value, size, MEM_TYPE_MAP);
 }
 
@@ -593,7 +608,39 @@ mem_set_array_allocated(struct Mem *mem, char *value, size_t size)
 void
 mem_copy_array(struct Mem *mem, const char *value, size_t size)
 {
+	/* JSON is taken as is, see doc/json-perimeter.md#mem-invariant. */
+	assert(mp_verify_json(value, value + size, NULL) == JSON_NORM_OK);
 	mem_copy_bytes(mem, value, size, MEM_TYPE_ARRAY);
+}
+
+void
+mem_set_json_static(struct Mem *mem, char *value, size_t size)
+{
+	assert(mp_typeof(*value) == MP_EXT);
+	set_msgpack_value(mem, value, size, MEM_Static, MEM_TYPE_JSON);
+}
+
+void
+mem_set_json_allocated(struct Mem *mem, char *value, size_t size)
+{
+	assert(mp_typeof(*value) == MP_EXT);
+	set_msgpack_value(mem, value, size, 0, MEM_TYPE_JSON);
+}
+
+/** Set @a mem to the JSON value whose inner bytes are @a value. */
+static void
+mem_set_json_from_inner(struct Mem *mem, const char *value, uint32_t len)
+{
+	/*
+	 * Proof: every caller passes bytes a constructor just produced,
+	 * tnt_json_parse() or tnt_json_normalize(), which is what the
+	 * function's name says its argument is.
+	 */
+	struct json_norm inner = json_norm_from_trusted(value, len);
+	uint32_t total = mp_sizeof_json(inner);
+	char *buf = sql_xmalloc(total);
+	mp_encode_json(buf, inner);
+	mem_set_json_allocated(mem, buf, total);
 }
 
 void
@@ -1420,6 +1467,53 @@ mem_to_str(struct Mem *mem)
 	}
 }
 
+/**
+ * Produce a JSON value from a MAP or ARRAY MEM (plain MessagePack): normalize
+ * the inner value, structurally validate it, then wrap it in the MP_EXT/MP_JSON
+ * envelope. The MEM takes ownership of the freshly encoded bytes. This is the
+ * single TO-JSON producer for the SQL write path.
+ */
+static int
+mem_to_json(struct Mem *mem)
+{
+	assert(mem->type == MEM_TYPE_MAP || mem->type == MEM_TYPE_ARRAY);
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+	/*
+	 * One normalizing pass, which both rewrites and rejects.
+	 * Normalization never grows a value, so the input size is enough.
+	 */
+	char *norm = region_alloc(region, mem->n);
+	if (norm == NULL) {
+		region_truncate(region, region_svp);
+		diag_set(OutOfMemory, mem->n, "region_alloc", "norm");
+		return -1;
+	}
+	char *norm_end = tnt_json_normalize(mem->z, mem->n, norm,
+					    norm + mem->n, NULL);
+	if (norm_end == NULL) {
+		region_truncate(region, region_svp);
+		/*
+		 * A MAP/ARRAY's own kind always has a JSON representation, so
+		 * a failure here is necessarily about some element nested
+		 * inside it, not the container itself; name that distinctly
+		 * from a whole value with no JSON representation at all, so
+		 * the message doesn't blame a castable container for an
+		 * uncastable element.
+		 */
+		const char *kind = mem->type == MEM_TYPE_ARRAY ?
+			"array" : "map";
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 tt_sprintf("%s value is not a valid json: "
+				    "an element is not representable", kind));
+		return -1;
+	}
+	uint32_t norm_len = (uint32_t)(norm_end - norm);
+	mem_set_json_from_inner(mem, norm, norm_len);
+	region_truncate(region, region_svp);
+	return 0;
+}
+
 int
 mem_cast_explicit(struct Mem *mem, enum field_type type)
 {
@@ -1634,6 +1728,12 @@ mem_cast_implicit(struct Mem *mem, enum field_type type)
 	case FIELD_TYPE_ARRAY:
 		if (mem->type == MEM_TYPE_ARRAY)
 			return 0;
+		return -1;
+	case FIELD_TYPE_JSON:
+		if (mem->type == MEM_TYPE_JSON)
+			return 0;
+		if (mem->type == MEM_TYPE_MAP || mem->type == MEM_TYPE_ARRAY)
+			return mem_to_json(mem);
 		return -1;
 	case FIELD_TYPE_SCALAR:
 		if ((mem->type &
@@ -2754,6 +2854,8 @@ mem_type_to_str(const struct Mem *p)
 		return "array";
 	case MEM_TYPE_MAP:
 		return "map";
+	case MEM_TYPE_JSON:
+		return "json";
 	case MEM_TYPE_BIN:
 		return "varbinary";
 	case MEM_TYPE_BOOL:
@@ -2798,6 +2900,7 @@ mem_mp_type(const struct Mem *mem)
 	case MEM_TYPE_UUID:
 	case MEM_TYPE_DATETIME:
 	case MEM_TYPE_INTERVAL:
+	case MEM_TYPE_JSON:
 		return MP_EXT;
 	default:
 		unreachable();
@@ -2999,10 +3102,13 @@ mem_from_mp_ephemeral(struct Mem *mem, const char *buf, uint32_t *len)
 			mem->flags = 0;
 			break;
 		}
+		/* MP_JSON is already normalized on the write path. */
+		assert(type != MP_JSON ||
+		       mp_verify_json(svp, buf + size, NULL) == JSON_NORM_OK);
 		buf += size;
 		mem->z = (char *)svp;
 		mem->n = buf - svp;
-		mem->type = MEM_TYPE_BIN;
+		mem->type = type == MP_JSON ? MEM_TYPE_JSON : MEM_TYPE_BIN;
 		mem->flags = MEM_Ephem;
 		break;
 	}
@@ -3117,6 +3223,7 @@ mem_to_mpstream(const struct Mem *var, struct mpstream *stream)
 		return;
 	case MEM_TYPE_ARRAY:
 	case MEM_TYPE_MAP:
+	case MEM_TYPE_JSON:
 		mpstream_memcpy(stream, var->z, var->n);
 		return;
 	case MEM_TYPE_BOOL:
@@ -3332,6 +3439,11 @@ port_vdbemem_dump_lua(struct port *base, struct lua_State *L, bool is_flat)
 			luamp_decode(L, luaL_msgpack_default,
 				     (const char **)&mem->z);
 			break;
+		case MEM_TYPE_JSON: {
+			const char *data = mem->z;
+			luamp_decode(L, luaL_msgpack_default, &data);
+			break;
+		}
 		case MEM_TYPE_NULL:
 			lua_pushnil(L);
 			break;
@@ -3490,7 +3602,12 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 				goto error;
 			}
 			uint32_t size = region_used(region) - used;
-			char *raw = xregion_join(region, size);
+			const char *raw = xregion_join(region, size);
+			uint32_t err_off = 0;
+			if (json_norm_handle(mp_verify_json(raw, raw + size,
+							    &err_off),
+					     err_off, "a Lua function") != 0)
+				goto error;
 			if (is_map)
 				mem_copy_map(&val[i], raw, size);
 			else
@@ -3507,6 +3624,17 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 				mem_set_datetime(&val[i], field.dateval);
 			} else if (field.ext_type == MP_INTERVAL) {
 				mem_set_interval(&val[i], field.interval);
+			} else if (field.ext_type == MP_JSON) {
+				uint32_t err_off = 0;
+				enum json_norm_status status =
+					json_verify(field.sval.data,
+						    field.sval.len, &err_off);
+				if (json_norm_handle(status, err_off,
+						     "a Lua function") != 0)
+					goto error;
+				mem_set_json_from_inner(&val[i],
+							field.sval.data,
+							field.sval.len);
 			} else {
 				diag_set(ClientError, ER_SQL_EXECUTE,
 					 "Unsupported type passed from Lua");
@@ -3619,11 +3747,21 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 			mem_copy_bin(&val[i], str, len);
 			break;
 		case MP_MAP:
-			mem_copy_map(&val[i], data, mp_value_size);
+		case MP_ARRAY: {
+			uint32_t size = mp_value_size;
+			bool is_map = mp_typeof(*data) == MP_MAP;
+			const char *raw = data;
+			uint32_t err_off = 0;
+			if (json_norm_handle(mp_verify_json(raw, raw + size,
+							    &err_off),
+					     err_off, "a C function") != 0)
+				goto error;
+			if (is_map)
+				mem_copy_map(&val[i], raw, size);
+			else
+				mem_copy_array(&val[i], raw, size);
 			break;
-		case MP_ARRAY:
-			mem_copy_array(&val[i], data, mp_value_size);
-			break;
+		}
 		case MP_EXT:
 			str = data;
 			int8_t type;
@@ -3670,6 +3808,26 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 					goto error;
 				}
 				val[i].type = MEM_TYPE_INTERVAL;
+				break;
+			} else if (type == MP_JSON) {
+				uint32_t max_size = mp_sizeof_json_len(len);
+				char *env = region_alloc(region, max_size);
+				if (env == NULL) {
+					diag_set(OutOfMemory, max_size,
+						 "region_alloc", "json");
+					goto error;
+				}
+				uint32_t env_size = mp_encode_json_normalized(
+					env, data, len, NULL);
+				if (env_size == 0) {
+					diag_set(ClientError,
+						 ER_INVALID_MSGPACK, "Invalid "
+						 "MP_JSON MsgPack format");
+					goto error;
+				}
+				data += len;
+				mem_copy_bytes(&val[i], env, env_size,
+					       MEM_TYPE_JSON);
 				break;
 			}
 			data += len;

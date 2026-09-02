@@ -158,6 +158,23 @@ tnt_json_normalize(const char *data, uint32_t len, char *out, char *out_end,
 		   uint32_t *err_off);
 
 /**
+ * Normalize @a data, one plain MessagePack value of @a len bytes, into an
+ * MP_EXT/MP_JSON envelope in @a buf, which needs mp_sizeof_json_len(@a len)
+ * bytes.
+ *
+ * One buffer, not two: normalization never grows a value, and the header is
+ * written at the width the normalized length turns out to need. Callers
+ * allocate that buffer their own way, hence no allocator here.
+ *
+ * @param[out] err_off offset of the innermost offending value, or NULL.
+ * @return the envelope size, or 0 when @a data is not a JSON value. Sets no
+ *         diag: the caller names the source in its message.
+ */
+uint32_t
+mp_encode_json_normalized(char *buf, const char *data, uint32_t len,
+			  uint32_t *err_off);
+
+/**
  * Verify every MP_JSON value in [@a data, @a end), at any depth and position,
  * including the fields of an MP_ERROR. Bounds-checked throughout, and a full
  * MessagePack well-formedness check of the range as a side effect, which is
@@ -192,17 +209,6 @@ struct region;
  */
 int
 mp_compare_json(struct json_norm a, struct json_norm b);
-
-#ifndef NDEBUG
-/**
- * Whether bytes that some caller is trusting really are in normal form. Not
- * present in release builds, on purpose: inside the cluster this is settled
- * once on the way in and never worked out again. Meant for use inside
- * assert(), so it must never be called for its side effects.
- */
-bool
-tnt_json_is_normalized(const char *data, uint32_t len);
-#endif /* NDEBUG */
 
 /**
  * Print a JSON inner value's canonical text into a buffer.

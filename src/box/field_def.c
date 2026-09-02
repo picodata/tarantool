@@ -82,6 +82,7 @@ const uint32_t field_mp_type[] = {
 	/* [FIELD_TYPE_INTERVAL] =  */ 0,
 	/* [FIELD_TYPE_ARRAY]    =  */ 1U << MP_ARRAY,
 	/* [FIELD_TYPE_MAP]      =  */ (1U << MP_MAP),
+	/* [FIELD_TYPE_JSON]     =  */ 0, /* only MP_EXT/MP_JSON is supported */
 };
 
 const uint32_t field_ext_type[] = {
@@ -101,6 +102,7 @@ const uint32_t field_ext_type[] = {
 	/* [FIELD_TYPE_INTERVAL]  = */ 1U << MP_INTERVAL,
 	/* [FIELD_TYPE_ARRAY]     = */ 0,
 	/* [FIELD_TYPE_MAP]       = */ 0,
+	/* [FIELD_TYPE_JSON]      = */ 1U << MP_JSON,
 };
 
 const char *field_type_strs[] = {
@@ -119,6 +121,7 @@ const char *field_type_strs[] = {
 	/* [FIELD_TYPE_INTERVAL] = */ "interval",
 	/* [FIELD_TYPE_ARRAY]    = */ "array",
 	/* [FIELD_TYPE_MAP]      = */ "map",
+	/* [FIELD_TYPE_JSON]     = */ "json",
 };
 
 const char *on_conflict_action_strs[] = {
@@ -143,22 +146,23 @@ field_type_by_name_wrapper(const char *str, uint32_t len)
  * values can be stored in the j type.
  */
 static const bool field_type_compatibility[] = {
-/*              ANY   UNSIGNED  STRING   NUMBER  DOUBLE  INTEGER  BOOLEAN VARBINARY SCALAR  DECIMAL   UUID   DATETIME INTERVAL  ARRAY    MAP   */
-/*   ANY    */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   false,  false,
-/* UNSIGNED */ true,   true,    false,   true,    false,   true,    false,   false,  true,   false,  false,   false,   false,   false,  false,
-/*  STRING  */ true,   false,   true,    false,   false,   false,   false,   false,  true,   false,  false,   false,   false,   false,  false,
-/*  NUMBER  */ true,   false,   false,   true,    false,   false,   false,   false,  true,   false,  false,   false,   false,   false,  false,
-/*  DOUBLE  */ true,   false,   false,   true,    true,    false,   false,   false,  true,   false,  false,   false,   false,   false,  false,
-/*  INTEGER */ true,   false,   false,   true,    false,   true,    false,   false,  true,   false,  false,   false,   false,   false,  false,
-/*  BOOLEAN */ true,   false,   false,   false,   false,   false,   true,    false,  true,   false,  false,   false,   false,   false,  false,
-/* VARBINARY*/ true,   false,   false,   false,   false,   false,   false,   true,   true,   false,  false,   false,   false,   false,  false,
-/*  SCALAR  */ true,   false,   false,   false,   false,   false,   false,   false,  true,   false,  false,   false,   false,   false,  false,
-/*  DECIMAL */ true,   false,   false,   true,    false,   false,   false,   false,  true,   true,   false,   false,   false,   false,  false,
-/*   UUID   */ true,   false,   false,   false,   false,   false,   false,   false,  true,   false,  true,    false,   false,   false,  false,
-/* DATETIME */ true,   false,   false,   false,   false,   false,   false,   false,  true,   false,  false,   true,    false,   false,  false,
-/* INTERVAL */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   true,    false,  false,
-/*   ARRAY  */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   true,   false,
-/*    MAP   */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   false,  true,
+/*              ANY   UNSIGNED  STRING   NUMBER  DOUBLE  INTEGER  BOOLEAN VARBINARY SCALAR  DECIMAL   UUID   DATETIME INTERVAL  ARRAY    MAP    JSON  */
+/*   ANY    */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   false,  false,  false,
+/* UNSIGNED */ true,   true,    false,   true,    false,   true,    false,   false,  true,   false,  false,   false,   false,   false,  false,  false,
+/*  STRING  */ true,   false,   true,    false,   false,   false,   false,   false,  true,   false,  false,   false,   false,   false,  false,  false,
+/*  NUMBER  */ true,   false,   false,   true,    false,   false,   false,   false,  true,   false,  false,   false,   false,   false,  false,  false,
+/*  DOUBLE  */ true,   false,   false,   true,    true,    false,   false,   false,  true,   false,  false,   false,   false,   false,  false,  false,
+/*  INTEGER */ true,   false,   false,   true,    false,   true,    false,   false,  true,   false,  false,   false,   false,   false,  false,  false,
+/*  BOOLEAN */ true,   false,   false,   false,   false,   false,   true,    false,  true,   false,  false,   false,   false,   false,  false,  false,
+/* VARBINARY*/ true,   false,   false,   false,   false,   false,   false,   true,   true,   false,  false,   false,   false,   false,  false,  false,
+/*  SCALAR  */ true,   false,   false,   false,   false,   false,   false,   false,  true,   false,  false,   false,   false,   false,  false,  false,
+/*  DECIMAL */ true,   false,   false,   true,    false,   false,   false,   false,  true,   true,   false,   false,   false,   false,  false,  false,
+/*   UUID   */ true,   false,   false,   false,   false,   false,   false,   false,  true,   false,  true,    false,   false,   false,  false,  false,
+/* DATETIME */ true,   false,   false,   false,   false,   false,   false,   false,  true,   false,  false,   true,    false,   false,  false,  false,
+/* INTERVAL */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   true,    false,  false,  false,
+/*   ARRAY  */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   true,   false,  false,
+/*    MAP   */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   false,  true,   false,
+/*   JSON   */ true,   false,   false,   false,   false,   false,   false,   false,  false,  false,  false,   false,   false,   false,  false,  true,
 };
 
 bool
@@ -188,22 +192,23 @@ field_type1_contains_type2(enum field_type type1, enum field_type type2)
 #define COL (-1)  /* pick the type of a column (1st or left arg) */
 #define ROW (+1)  /* pick the type of a row (2nd or right arg)   */
 static const uint8_t field_type_lookup_compatible[] = {
-/*              ANY   UNSIGNED  STRING   NUMBER  DOUBLE  INTEGER  BOOLEAN VARBINARY SCALAR  DECIMAL   UUID   DATETIME INTERVAL  ARRAY    MAP   */
-/*   ANY    */  COL,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,    ROW,    ROW,    ROW,     ROW,     ROW,     ROW,    ROW,
-/* UNSIGNED */  COL,     COL,       0,     COL,     COL,     COL,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,
-/*  STRING  */  COL,       0,     COL,       0,       0,       0,       0,       0,    COL,      0,      0,       0,       0,       0,      0,
-/*  NUMBER  */  COL,     ROW,       0,     COL,     ROW,     ROW,       0,       0,    COL,    ROW,      0,       0,       0,       0,      0,
-/*  DOUBLE  */  COL,     ROW,       0,     COL,     COL,     ROW,       0,       0,    COL,    ROW,      0,       0,       0,       0,      0,
-/*  INTEGER */  COL,     ROW,       0,     COL,     COL,     COL,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,
-/*  BOOLEAN */  COL,       0,       0,       0,       0,       0,     COL,       0,    COL,      0,      0,       0,       0,       0,      0,
-/* VARBINARY*/  COL,       0,       0,       0,       0,       0,       0,     COL,    COL,      0,      0,       0,       0,       0,      0,
-/*  SCALAR  */  COL,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,    COL,    ROW,    ROW,     ROW,       0,       0,      0,
-/*  DECIMAL */  COL,     ROW,       0,     COL,     COL,     ROW,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,
-/*   UUID   */  COL,       0,       0,       0,       0,       0,       0,       0,    COL,      0,    COL,       0,       0,       0,      0,
-/* DATETIME */  COL,       0,       0,       0,       0,       0,       0,       0,    COL,      0,      0,     COL,       0,       0,      0,
-/* INTERVAL */  COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,     COL,       0,      0,
-/*   ARRAY  */  COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,     COL,      0,
-/*    MAP   */  COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,       0,    COL,
+/*              ANY   UNSIGNED  STRING   NUMBER  DOUBLE  INTEGER  BOOLEAN VARBINARY SCALAR  DECIMAL   UUID   DATETIME INTERVAL  ARRAY    MAP    JSON  */
+/*   ANY    */ COL,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,    ROW,    ROW,    ROW,     ROW,     ROW,     ROW,    ROW,    ROW,
+/* UNSIGNED */ COL,     COL,       0,     COL,     COL,     COL,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,      0,
+/*  STRING  */ COL,       0,     COL,       0,       0,       0,       0,       0,    COL,      0,      0,       0,       0,       0,      0,      0,
+/*  NUMBER  */ COL,     ROW,       0,     COL,     ROW,     ROW,       0,       0,    COL,    ROW,      0,       0,       0,       0,      0,      0,
+/*  DOUBLE  */ COL,     ROW,       0,     COL,     COL,     ROW,       0,       0,    COL,    ROW,      0,       0,       0,       0,      0,      0,
+/*  INTEGER */ COL,     ROW,       0,     COL,     COL,     COL,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,      0,
+/*  BOOLEAN */ COL,       0,       0,       0,       0,       0,     COL,       0,    COL,      0,      0,       0,       0,       0,      0,      0,
+/* VARBINARY*/ COL,       0,       0,       0,       0,       0,       0,     COL,    COL,      0,      0,       0,       0,       0,      0,      0,
+/*  SCALAR  */ COL,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,     ROW,    COL,    ROW,    ROW,     ROW,       0,       0,      0,      0,
+/*  DECIMAL */ COL,     ROW,       0,     COL,     COL,     ROW,       0,       0,    COL,    COL,      0,       0,       0,       0,      0,      0,
+/*   UUID   */ COL,       0,       0,       0,       0,       0,       0,       0,    COL,      0,    COL,       0,       0,       0,      0,      0,
+/* DATETIME */ COL,       0,       0,       0,       0,       0,       0,       0,    COL,      0,      0,     COL,       0,       0,      0,      0,
+/* INTERVAL */ COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,     COL,       0,      0,      0,
+/*   ARRAY  */ COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,     COL,      0,      0,
+/*    MAP   */ COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,       0,    COL,      0,
+/*   JSON   */ COL,       0,       0,       0,       0,       0,       0,       0,      0,      0,      0,       0,       0,       0,      0,    COL,
 };
 #undef COL
 #undef ROW

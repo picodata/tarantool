@@ -38,6 +38,10 @@
 #include "mp_datetime.h"
 #include "mp_interval.h"
 #include "mp_compression.h"
+#include "mp_json.h"
+#include "error.h"
+#include "tt_static.h"
+#include "diag.h"
 
 static int
 msgpack_fprint_ext(FILE *file, const char **data, int depth)
@@ -58,6 +62,8 @@ msgpack_fprint_ext(FILE *file, const char **data, int depth)
 		return mp_fprint_compression(file, data, len);
 	case MP_INTERVAL:
 		return mp_fprint_interval(file, data, len);
+	case MP_JSON:
+		return mp_fprint_json(file, data, len);
 	default:
 		*data = orig;
 		return mp_fprint_ext_default(file, data, depth);
@@ -83,6 +89,8 @@ msgpack_snprint_ext(char *buf, int size, const char **data, int depth)
 		return mp_snprint_compression(buf, size, data, len);
 	case MP_INTERVAL:
 		return mp_snprint_interval(buf, size, data, len);
+	case MP_JSON:
+		return mp_snprint_json(buf, size, data, len);
 	default:
 		*data = orig;
 		return mp_snprint_ext_default(buf, size, data, depth);
@@ -107,6 +115,24 @@ msgpack_check_ext_data(int8_t type, const char *data, uint32_t len)
 	case MP_COMPRESSION:
 	default:
 		return mp_check_ext_data_default(type, data, len);
+	}
+}
+
+int
+json_norm_handle(enum json_norm_status rc, uint32_t err_off, const char *where)
+{
+	switch (rc) {
+	case JSON_NORM_OK:
+		return 0;
+	case JSON_NORM_REWRITABLE:
+		diag_set(ClientError, ER_JSON_NOT_NORMALIZED,
+			 (unsigned)err_off);
+		return -1;
+	default:
+		diag_set(ClientError, ER_INVALID_MSGPACK,
+			 tt_sprintf("invalid JSON value in %s at offset %u",
+				    where, (unsigned)err_off));
+		return -1;
 	}
 }
 

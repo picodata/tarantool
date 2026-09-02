@@ -54,9 +54,11 @@ enum mem_type {
 	MEM_TYPE_DEC		= 1 << 10,
 	MEM_TYPE_DATETIME	= 1 << 11,
 	MEM_TYPE_INTERVAL	= 1 << 12,
-	MEM_TYPE_INVALID	= 1 << 13,
-	MEM_TYPE_FRAME		= 1 << 14,
-	MEM_TYPE_PTR		= 1 << 15,
+	MEM_TYPE_JSON		= 1 << 13,
+	/* Value types stay below this boundary; the internal ones above it. */
+	MEM_TYPE_INVALID	= 1 << 14,
+	MEM_TYPE_FRAME		= 1 << 15,
+	MEM_TYPE_PTR		= 1 << 16,
 };
 
 /*
@@ -208,6 +210,12 @@ mem_is_array(const struct Mem *mem)
 }
 
 static inline bool
+mem_is_json(const struct Mem *mem)
+{
+	return mem->type == MEM_TYPE_JSON;
+}
+
+static inline bool
 mem_is_datetime(const struct Mem *mem)
 {
 	return mem->type == MEM_TYPE_DATETIME;
@@ -223,7 +231,8 @@ static inline bool
 mem_is_bytes(const struct Mem *mem)
 {
 	return (mem->type & (MEM_TYPE_BIN | MEM_TYPE_STR |
-			     MEM_TYPE_MAP | MEM_TYPE_ARRAY)) != 0;
+			     MEM_TYPE_MAP | MEM_TYPE_ARRAY |
+			     MEM_TYPE_JSON)) != 0;
 }
 
 static inline bool
@@ -507,6 +516,22 @@ mem_set_array_allocated(struct Mem *mem, char *value, size_t size);
 /** Copy ARRAY value to a newly allocated memory. The MEM type becomes ARRAY. */
 void
 mem_copy_array(struct Mem *mem, const char *value, size_t size);
+
+/**
+ * Clear MEM and set it to JSON. The binary value is static. The binary value
+ * must be a complete MP_EXT/MP_JSON value.
+ */
+void
+mem_set_json_static(struct Mem *mem, char *value, size_t size);
+
+/**
+ * Clear MEM and set it to JSON. The binary value was allocated by another
+ * object and passed to MEM. The binary value must be a complete MP_EXT/MP_JSON
+ * value. MEMs with this allocation type only deallocate the value on
+ * destruction.
+ */
+void
+mem_set_json_allocated(struct Mem *mem, char *value, size_t size);
 
 /** Clear MEM and set it to invalid state. */
 void

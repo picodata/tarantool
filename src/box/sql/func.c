@@ -36,6 +36,7 @@
  */
 #include "sqlInt.h"
 #include "mem.h"
+#include "mp_json.h"
 #include "port.h"
 #include "func.h"
 #include "vdbeInt.h"
@@ -1297,6 +1298,29 @@ func_uuid(struct sql_context *ctx, int argc, const struct Mem *argv)
 	mem_set_uuid(ctx->pOut, &uuid);
 }
 
+/**
+ * Implementation of the JSON_NULL() function.
+ *
+ * A JSON null is distinct from SQL NULL: SQL NULL means "no value" (IS NULL is
+ * true), JSON null is a present value whose content is the literal null (IS
+ * NULL is false).
+ */
+static void
+func_json_null(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 0);
+	(void)argc;
+	(void)argv;
+	/*
+	 * What mp_encode_json() emits for a one-byte nil payload: fixext1
+	 * (0xd4), subtype MP_JSON, MP_NIL (0xc0). A constant keeps the
+	 * function allocation- and branch-free.
+	 */
+	static const char json_null_mp[] = {(char)0xd4, MP_JSON, (char)0xc0};
+	mem_set_json_static(ctx->pOut, (char *)json_null_mp,
+			    sizeof(json_null_mp));
+}
+
 /** Implementation of the VERSION() function. */
 static void
 func_version(struct sql_context *ctx, int argc, const struct Mem *argv)
@@ -1745,7 +1769,8 @@ quoteFunc(struct sql_context *context, int argc, const struct Mem *argv)
 		break;
 	}
 	case MEM_TYPE_MAP:
-	case MEM_TYPE_ARRAY: {
+	case MEM_TYPE_ARRAY:
+	case MEM_TYPE_JSON: {
 		char *buf = NULL;
 		int size = mp_snprint(buf, 0, argv[0].z) + 1;
 		assert(size > 0);
@@ -2006,6 +2031,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"GROUP_CONCAT", 1, 2, SQL_FUNC_AGG, false, 0, NULL},
 	{"HEX", 1, 1, 0, true, 0, NULL},
 	{"IFNULL", 2, 2, SQL_FUNC_COALESCE, true, 0, NULL},
+	{"JSON_NULL", 0, 0, 0, true, 0, NULL},
 	{"LAST_VALUE", 1, 1, SQL_FUNC_WINDOW, false, 0, NULL},
 	{"LEAST", 2, SQL_MAX_FUNCTION_ARG, SQL_FUNC_NEEDCOLL, true, 0, NULL},
 	{"LENGTH", 1, 1, SQL_FUNC_LENGTH, true, 0, NULL},
@@ -2138,6 +2164,7 @@ static struct sql_func_definition definitions[] = {
 	 NULL, NULL},
 	{"IFNULL", 2, {field_type_MAX, field_type_MAX}, FIELD_TYPE_SCALAR,
 	 sql_builtin_stub, NULL, NULL, NULL},
+	{"JSON_NULL", 0, {}, FIELD_TYPE_JSON, func_json_null, NULL, NULL, NULL},
 
 	{"LAST_VALUE", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER,
 	 step_last_value, fin_last_value, value_last_value, inverse_last_value},
@@ -2376,7 +2403,8 @@ is_exact(int op, enum field_type a, enum field_type b)
  * Returns TRUE when:
  *  - is_exact() returns TRUE;
  *  - when accepted type is NUMBER and argument type is numeric type;
- *  - when accepted type is SCALAR and argument type is not MAP or ARRAY.
+ *  - when accepted type is SCALAR and argument type is not MAP, ARRAY,
+ *    INTERVAL or JSON.
  */
 static inline bool
 is_upcast(int op, enum field_type a, enum field_type b)
@@ -2384,7 +2412,8 @@ is_upcast(int op, enum field_type a, enum field_type b)
 	return is_exact(op, a, b) ||
 	       (a == FIELD_TYPE_NUMBER && sql_type_is_numeric(b)) ||
 	       (a == FIELD_TYPE_SCALAR && b != FIELD_TYPE_MAP &&
-		b != FIELD_TYPE_INTERVAL && b != FIELD_TYPE_ARRAY);
+		b != FIELD_TYPE_INTERVAL && b != FIELD_TYPE_ARRAY &&
+		b != FIELD_TYPE_JSON);
 }
 
 /**

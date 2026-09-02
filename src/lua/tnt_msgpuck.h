@@ -80,6 +80,23 @@ tnt_mp_encode_interval(char *data, const struct interval *itv);
 uint32_t
 tnt_mp_sizeof_interval(const struct interval *itv);
 
+/** Wrapper around mp_encode_json(). */
+char *
+tnt_mp_encode_json(char *data, const char *value, uint32_t value_len);
+
+/** Wrapper around mp_sizeof_json(). */
+uint32_t
+tnt_mp_sizeof_json(uint32_t data_len);
+
+/**
+ * Normal-form verdict on a JSON inner value of @a len bytes, as a flat int
+ * because an FFI cdef cannot spell enum json_norm_status: 0 OK, 1 REWRITABLE,
+ * 2 INVALID. The caller needs the two failures apart to say which mistake its
+ * producer made. @a err_off is optional.
+ */
+int
+tnt_mp_verify_json(const char *data, uint32_t len, uint32_t *err_off);
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */

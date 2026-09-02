@@ -553,6 +553,10 @@ sql_bind_array_static(sql_stmt *stmt, int i, const char *str, uint32_t size);
 int
 sql_bind_map_static(sql_stmt *stmt, int i, const char *str, uint32_t size);
 
+/** Bind a JSON value (a full MP_EXT/MP_JSON payload) by reference. */
+int
+sql_bind_json_static(sql_stmt *stmt, int i, const char *str, uint32_t size);
+
 int
 sql_bind_uuid(struct sql_stmt *stmt, int i, const struct tt_uuid *uuid);
 

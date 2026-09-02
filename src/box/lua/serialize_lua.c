@@ -34,6 +34,7 @@
 
 #include "trivia/util.h"
 #include "lua/utils.h"
+#include "core/fiber.h"
 #include "lua/serializer.h"
 #include "say.h"
 
@@ -867,6 +868,30 @@ dump_node(struct lua_dumper *d, struct node *nd, int indent)
 			len = interval_to_string(field->interval, buf,
 						 sizeof(buf));
 			break;
+		case MP_JSON: {
+			/*
+			 * Emitted as a quoted string, so a leading '{' or
+			 * '"' stays text rather than opening a table.
+			 */
+			struct region *region = &fiber()->gc;
+			size_t region_svp = region_used(region);
+			uint32_t sz;
+			const char *text =
+				luaT_json_tostring(field->sval.data,
+						   field->sval.len, &sz);
+			if (text == NULL) {
+				d->err = EINVAL;
+				snprintf(d->err_msg, sizeof(d->err_msg),
+					 "serializer: %s",
+					 diag_last_error(diag_get())->errmsg);
+				return -1;
+			}
+			nd->field.type = MP_STR;
+			nd->mask |= NODE_QUOTE;
+			int rc = emit_node(d, nd, indent, text, sz);
+			region_truncate(region, region_svp);
+			return rc;
+		}
 		default:
 			d->err = EINVAL;
 			snprintf(d->err_msg, sizeof(d->err_msg),

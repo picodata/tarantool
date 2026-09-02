@@ -49,6 +49,7 @@ extern "C" {
 } /* extern "C" */
 
 #include "base64.h"
+#include "core/fiber.h"
 #include "lua/utils.h"
 #include "lua/serializer.h"
 #include "lib/core/decimal.h"
@@ -687,6 +688,7 @@ static int dump_node(struct lua_yaml_dumper *dumper)
    yaml_event_t ev;
    yaml_scalar_style_t style = YAML_PLAIN_SCALAR_STYLE;
    int is_binary = 0;
+   size_t region_svp = region_used(&fiber()->gc);
    char buf[DT_IVAL_TO_STRING_BUFSIZE];
    struct luaL_field field;
    bool unused;
@@ -795,6 +797,28 @@ static int dump_node(struct lua_yaml_dumper *dumper)
          len = interval_to_string(field.interval, buf, sizeof(buf));
          str = buf;
          break;
+      case MP_JSON: {
+         /*
+          * The text may exceed buf, so it goes on the region, and it is
+          * quoted so a leading '{' or '"' stays a YAML string.
+          */
+         uint32_t sz;
+         const char *text = luaT_json_tostring(field.sval.data,
+                                               field.sval.len, &sz);
+         if (text == NULL) {
+            /*
+             * luaT_error() longjmps out of lua_yaml_encode() past both its
+             * normal and its error-label yaml_emitter_delete(), so free the
+             * emitter here or it leaks on every rejected JSON value.
+             */
+            yaml_emitter_delete(&dumper->emitter);
+            luaT_error(dumper->L);
+         }
+         str = text;
+         len = sz;
+         style = YAML_SINGLE_QUOTED_SCALAR_STYLE;
+         break;
+      }
       default:
          assert(0); /* checked by luaL_checkfield() */
       }
@@ -809,6 +833,7 @@ static int dump_node(struct lua_yaml_dumper *dumper)
 
    if (is_binary)
       free((void *)str);
+   region_truncate(&fiber()->gc, region_svp);
 
    return rc;
 }

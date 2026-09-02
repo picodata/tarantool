@@ -50,6 +50,7 @@
 #include "mp_uuid.h" /* mp_decode_uuid() */
 #include "mp_datetime.h"
 #include "mp_interval.h"
+#include "mp_json.h"
 #include "tt_static.h"
 
 #include "cord_buf.h"
@@ -123,6 +124,40 @@ luamp_error(void *error_ctx)
 
 struct luaL_serializer *luaL_msgpack_default = NULL;
 
+/*
+ * Return the bytes an msgpack.object holds, or NULL if the value at @a idx is
+ * not one. Every caller copies them straight through, so this is the one way
+ * MessagePack gets into an encoder without being encoded.
+ *
+ * That is why the places that copy such a range without checking it again can
+ * get away with it: only three things make an msgpack.object, and all three
+ * check first.
+ *
+ *   msgpack.object(value)         encodes through luamp_encode(), the same
+ *                                 path as msgpack.encode().
+ *   msgpack.object_from_raw(str)  walks the bytes with luamp_check_or_raise()
+ *                                 before the object exists.
+ *   luamp_push()                  wraps bytes this process already has: a
+ *                                 stored function's raw arguments and an
+ *                                 iproto override handler's header and body,
+ *                                 which xrow_header_decode() walked at the
+ *                                 network boundary, and a net.box response
+ *                                 body, required to be in normal form by the
+ *                                 peer contract and asserted in
+ *                                 netbox_transport_send_and_recv() in a debug
+ *                                 build.
+ *
+ * So JSON in a spliced range has been judged already, and a site that can only
+ * ever see spliced bytes is not the last look it would be if an object could
+ * be forged. Three rely on that and say so: the MAP/ARRAY bind in
+ * box/lua/execute.c, the MAP/ARRAY Lua function return in box/sql/mem.c, and
+ * the key in box/lua/key_def.c.
+ *
+ * The cost is stated where it is taken: a peer that breaks the contract in a
+ * release build can put a non-normal, or malformed, JSON value into an object
+ * through return_raw, and those three sites will pass it on. A fourth
+ * unchecked producer would invalidate all three at once.
+ */
 const char *
 luamp_get(struct lua_State *L, int idx, size_t *data_len)
 {
@@ -345,6 +380,29 @@ restart: /* used by MP_EXT of unidentified subtype */
 		case MP_INTERVAL:
 			mpstream_encode_interval(stream, field->interval);
 			break;
+		case MP_JSON: {
+			/*
+			 * Emits normal form or nothing, and does not establish
+			 * it: every producer of a JSON cdata already does (JSON
+			 * text through tnt_json_parse(); a SQL cast and a tuple
+			 * field read off values normal by storage's own
+			 * invariant). So bytes arriving here non-normal come
+			 * only from an ffi.new('struct mp_json', n) forgery or
+			 * a raw value the script decoded and chose not to fix.
+			 * Repairing those would repair on the producer's
+			 * behalf, and leave the encoder as the one place where
+			 * a wrong spelling is silently acceptable.
+			 */
+			struct json_norm value;
+			if (luaT_json_check(field->sval.data,
+					    field->sval.len, &value) != 0)
+				return -1;
+			uint32_t size = mp_sizeof_json(value);
+			char *ptr = mpstream_reserve(stream, size);
+			mp_encode_json(ptr, value);
+			mpstream_advance(stream, size);
+			break;
+		}
 		default:
 			data = luamp_get(L, top, &data_len);
 			if (data != NULL) {
@@ -517,6 +575,12 @@ luamp_decode(struct lua_State *L, struct luaL_serializer *cfg,
 				goto ext_decode_err;
 			return;
 		}
+		case MP_JSON:
+		{
+			luaT_pushjson(L, *data, len);
+			*data += len;
+			return;
+		}
 		default:
 			/* reset data to the extension header */
 			*data = svp;
@@ -576,6 +640,58 @@ lua_msgpack_encode(lua_State *L)
 	return 1;
 }
 
+/**
+ * Validate MP_EXT contents at the Lua boundary: the process-wide hook, plus the
+ * strict MP_JSON check the network uses. JSON is checked here, see
+ * doc/json-perimeter.md#lua-decode.
+ *
+ * The diag says which of the two mistakes it was, worded by
+ * luaT_json_check(), which every JSON check in src/lua reports through;
+ * mp_check_ext() only passes the -1 along.
+ */
+static int
+luamp_check_ext_data(int8_t type, const char *data, uint32_t len)
+{
+	if (type == MP_ERROR) {
+		/* The same reason as in msgpack_check_ext_data_strict(). */
+		const char *p = data;
+		if (mp_check_ext(&p, data + len, luamp_check_ext_data) != 0)
+			return 1;
+	}
+	if (type != MP_JSON)
+		return mp_check_ext_data(type, data, len);
+	return luaT_json_check(data, len, NULL);
+}
+
+/**
+ * Walk @a data with the hook above, raising whichever error it named. Returns
+ * only when the range is valid; both failure paths longjmp.
+ *
+ * What tells a JSON failure apart from a plain MessagePack one is whether the
+ * hook set a new error. The diag is not cleared for that, since it is what
+ * box.error.last() returns and a successful decode must leave it alone.
+ */
+static void
+luamp_check_or_raise(struct lua_State *L, const char *what, const char *data,
+		     const char *end, bool exact)
+{
+	/* Held so that a new error cannot reuse its address. */
+	struct error *last = diag_last_error(diag_get());
+	if (last != NULL)
+		error_ref(last);
+	const char *p = data;
+	bool ok = mp_check_ext(&p, end, luamp_check_ext_data) == 0 &&
+		  (!exact || p == end);
+	bool hook_failed = diag_last_error(diag_get()) != last;
+	if (last != NULL)
+		error_unref(last);
+	if (ok)
+		return;
+	if (hook_failed)
+		luaT_error(L);
+	luaL_error(L, "%s: invalid MsgPack", what);
+}
+
 static int
 lua_msgpack_decode_cdata(lua_State *L, bool check)
 {
@@ -591,9 +707,8 @@ lua_msgpack_decode_cdata(lua_State *L, bool check)
 			return luaL_error(L, "msgpack.decode: size can't be "\
 					  "negative");
 		}
-		const char *p = data;
-		if (mp_check(&p, data + data_len) != 0)
-			return luaL_error(L, "msgpack.decode: invalid MsgPack");
+		luamp_check_or_raise(L, "msgpack.decode", data,
+				     data + data_len, /*exact=*/false);
 	}
 	struct luaL_serializer *cfg = luaL_checkserializer(L);
 	luamp_decode(L, cfg, &data);
@@ -614,9 +729,8 @@ lua_msgpack_decode_string(lua_State *L, bool check)
 					  "offset is out of bounds");
 	}
 	if (check) {
-		const char *p = data + offset;
-		if (mp_check(&p, data + data_len) != 0)
-			return luaL_error(L, "msgpack.decode: invalid MsgPack");
+		luamp_check_or_raise(L, "msgpack.decode", data + offset,
+				     data + data_len, /*exact=*/false);
 	}
 	struct luaL_serializer *cfg = luaL_checkserializer(L);
 	const char *p = data + offset;
@@ -784,7 +898,8 @@ luamp_push_with_translation(struct lua_State *L, const char *data,
 	size_t data_len = data_end - data;
 	struct luamp_object *obj = luamp_new_object(L, data_len);
 	memcpy((char *)obj->data, data, data_len);
-	assert(mp_check(&data, data_end) == 0 && data == data_end);
+	assert(mp_check_ext(&data, data_end, luamp_check_ext_data) == 0 &&
+	       data == data_end);
 	obj->translation = translation;
 }
 
@@ -838,12 +953,9 @@ lua_msgpack_object_from_raw(struct lua_State *L)
 	default:
 		goto error;
 	}
-	const char *p = data;
 	const char *data_end = data + data_len;
-	if (mp_check(&p, data_end) != 0 || p != data_end) {
-		return luaL_error(L, "msgpack.object_from_raw: "
-				  "invalid MsgPack");
-	}
+	luamp_check_or_raise(L, "msgpack.object_from_raw", data, data_end,
+			     /*exact=*/true);
 	struct luamp_object *obj = luamp_new_object(L, data_len);
 	memcpy((char *)obj->data, data, data_len);
 	obj->cfg = luaL_checkserializer(L);

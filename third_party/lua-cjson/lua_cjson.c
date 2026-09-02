@@ -53,6 +53,7 @@
 #include "diag.h"
 #include "tt_static.h"
 #include "core/datetime.h"
+#include "core/fiber.h"
 #include "cord_buf.h"
 #include "tt_uuid.h" /* tt_uuid_to_string(), UUID_STR_LEN */
 
@@ -314,6 +315,23 @@ static void json_append_data(lua_State *l, struct luaL_serializer *cfg,
             char buf[DT_IVAL_TO_STRING_BUFSIZE];
             size_t sz = interval_to_string(field.interval, buf, sizeof(buf));
             return json_append_string(cfg, json, buf, sz);
+        }
+        case MP_JSON:
+        {
+            /*
+             * Render the canonical text inline, like a number, not as a
+             * quoted string.
+             */
+            struct region *region = &fiber()->gc;
+            size_t region_svp = region_used(region);
+            uint32_t sz;
+            const char *text = luaT_json_tostring(field.sval.data,
+                                                  field.sval.len, &sz);
+            if (text == NULL)
+                luaT_error(l);
+            strbuf_append_mem(json, text, sz);
+            region_truncate(region, region_svp);
+            return;
         }
         default:
             assert(false);

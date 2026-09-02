@@ -61,6 +61,29 @@ mp_sizeof_json_len(uint32_t len)
 	return mp_sizeof_ext(len);
 }
 
+/** See the contract in mp_json.h. */
+uint32_t
+mp_encode_json_normalized(char *buf, const char *data, uint32_t len,
+			  uint32_t *err_off)
+{
+	uint32_t max_size = mp_sizeof_json_len(len);
+	uint32_t max_hdr = max_size - len;
+	char *body = buf + max_hdr;
+	char *body_end = tnt_json_normalize(data, len, body, buf + max_size,
+					    err_off);
+	if (body_end == NULL)
+		return 0;
+	uint32_t body_len = (uint32_t)(body_end - body);
+	struct json_norm norm = json_norm_from_trusted(body, body_len);
+	uint32_t size = mp_sizeof_json(norm);
+	uint32_t hdr = size - body_len;
+	/* The header can only shrink. */
+	if (hdr != max_hdr)
+		memmove(buf + hdr, body, body_len);
+	mp_encode_extl(buf, MP_JSON, body_len);
+	return size;
+}
+
 uint32_t
 mp_sizeof_json(struct json_norm value)
 {
@@ -92,14 +115,6 @@ mp_decode_json(const char **data, uint32_t *len)
 	*len = l;
 	return value;
 }
-
-#ifndef NDEBUG
-bool
-tnt_json_is_normalized(const char *data, uint32_t len)
-{
-	return json_is_normalized(data, len);
-}
-#endif /* NDEBUG */
 
 char *
 tnt_json_normalize(const char *data, uint32_t len, char *out, char *out_end,

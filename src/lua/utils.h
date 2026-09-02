@@ -56,6 +56,9 @@ extern "C" {
 #include "lua/error.h"
 
 struct lua_State;
+struct region;
+
+#include "mp_json.h"
 struct ibuf;
 typedef struct ibuf box_ibuf_t;
 struct tt_uuid;
@@ -78,6 +81,59 @@ extern uint32_t CTID_UUID;
 extern uint32_t CTID_DATETIME;
 /** Type ID of struct interval. */
 extern uint32_t CTID_INTERVAL;
+/** Type ID of struct mp_json (the SQL JSON cdata). */
+extern uint32_t CTID_JSON;
+
+/**
+ * Push a new JSON cdata holding a copy of @a data, the inner value (plain
+ * MessagePack, without the MP_EXT/MP_JSON header).
+ */
+void
+luaT_pushjson(struct lua_State *L, const char *data, uint32_t len);
+
+/**
+ * The inner value of the JSON cdata at @a index, or NULL if it is not one.
+ *
+ * The bytes are the cdata's own and unverified, since a JSON cdata can be
+ * forged over FFI: every consumer runs them through luaT_json_check() first.
+ */
+const char *
+luaT_tojson(struct lua_State *L, int index, uint32_t *len);
+
+/**
+ * Check that a JSON inner value is in normal form, writing it to @a out, which
+ * points into @a data and may be NULL to ask only for the answer. It hands
+ * back a json_norm rather than a plain pointer and length, so code that needs
+ * normal form cannot be given raw bytes by mistake.
+ *
+ * Renderers call this as well as writers. One that fixed up its input would
+ * print a value the encoder beside it refuses, and the two would then disagree
+ * about the same cdata.
+ *
+ * This is where src/lua words the two failures, the way json_norm_handle()
+ * does for box: a LuajitError each, since the box error codes are out of reach
+ * here.
+ *
+ * @retval 0 on success, -1 with the diag set.
+ */
+int
+luaT_json_check(const char *data, uint32_t len, struct json_norm *out);
+
+/**
+ * Render a JSON inner value as its canonical text on the fiber region,
+ * NUL-terminated. The caller captures a region savepoint and reclaims it
+ * after using the text. Nothing is allocated on failure.
+ *
+ * It checks with luaT_json_check() first: the renderer assumes normal form,
+ * and a JSON cdata can be built by hand over FFI. Checking first is what makes
+ * printing a value and storing it agree about the same cdata. Every renderer
+ * above src/lua comes through here, so the reasoning sits in one place.
+ *
+ * @param[out] out_len the text length, not counting the terminating NUL.
+ * @return the text, or NULL with the diag set.
+ */
+const char *
+luaT_json_tostring(const char *data, uint32_t len, uint32_t *out_len);
 
 /**
  * Push vclock to the Lua stack as a plain Lua table.

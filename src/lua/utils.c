@@ -44,6 +44,9 @@
 #include "lj_trace.h"
 #include "lua/serializer.h"
 #include "trivia/util.h"
+#include "mp_json.h"
+#include "mp_json_norm.h"
+#include "tt_static.h"
 #include "vclock/vclock.h"
 
 int luaL_nil_ref = LUA_REFNIL;
@@ -58,6 +61,7 @@ uint32_t CTID_VARBINARY;
 uint32_t CTID_UUID;
 uint32_t CTID_DATETIME = 0;
 uint32_t CTID_INTERVAL = 0;
+uint32_t CTID_JSON = 0;
 
 /** A copy of index2adr() from luajit/src/lj_api.c. */
 static TValue *
@@ -158,22 +162,24 @@ luaT_pushvclock(struct lua_State *L, const struct vclock *vclock)
 }
 
 /*
- * Note: varbinary is a VLS object so we can't use luaL_pushcdata and
- * luaL_checkcdata helpers.
+ * Push a variable-length-struct (VLS) cdata of type @a ctypeid carrying a copy
+ * of @a data. varbinary and mp_json are both VLS objects, so neither can use
+ * luaL_pushcdata/luaL_checkcdata; they share this and differ only in ctypeid.
  */
-void
-luaT_pushvarbinary(struct lua_State *L, const char *data, uint32_t len)
+static void
+luaT_push_vls_cdata(struct lua_State *L, uint32_t ctypeid, const char *data,
+		    uint32_t len)
 {
-	assert(CTID_VARBINARY != 0);
+	assert(ctypeid != 0);
 	/* Calculate the cdata size. */
 	CTState *cts = ctype_cts(L);
-	CType *ct = ctype_raw(cts, CTID_VARBINARY);
+	CType *ct = ctype_raw(cts, ctypeid);
 	CTSize size;
-	CTInfo info = lj_ctype_info(cts, CTID_VARBINARY, &size);
+	CTInfo info = lj_ctype_info(cts, ctypeid, &size);
 	size = lj_ctype_vlsize(cts, ct, (CTSize)len);
 	assert(size != CTSIZE_INVALID);
 	/* Allocate a new cdata. */
-	GCcdata *cd = lj_cdata_newx(cts, CTID_VARBINARY, size, info);
+	GCcdata *cd = lj_cdata_newx(cts, ctypeid, size, info);
 	/* Anchor the uninitialized cdata with the stack. */
 	TValue *o = L->top;
 	setcdataV(L, o, cd);
@@ -183,21 +189,121 @@ luaT_pushvarbinary(struct lua_State *L, const char *data, uint32_t len)
 	lj_gc_check(L);
 }
 
-const char *
-luaT_tovarbinary(struct lua_State *L, int index, uint32_t *len)
+/** Return the VLS cdata payload at @a index if its type is @a ctypeid. */
+static const char *
+luaT_to_vls_cdata(struct lua_State *L, uint32_t ctypeid, int index,
+		  uint32_t *len)
 {
-	assert(CTID_VARBINARY != 0);
+	assert(ctypeid != 0);
 	TValue *o = index2adr(L, index);
 	if (!tviscdata(o))
 		return NULL;
 	GCcdata *cd = cdataV(o);
-	if (cd->ctypeid != CTID_VARBINARY)
+	if (cd->ctypeid != ctypeid)
 		return NULL;
 	CTSize size = cdatavlen(cd);
 	assert(size != CTSIZE_INVALID);
 	*len = size;
 	return cdataptr(cd);
 }
+
+void
+luaT_pushvarbinary(struct lua_State *L, const char *data, uint32_t len)
+{
+	luaT_push_vls_cdata(L, CTID_VARBINARY, data, len);
+}
+
+const char *
+luaT_tovarbinary(struct lua_State *L, int index, uint32_t *len)
+{
+	return luaT_to_vls_cdata(L, CTID_VARBINARY, index, len);
+}
+
+void
+luaT_pushjson(struct lua_State *L, const char *data, uint32_t len)
+{
+	luaT_push_vls_cdata(L, CTID_JSON, data, len);
+}
+
+const char *
+luaT_tojson(struct lua_State *L, int index, uint32_t *len)
+{
+	return luaT_to_vls_cdata(L, CTID_JSON, index, len);
+}
+
+int
+luaT_json_check(const char *data, uint32_t len, struct json_norm *out)
+{
+	/*
+	 * A JSON cdata can be built by hand with ffi.new(), so the encoders
+	 * refuse one out of normal form rather than fix it, see
+	 * doc/json-perimeter.md#cdata-contract. Only the JSON value is
+	 * checked, never the order of a Lua table around it.
+	 */
+	uint32_t err_off = 0;
+	switch (json_verify(data, len, &err_off)) {
+	case JSON_NORM_OK:
+		if (out != NULL)
+			*out = json_norm_from_trusted(data, len);
+		return 0;
+	case JSON_NORM_REWRITABLE:
+		diag_set(LuajitError,
+			 tt_sprintf("JSON value is not in normal form at "
+				    "offset %u", (unsigned)err_off));
+		return -1;
+	default:
+		diag_set(LuajitError, "Invalid JSON value");
+		return -1;
+	}
+}
+
+const char *
+luaT_json_tostring(const char *data, uint32_t len, uint32_t *out_len)
+{
+	struct json_norm norm;
+	if (luaT_json_check(data, len, &norm) != 0)
+		return NULL;
+	const char *p = norm.data;
+	int size = mp_snprint_json(NULL, 0, &p, norm.len);
+	if (size < 0) {
+		diag_set(LuajitError, "Failed to render JSON value");
+		return NULL;
+	}
+	char *buf = xregion_alloc(&fiber()->gc, size + 1);
+	p = norm.data;
+	mp_snprint_json(buf, size + 1, &p, norm.len);
+	*out_len = (uint32_t)size;
+	return buf;
+}
+
+/** __tostring for the JSON cdata: its canonical text. */
+static int
+lua_mp_json_tostring(struct lua_State *L)
+{
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+	uint32_t len;
+	const char *raw = luaT_tojson(L, 1, &len);
+	assert(raw != NULL);
+	uint32_t text_len;
+	const char *text = luaT_json_tostring(raw, len, &text_len);
+	if (text == NULL)
+		return luaT_error(L);
+	lua_pushlstring(L, text, text_len);
+	region_truncate(region, region_svp);
+	return 1;
+}
+
+/*
+ * Kept minimal on purpose: the cdata carries storage bytes back and forth and
+ * prints itself, nothing more. There is no __eq, __len or __serialize, so two
+ * cdata holding the same value still compare as different objects in Lua.
+ * Comparing and manipulating JSON is SQL's job.
+ */
+static const struct luaL_Reg lua_mp_json_methods[] = {
+	{"__tostring", lua_mp_json_tostring},
+	{NULL, NULL},
+};
 
 struct tt_uuid *
 luaT_newuuid(struct lua_State *L)
@@ -987,6 +1093,10 @@ tarantool_lua_utils_init(struct lua_State *L)
 	assert(rc == 0);
 	CTID_VARBINARY = luaL_ctypeid(L, "struct varbinary");
 	assert(CTID_VARBINARY != 0);
+	rc = luaL_cdef(L, "struct mp_json { char data[?]; };");
+	assert(rc == 0);
+	CTID_JSON = luaL_metatype(L, "struct mp_json", lua_mp_json_methods);
+	assert(CTID_JSON != 0);
 	rc = luaL_cdef(L, "struct tt_uuid {"
 				  "uint32_t time_low;"
 				  "uint16_t time_mid;"

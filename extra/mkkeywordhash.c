@@ -123,6 +123,7 @@ static Keyword aKeywordTable[] = {
   { "INTO",                   "TK_INTO",        true  },
   { "IS",                     "TK_IS",          true  },
   { "JOIN",                   "TK_JOIN",        true  },
+  { "JSON",                   "TK_JSON",        true  },
   { "KEY",                    "TK_KEY",         false },
   { "LEFT",                   "TK_JOIN_KW",     true  },
   { "LIKE",                   "TK_LIKE_KW",     true  },

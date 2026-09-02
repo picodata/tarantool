@@ -328,7 +328,7 @@ struct errcode_record {
 	/*273 */_(ER_SQL_STATEMENT_DUPLICATE,   "SQL statement %u already exists in the cache") \
 	/*274 */_(ER_UNCONFIGURED,		"Please call box.cfg{} first") \
 	/*275 */_(ER_UNUSED8,			"") \
-	/*276 */_(ER_UNUSED9,			"") \
+	/*276 */_(ER_JSON_NOT_NORMALIZED,	"JSON value is not in normal form at offset %u") \
 	/*277 */_(ER_INVALID_DEC,		"Invalid decimal: '%s'") \
 	/*278 */_(ER_IN_ANOTHER_PROMOTE,	"box.ctl.promote() is already running") \
 	/*279 */_(ER_UNUSED10,			"") \

@@ -58,6 +58,12 @@ struct datetime *
 tnt_datetime_unpack(const char **data, uint32_t len, struct datetime *date);
 struct interval *
 tnt_interval_unpack(const char **data, uint32_t len, struct interval *itv);
+uint32_t
+tnt_mp_sizeof_json(uint32_t data_len);
+char *
+tnt_mp_encode_json(char *data, const char *value, uint32_t value_len);
+int
+tnt_mp_verify_json(const char *data, uint32_t len, uint32_t *err_off);
 ]])
 
 local strict_alignment = (jit.arch == 'arm')
@@ -172,6 +178,24 @@ end
 local function encode_interval(buf, itv)
     local p = buf:alloc(builtin.tnt_mp_sizeof_interval(itv))
     builtin.tnt_mp_encode_interval(p, itv)
+end
+
+local const_char_ptr_t = ffi.typeof('const char *')
+local json_err_off = ffi.new('uint32_t[1]')
+-- JSON is checked here, see doc/json-perimeter.md#lua-ffi-encoder.
+local function encode_json(buf, json)
+    local len = ffi.sizeof(json)
+    local ptr = ffi.cast(const_char_ptr_t, json)
+    local rc = builtin.tnt_mp_verify_json(ptr, len, json_err_off)
+    if rc == 1 then
+        error(string.format(
+            "JSON value is not in normal form at offset %d",
+            json_err_off[0]))
+    elseif rc ~= 0 then
+        error("Invalid JSON value")
+    end
+    local p = buf:alloc(builtin.tnt_mp_sizeof_json(len))
+    builtin.tnt_mp_encode_json(p, ptr, len)
 end
 
 local function encode_int(buf, num)
@@ -379,6 +403,7 @@ on_encode(ffi.typeof('struct tt_uuid'), encode_uuid)
 on_encode(ffi.typeof('const struct error &'), encode_error)
 on_encode(ffi.typeof('struct datetime'), encode_datetime)
 on_encode(ffi.typeof('struct interval'), encode_interval)
+on_encode(ffi.typeof('struct mp_json'), encode_json)
 
 --------------------------------------------------------------------------------
 -- Decoder
@@ -607,6 +632,16 @@ local ext_decoder = {
         builtin.tnt_interval_unpack(data, len, itv)
         return itv
     end,
+    -- MP_JSON
+    [20] = function(data, len)
+        -- JSON is taken as is, see doc/json-perimeter.md#lua-tuple-field.
+        --
+        -- The cdata stores the inner value (no MP_EXT header).
+        local json = ffi.new("struct mp_json", len)
+        ffi.copy(json, data[0], len)
+        data[0] = data[0] + len
+        return json
+    end,
 }
 
 local function decode_ext(data)
@@ -738,7 +773,8 @@ return {
     encode = encode;
     on_encode = on_encode;
     decode_unchecked = decode_unchecked;
-    decode = decode_unchecked; -- just for tests
+    -- JSON is taken as is, see doc/json-perimeter.md#lua-decode-unchecked.
+    decode = decode_unchecked;
     internal = {
         encode_fix = encode_fix;
         encode_array = encode_array;

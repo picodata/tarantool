@@ -29,9 +29,13 @@
  * SUCH DAMAGE.
  */
 
+#include <assert.h>
+
 #include "msgpuck.h"
 #include "tnt_msgpuck.h"
 #include "mp_interval.h"
+#include "mp_json.h"
+#include "mp_json_norm.h"
 
 char *
 tnt_mp_encode_float(char *data, float num)
@@ -121,4 +125,28 @@ uint32_t
 tnt_mp_sizeof_interval(const struct interval *itv)
 {
 	return mp_sizeof_interval(itv);
+}
+
+char *
+tnt_mp_encode_json(char *data, const char *value, uint32_t value_len)
+{
+	/*
+	 * The only Lua caller has just checked these bytes, see
+	 * doc/json-perimeter.md#lua-ffi-encoder. The signature stays flat
+	 * because an FFI cdef cannot spell struct json_norm.
+	 */
+	assert(json_is_normalized(value, value_len));
+	return mp_encode_json(data, json_norm_from_trusted(value, value_len));
+}
+
+uint32_t
+tnt_mp_sizeof_json(uint32_t data_len)
+{
+	return mp_sizeof_json_len(data_len);
+}
+
+int
+tnt_mp_verify_json(const char *data, uint32_t len, uint32_t *err_off)
+{
+	return (int)json_verify(data, len, err_off);
 }

@@ -70,6 +70,7 @@ enum field_type {
 	FIELD_TYPE_INTERVAL,
 	FIELD_TYPE_ARRAY,
 	FIELD_TYPE_MAP,
+	FIELD_TYPE_JSON,
 	/* Currently, this may be used as "failed to infer type". */
 	field_type_MAX
 };
