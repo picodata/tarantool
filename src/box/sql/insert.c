@@ -508,6 +508,7 @@ sqlInsert(Parse * pParse,	/* Parser context */
 		}
 		sqlVdbeAddOp4(v, OP_OpenTEphemeral, reg_eph, 0, 0,
 			      (char *)info, P4_DYNAMIC);
+		sqlVdbeAddOp3(v, OP_IteratorOpen, srcTab, 0, reg_eph);
 		addrL = sqlVdbeAddOp1(v, OP_Yield, dest.iSDParm);
 		sqlVdbeAddOp2(v, OP_NextIdEphemeral, reg_eph,
 			      regCopy + nColumn);
@@ -536,7 +537,6 @@ sqlInsert(Parse * pParse,	/* Parser context */
 		 *         end loop
 		 *      D: ...
 		 */
-		sqlVdbeAddOp3(v, OP_IteratorOpen, srcTab, 0, reg_eph);
 		addrInsTop = sqlVdbeAddOp1(v, OP_Rewind, srcTab);
 		addrCont = sqlVdbeCurrentAddr(v);
 	} else if (pSelect) {
