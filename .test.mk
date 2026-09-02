@@ -89,9 +89,11 @@ CMAKE_PARAMS_ASAN = -DENABLE_WERROR=ON \
 #     file is used. It is set as a value for the `-fsanitize-blacklist` option at the build time in
 #     the cmake/profile.cmake file.
 #   - LSAN: to suppress failures of memory leak checks caught while tests run, the asan/lsan.supp
-#     file is used.
+#     file is used. A profile that needs a narrower set of suppressions
+#     overrides LSAN_SUPP, see test-debug-asan-sql.
+LSAN_SUPP ?= ${PWD}/asan/lsan.supp
 TEST_RUN_ENV_ASAN = ASAN=ON \
-                    LSAN_OPTIONS=suppressions=${PWD}/asan/lsan.supp \
+                    LSAN_OPTIONS=suppressions=${LSAN_SUPP} \
                     ASAN_OPTIONS=heap_profile=0:unmap_shadow_on_exit=1:$\
                                  detect_invalid_pointer_pairs=1:symbolize=1:$\
                                  detect_leaks=1:dump_instruction_bytes=1:$\
@@ -140,6 +142,48 @@ test-debug-asan: TEST_RUN_PARAMS += --test-timeout 620 \
                                     --server-start-timeout 610
 test-debug-asan: TEST_RUN_PARAMS += --long
 test-debug-asan: build run-luajit-test run-test
+
+# Debug ASAN build running the SQL leak reproducers only
+
+.PHONY: test-debug-asan-sql
+# The leak:lj_BC_FUNCC rule in asan/lsan.supp hides every leak whose
+# allocation stack is rooted in Lua, and that is the case for all leaks the
+# tests below reproduce: the LuaJIT assembly frame ends the unwinding, so
+# lj_BC_FUNCC is the terminal frame of an SQL leak stack. Drop just that line
+# into a build directory copy of the file; the tracked asan/lsan.supp is left
+# intact. The copy also suppresses the URI leaked by the luatest runner
+# itself, which the dropped rule used to hide as well. Until the instance
+# shutdown is complete (gh-3071) the run still reports unrelated leaks,
+# hence the job is non-blocking.
+LSAN_SUPP_SQL = ${PWD}/${BUILD_DIR}/lsan-sql.supp
+TEST_RUN_SQL_LEAK_TESTS = sql-luatest/sql_create_view_test.lua \
+                          sql-luatest/mem_destroy_empty_value_test.lua \
+                          sql-luatest/where_info_test.lua \
+                          sql-luatest/parser_space_delete_test.lua \
+                          sql-luatest/ephemeral_space_test.lua
+
+.PHONY: gen-lsan-supp-sql
+gen-lsan-supp-sql:
+	grep -vFx 'leak:lj_BC_FUNCC' asan/lsan.supp > ${LSAN_SUPP_SQL}
+	echo 'leak:luaT_netbox_new_transport' >> ${LSAN_SUPP_SQL}
+
+# Unlike the other ASAN profiles, this one enables neither the undefined
+# behaviour sanitizer nor the fuzzers. UBSan is built with
+# -fno-sanitize-recover, and the misaligned access to struct vy_stmt in
+# vy_stmt_set_lsn() aborts every instance at startup; the fuzzers are of
+# no use to the tests below.
+test-debug-asan-sql: CMAKE_PARAMS = -DENABLE_WERROR=ON \
+                                    -DENABLE_ASAN=ON \
+                                    -DTEST_BUILD=ON \
+                                    -DCMAKE_BUILD_TYPE=Debug \
+                                    -DFIBER_STACK_SIZE=1280Kb
+test-debug-asan-sql: LSAN_SUPP = ${LSAN_SUPP_SQL}
+test-debug-asan-sql: TEST_RUN_ENV = ${TEST_RUN_ENV_ASAN}
+test-debug-asan-sql: TEST_RUN_PARAMS += --test-timeout 620 \
+                                        --no-output-timeout 630 \
+                                        --server-start-timeout 610
+test-debug-asan-sql: TEST_RUN_EXTRA_PARAMS += ${TEST_RUN_SQL_LEAK_TESTS}
+test-debug-asan-sql: build gen-lsan-supp-sql run-test
 
 # Debug build
 

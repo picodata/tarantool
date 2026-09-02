@@ -156,6 +156,19 @@ test-ubuntu-asan:
     CC: clang-18
   when: manual
 
+# Runs the known SQL leak reproducers under LSan with the leak:lj_BC_FUNCC
+# suppression dropped, see test-debug-asan-sql in .test.mk. Non-blocking
+# until the instance shutdown is complete, since the reports still contain
+# unrelated Lua/LSan noise.
+test-ubuntu-lsan-sql:
+  extends:
+    - .test-ubuntu
+  variables:
+    BUILD_PROFILE: debug-asan-sql
+    CXX: clang++-18
+    CC: clang-18
+  allow_failure: true
+
 test-mac-m1:
     extends: .test
     tags: [mac-dev-m1]
