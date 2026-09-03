@@ -156,15 +156,15 @@ test-ubuntu-asan:
     CC: clang-18
   when: manual
 
-# Runs the known SQL leak reproducers under LSan with the leak:lj_BC_FUNCC
-# suppression dropped, see test-debug-asan-sql in .test.mk. Non-blocking
-# until the instance shutdown is complete, since the reports still contain
+# Runs the known leak reproducers under LSan with the leak:lj_BC_FUNCC
+# suppression dropped, see test-debug-lsan in .test.mk. Non-blocking until
+# the instance shutdown is complete, since the reports still contain
 # unrelated Lua/LSan noise.
-test-ubuntu-lsan-sql:
+test-ubuntu-lsan:
   extends:
     - .test-ubuntu
   variables:
-    BUILD_PROFILE: debug-asan-sql
+    BUILD_PROFILE: debug-lsan
     CXX: clang++-18
     CC: clang-18
   allow_failure: true
@@ -326,4 +326,3 @@ build-docker-on-tag:
     PUSH_DOCKER: ""
     DOCKERFILE: docker/Dockerfile.release
     DESTINATION: $DOCKER_REGISTRY_PUB/tarantool:latest --destination $DOCKER_REGISTRY_PUB/tarantool:$CI_COMMIT_TAG
-
