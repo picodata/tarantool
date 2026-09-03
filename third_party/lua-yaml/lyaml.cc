@@ -84,6 +84,8 @@ struct lua_yaml_dumper {
    unsigned int anchor_number;
    yaml_emitter_t emitter;
    char error;
+   /** Set when the error to raise is in the diagnostics area. */
+   char diag_error;
    /** Global tag to label the result document by. */
    yaml_tag_directive_t begin_tag;
    /**
@@ -597,6 +599,17 @@ usage_error:
 
 static int dump_node(struct lua_yaml_dumper *dumper);
 
+/**
+ * Record an error left in the diagnostics area by the serializer. It is
+ * raised by lua_yaml_encode() once the emitter has been destroyed: raising
+ * it right here would unwind the stack past yaml_emitter_delete().
+ */
+static int dump_diag_error(struct lua_yaml_dumper *dumper) {
+   dumper->error = 1;
+   dumper->diag_error = 1;
+   return 0;
+}
+
 static yaml_char_t *get_yaml_anchor(struct lua_yaml_dumper *dumper) {
    if (lua_type(dumper->L, -1) != LUA_TTABLE)
       return NULL;
@@ -622,8 +635,10 @@ static yaml_char_t *get_yaml_anchor(struct lua_yaml_dumper *dumper) {
       yaml_event_t ev;
       const char *str = lua_tostring(dumper->L, -1);
       if (!yaml_alias_event_initialize(&ev, (yaml_char_t *) str) ||
-          !yaml_emitter_emit(&dumper->emitter, &ev))
-         luaL_error(dumper->L, OOM_ERRMSG);
+          !yaml_emitter_emit(&dumper->emitter, &ev)) {
+         dumper->error = 1;
+         return NULL;
+      }
       lua_pop(dumper->L, 1);
    }
    return (yaml_char_t *)s;
@@ -719,11 +734,21 @@ static int dump_node(struct lua_yaml_dumper *dumper)
 
    luaT_reftable_serialize(dumper->L, dumper->reftable_index);
    yaml_char_t *anchor = get_yaml_anchor(dumper);
+   if (dumper->error)
+      return 0;
    if (anchor && !*anchor)
       return 1;
 
    int top = lua_gettop(dumper->L);
-   luaL_checkfield(dumper->L, dumper->cfg, top, &field);
+   /*
+    * luaL_checkfield() would raise the error of the serializer, in
+    * particular the one thrown by a __serialize hook, right here.
+    */
+   if (luaL_tofield(dumper->L, dumper->cfg, top, &field) < 0)
+      return dump_diag_error(dumper);
+   if (field.type == MP_EXT && field.ext_type == MP_UNKNOWN_EXTENSION &&
+       luaL_convertfield(dumper->L, dumper->cfg, top, &field) != 0)
+      return dump_diag_error(dumper);
    switch(field.type) {
    case MP_UINT:
       snprintf(buf, sizeof(buf) - 1, "%" PRIu64, field.ival);
@@ -924,12 +949,26 @@ lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,
       dumper.end_tag = &dumper.begin_tag;
    dumper.cfg = serializer;
    dumper.error = 0;
+   dumper.diag_error = 0;
    /* create thread to use for YAML buffer */
    dumper.outputL = luaT_newthread(L);
    if (dumper.outputL == NULL) {
       return luaL_error(L, OOM_ERRMSG);
    }
    luaL_buffinit(dumper.outputL, &dumper.yamlbuf);
+
+   /*
+    * Both tables are built before the emitter is created:
+    * luaT_reftable_new() serializes the whole object graph and raises the
+    * error of the serializer, which would unwind past
+    * yaml_emitter_delete().
+    */
+   lua_newtable(L);
+   dumper.anchortable_index = lua_gettop(L);
+   dumper.anchor_number = 0;
+
+   luaT_reftable_new(L, dumper.cfg, 1);
+   dumper.reftable_index = lua_gettop(L);
 
    if (!yaml_emitter_initialize(&dumper.emitter))
       goto error;
@@ -943,13 +982,6 @@ lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,
    if (!yaml_stream_start_event_initialize(&ev, YAML_UTF8_ENCODING) ||
        !yaml_emitter_emit(&dumper.emitter, &ev))
       goto error;
-
-   lua_newtable(L);
-   dumper.anchortable_index = lua_gettop(L);
-   dumper.anchor_number = 0;
-
-   luaT_reftable_new(L, dumper.cfg, 1);
-   dumper.reftable_index = lua_gettop(L);
 
    lua_pushvalue(L, 1); /* push copy of arg we're processing */
    find_references(&dumper);
@@ -975,6 +1007,10 @@ lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,
    return 1;
 
 error:
+   if (dumper.diag_error) {
+      yaml_emitter_delete(&dumper.emitter);
+      return luaT_error(L);
+   }
    if (dumper.emitter.error == YAML_NO_ERROR ||
        dumper.emitter.error == YAML_MEMORY_ERROR) {
       yaml_emitter_delete(&dumper.emitter);
