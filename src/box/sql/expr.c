@@ -4030,6 +4030,13 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 					pParse->is_aborted = true;
 					break;
 				}
+				/*
+				 * Preserve the selected value's runtime type
+				 * and metatype flags. The inferred expression
+				 * type is used for planning and metadata only;
+				 * it does not require a cast of the selected
+				 * value here.
+				 */
 				sqlExprCode(pParse, pFarg->a[0].pExpr,
 						target);
 				for (i = 1; i < nFarg; i++) {
@@ -4044,18 +4051,6 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 					sqlExprCachePop(pParse);
 				}
 				sqlVdbeResolveLabel(v, endCoalesce);
-				/*
-				 * A parse-only SQL_EXPR has unresolved
-				 * types. Keep the selected value's runtime
-				 * type in that case.
-				 */
-				if (!ExprHasProperty(pExpr, EP_Resolved))
-					break;
-				enum field_type *type =
-					sql_xmalloc0(sizeof(*type));
-				type[0] = sql_expr_type(pExpr);
-				sqlVdbeAddOp4(v, OP_ApplyType, target, 1, 0,
-					      (char *)type, P4_DYNAMIC);
 				break;
 			}
 
