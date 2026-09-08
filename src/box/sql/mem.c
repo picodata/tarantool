@@ -765,26 +765,23 @@ static inline int
 str_to_bool(struct Mem *mem)
 {
 	assert(mem->type == MEM_TYPE_STR);
-	char *str = mem->z;
+	const char *str = mem->z;
 	size_t len = mem->n;
-	bool b;
-	const char *str_true = "TRUE";
-	const char *str_false = "FALSE";
-	size_t len_true = strlen(str_true);
-	size_t len_false = strlen(str_false);
 
-	for (; isspace(str[0]); str++, len--);
-	for (; isspace(str[len - 1]); len--);
-	if (len != len_true && len != len_false)
-		return -1;
+	while (len > 0 && sqlIsspace(str[0])) {
+		++str;
+		--len;
+	}
+	while (len > 0 && sqlIsspace(str[len - 1])) {
+		--len;
+	}
 
-	if (len == len_true && strncasecmp(str, str_true, len) == 0)
-		b = true;
-	else if (len == len_false && strncasecmp(str, str_false, len) == 0)
-		b = false;
+	if (len == 4 && sql_strnicmp(str, "TRUE", len) == 0)
+		mem_set_bool(mem, true);
+	else if (len == 5 && sql_strnicmp(str, "FALSE", len) == 0)
+		mem_set_bool(mem, false);
 	else
 		return -1;
-	mem_set_bool(mem, b);
 	return 0;
 }
 

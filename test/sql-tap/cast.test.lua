@@ -1,7 +1,7 @@
 #!/usr/bin/env tarantool
 require('compat').binary_data_decoding = 'new'
 local test = require("sqltester")
-test:plan(110)
+test:plan(113)
 
 --!./tcltestrunner.lua
 -- 2005 June 25
@@ -1016,6 +1016,34 @@ test:do_execsql_test(
         SELECT CAST(substr('true       ', 0, 6) AS BOOLEAN);
     ]], {
         true
+    })
+
+-- Make sure that a blank string cannot be cast to BOOLEAN. Prior to the fix,
+-- trimming of the surrounding whitespace read past the end of the string.
+test:do_catchsql_test(
+    "cast-8.1",
+    [[
+        SELECT CAST('' AS BOOLEAN);
+    ]], {
+        1, "Type mismatch: can not convert string('') to boolean"
+    })
+
+test:do_catchsql_test(
+    "cast-8.2",
+    [[
+        SELECT CAST(substr('   ', 0, 4) AS BOOLEAN);
+    ]], {
+        1, "Type mismatch: can not convert string('   ') to boolean"
+    })
+
+-- Unlike a literal, the result of a concatenation lives in a freshly
+-- allocated buffer which is not NUL-terminated.
+test:do_catchsql_test(
+    "cast-8.3",
+    [[
+        SELECT CAST('' || '' AS BOOLEAN);
+    ]], {
+        1, "Type mismatch: can not convert string('') to boolean"
     })
 
 -- Make sure that implicit conversion of numeric values is precise.
