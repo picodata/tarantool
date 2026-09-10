@@ -3218,6 +3218,16 @@ on_replace_dd_user(struct trigger * /* trigger */, void *event)
 		if (access_check_ddl(user->name, user->uid, user->uid,
 				 old_user->def->type, BOX_PRIVILEGE_ALTER) != 0)
 			return -1;
+		/*
+		 * A user and a role are kept apart: only a user
+		 * owns an authentication token, and the cache
+		 * entry of one cannot become the other in place.
+		 */
+		if (user->type != old_user->def->type) {
+			diag_set(ClientError, ER_UNSUPPORTED, "user",
+				 "type change");
+			return -1;
+		}
 		try {
 			user_cache_replace(user);
 		} catch (Exception *e) {

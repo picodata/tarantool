@@ -233,3 +233,50 @@ g.test_sql_drop_revokes_grants = function(cg)
         t.assert_equals(box.space._priv.index.object:select{'space', id}, {})
     end)
 end
+
+--
+-- A role never acts, so it holds no authentication token and
+-- does not count against the limit on users. Roles beyond that
+-- limit can be created, granted and granted onwards.
+--
+g.test_roles_are_not_bounded_by_the_user_limit = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        local n = 300
+        for i = 1, n do
+            box.schema.role.create('many' .. i)
+        end
+        -- Every one of them carries a grant, and the last one
+        -- hands the lot to a user through a chain of two.
+        local s = box.schema.space.create('t')
+        s:create_index('pk')
+        s:insert{1}
+        box.schema.role.grant('many1', 'read', 'space', 't')
+        for i = 2, n do
+            box.schema.role.grant('many' .. i, 'many' .. (i - 1))
+        end
+        box.schema.user.create('many_user')
+        box.schema.user.grant('many_user', 'many' .. n)
+
+        box.session.su('many_user', function()
+            t.assert_equals(box.space.t:select{1}, {{1}})
+        end)
+    end)
+end
+
+--
+-- A user owns an authentication token and a role does not, so
+-- the cache keeps them in different places. Turning one into
+-- the other would leave the entry in the wrong one.
+--
+g.test_the_type_of_a_user_cannot_change = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        box.schema.role.create('shifty')
+        local tuple = box.space._user.index.name:get('shifty')
+        local err = {type = 'ClientError', code = box.error.UNSUPPORTED}
+        t.assert_error_covers(err, box.space._user.update, box.space._user,
+                              {tuple[1]}, {{'=', 4, 'user'}})
+        t.assert_equals(box.space._user.index.name:get('shifty')[4], 'role')
+    end)
+end

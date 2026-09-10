@@ -299,22 +299,58 @@ rb_gen(, privset_, privset_t, struct priv_def, link, priv_def_compare);
 
 /** {{{ user */
 
-static void
-user_create(struct user *user, uint8_t auth_token)
+/**
+ * A role never acts, so it holds no authentication token: it
+ * indexes nothing and lives outside the users[] array.
+ */
+static inline bool
+user_is_role(const struct user *user)
 {
-	assert(user->auth_token == 0);
-	user->auth_token = auth_token;
+	return user->def->type == BOX_SC_ROLE;
+}
+
+/** Take a free authentication token. */
+static uint8_t
+auth_token_get(void);
+
+/** Give an authentication token back. */
+static void
+auth_token_put(uint8_t auth_token);
+
+/**
+ * Make a cache entry. A user is looked up by its authentication
+ * token, so it lives in the array the token indexes; a role
+ * takes no token and is allocated on its own.
+ */
+static struct user *
+user_new(enum box_schema_object_type type)
+{
+	struct user *user;
+	if (type == BOX_SC_ROLE) {
+		user = (struct user *)xcalloc(1, sizeof(*user));
+		user->auth_token = BOX_USER_MAX;
+	} else {
+		uint8_t auth_token = auth_token_get();
+		user = users + auth_token;
+		assert(user->auth_token == 0);
+		user->auth_token = auth_token;
+	}
 	user_set_create(&user->users);
 	user_set_create(&user->roles);
 	access_map_create(&user->access);
 	privset_new(&user->privs);
 	region_create(&user->pool, &cord()->slabc);
 	rlist_create(&user->credentials_list);
+	return user;
 }
 
+/** Release a cache entry and whatever it was made of. */
 static void
-user_destroy(struct user *user)
+user_delete(struct user *user)
 {
+	bool is_role = user_is_role(user);
+	if (!is_role)
+		auth_token_put(user->auth_token);
 	while (!rlist_empty(&user->credentials_list))
 		rlist_shift(&user->credentials_list);
 	/*
@@ -329,6 +365,8 @@ user_destroy(struct user *user)
 	region_destroy(&user->pool);
 	user_def_delete(user->def);
 	memset(user, 0, sizeof(*user));
+	if (is_role)
+		free(user);
 }
 
 /**
@@ -438,6 +476,9 @@ access_effective(enum box_schema_object_type object_type, uint32_t object_id,
 static void
 user_set_effective_access(struct user *user)
 {
+	/* A role keeps no slot on an object. */
+	if (user_is_role(user))
+		return;
 	struct privset_iterator it;
 	privset_ifirst(&user->privs, &it);
 	struct priv_def *priv;
@@ -570,6 +611,9 @@ next_tuple:
 	}
 	user_set_effective_access(user);
 	user->is_dirty = false;
+	/* A role has no token, so no slot in the universe. */
+	if (user_is_role(user))
+		return 0;
 	struct credentials *creds;
 	box_user_access_mask_t new_access =
 		universe.access[user->auth_token].effective;
@@ -611,7 +655,7 @@ static int min_token_idx = 0;
  * Raise an exception when the maximal number of users
  * is reached (and we're out of tokens).
  */
-uint8_t
+static uint8_t
 auth_token_get(void)
 {
 	uint8_t bit_no = 0;
@@ -643,7 +687,7 @@ auth_token_get(void)
  * Return an authentication token to the set of unused
  * tokens.
  */
-void
+static void
 auth_token_put(uint8_t auth_token)
 {
 	uint8_t bit_no;
@@ -662,9 +706,7 @@ user_cache_replace(struct user_def *def)
 {
 	struct user *user = user_by_id(def->uid);
 	if (user == NULL) {
-		uint8_t auth_token = auth_token_get();
-		user = users + auth_token;
-		user_create(user, auth_token);
+		user = user_new(def->type);
 		struct mh_i32ptr_node_t node = { def->uid, user };
 		mh_i32ptr_put(user_registry, &node, NULL, NULL);
 	} else {
@@ -681,11 +723,10 @@ user_cache_delete(uint32_t uid)
 	if (k != mh_end(user_registry)) {
 		struct user *user = (struct user *)
 			mh_i32ptr_node(user_registry, k)->val;
-		assert(user->auth_token > ADMIN);
-		auth_token_put(user->auth_token);
 		assert(user_set_is_empty(&user->roles));
 		assert(user_set_is_empty(&user->users));
-		user_destroy(user);
+		assert(user_is_role(user) || user->auth_token > ADMIN);
+		user_delete(user);
 		/*
 		 * Sic: we don't have to remove a deleted
 		 * user from users hash of roles, since
@@ -710,19 +751,12 @@ struct user *
 user_find(uint32_t uid)
 {
 	struct user *user = user_by_id(uid);
-	if (user != NULL && user->def->type == BOX_SC_USER)
+	if (user != NULL && !user_is_role(user))
 		return user;
 	/* Name the role rather than the id the caller had. */
 	diag_set(ClientError, ER_NO_SUCH_USER,
 		 user != NULL ? user->def->name : int2str(uid));
 	return NULL;
-}
-
-/* Find a user by authentication token. */
-struct user *
-user_find_by_token(uint8_t auth_token)
-{
-    return &users[auth_token];
 }
 
 /** Find user by name. */
@@ -734,7 +768,7 @@ user_find_by_name(const char *name, uint32_t len)
 		return NULL;
 	if (uid != BOX_ID_NIL) {
 		struct user *user = user_by_id(uid);
-		if (user != NULL && user->def->type == BOX_SC_USER)
+		if (user != NULL && !user_is_role(user))
 			return user;
 	}
 	diag_set(ClientError, ER_NO_SUCH_USER,
@@ -798,8 +832,15 @@ user_cache_init(void)
 void
 user_cache_free(void)
 {
-	if (user_registry)
-		mh_i32ptr_delete(user_registry);
+	if (user_registry == NULL)
+		return;
+	mh_int_t i;
+	mh_foreach(user_registry, i) {
+		user_delete((struct user *)
+			    mh_i32ptr_node(user_registry, i)->val);
+	}
+	mh_i32ptr_delete(user_registry);
+	user_registry = NULL;
 }
 
 /* }}} user cache */
@@ -1023,18 +1064,21 @@ int
 priv_grant(struct user *grantee, struct priv_def *priv,
 	   struct txn_stmt *rolled_back_stmt)
 {
-	struct access *access = access_slot(priv->object_type, priv->object_id,
-					    grantee->auth_token);
-	if (access == NULL)
-		return 0;
-	if (grantee->auth_token == ADMIN &&
-	    priv->object_type == BOX_SC_UNIVERSE &&
-	    priv->access != USER_ACCESS_FULL) {
-		diag_set(ClientError, ER_GRANT,
-			 "can't revoke universe from the admin user");
-		return -1;
+	if (!user_is_role(grantee)) {
+		struct access *access = access_slot(priv->object_type,
+						    priv->object_id,
+						    grantee->auth_token);
+		if (access == NULL)
+			return 0;
+		if (grantee->auth_token == ADMIN &&
+		    priv->object_type == BOX_SC_UNIVERSE &&
+		    priv->access != USER_ACCESS_FULL) {
+			diag_set(ClientError, ER_GRANT,
+				 "can't revoke universe from the admin user");
+			return -1;
+		}
+		access->granted = priv->access;
 	}
-	access->granted = priv->access;
 	if (rebuild_effective_grants(grantee, rolled_back_stmt) != 0)
 		return -1;
 	return 0;
@@ -1046,7 +1090,7 @@ void
 credentials_create(struct credentials *cr, struct user *user)
 {
 	/* Nothing runs as a role, so nothing caches one. */
-	assert(user->def->type == BOX_SC_USER);
+	assert(!user_is_role(user));
 	cr->auth_token = user->auth_token;
 	cr->universal_access =
 		universe.access[user->auth_token].effective;
