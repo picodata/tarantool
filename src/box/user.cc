@@ -47,8 +47,6 @@ static struct user users[BOX_USER_MAX];
 struct user *guest_user = users;
 struct user *admin_user = users + 1;
 
-static struct user_map user_map_nil;
-
 struct mh_i32ptr_t *user_registry;
 
 enum {
@@ -143,6 +141,42 @@ user_map_calc_idx(uint8_t auth_token, uint8_t *bit_no)
 	return auth_token / UMAP_INT_BITS;
 }
 
+/** Initialize an empty map. */
+static inline void
+user_map_create(struct user_map *map)
+{
+	memset(map->m, 0, sizeof(map->m));
+}
+
+/** Release the resources the map holds. */
+static inline void
+user_map_destroy(struct user_map *map)
+{
+	(void)map;
+}
+
+/** Remove all the members of the map. */
+static inline void
+user_map_reset(struct user_map *map)
+{
+	memset(map->m, 0, sizeof(map->m));
+}
+
+/** Replace the contents of the left map with a copy of the right one. */
+static inline void
+user_map_copy(struct user_map *lhs, struct user_map *rhs)
+{
+	memcpy(lhs->m, rhs->m, sizeof(lhs->m));
+}
+
+/** Exchange the contents of the two maps. */
+static inline void
+user_map_swap(struct user_map *lhs, struct user_map *rhs)
+{
+	struct user_map tmp = *lhs;
+	*lhs = *rhs;
+	*rhs = tmp;
+}
 
 /** Set a bit in the user map - add a user. */
 static inline void
@@ -217,7 +251,7 @@ user_map_add_users(struct user_map *map, struct user_set *set)
 static void
 user_map_copy_users(struct user_map *map, struct user_set *set)
 {
-	*map = user_map_nil;
+	user_map_reset(map);
 	user_map_add_users(map, set);
 }
 
@@ -744,39 +778,87 @@ user_cache_free(void)
 
 /** {{{ roles */
 
-int
-role_check(struct user *grantee, struct user *role)
+/**
+ * A handle on the role graph, whose edges are the role grants
+ * kept in every user. It holds the sets a traversal builds, so
+ * that they are taken and given back once and the traversals
+ * themselves own no resources.
+ */
+struct role_graph {
+	/** The nodes a traversal has already passed. */
+	struct user_map closure;
+	/** The nodes of the layer being visited. */
+	struct user_map current;
+	/** The nodes to visit in the next layer. */
+	struct user_map next;
+	/** The nodes of the current layer left for a later round. */
+	struct user_map postponed;
+	/** The roles of a node that the closure does not cover. */
+	struct user_map edges;
+};
+
+static void
+role_graph_create(struct role_graph *graph)
 {
-	/*
-	 * Check that there is no loop from grantee to role:
-	 * if grantee is a role, build up a closure of all
-	 * immediate and indirect users of grantee, and ensure
-	 * the granted role is not in this set.
-	 */
-	struct user_map transitive_closure = user_map_nil;
-	user_map_set(&transitive_closure, grantee->auth_token);
-	struct user_map current_layer = transitive_closure;
-	while (! user_map_is_empty(&current_layer)) {
+	user_map_create(&graph->closure);
+	user_map_create(&graph->current);
+	user_map_create(&graph->next);
+	user_map_create(&graph->postponed);
+	user_map_create(&graph->edges);
+}
+
+static void
+role_graph_destroy(struct role_graph *graph)
+{
+	user_map_destroy(&graph->edges);
+	user_map_destroy(&graph->postponed);
+	user_map_destroy(&graph->next);
+	user_map_destroy(&graph->current);
+	user_map_destroy(&graph->closure);
+}
+
+/**
+ * Check if the first role holds the second one, directly or
+ * through the roles granted to it. Granting a role to someone
+ * that already holds it closes a loop in the graph.
+ */
+static bool
+role_has_role(struct role_graph *graph, struct user *role,
+	      struct user *granted)
+{
+	user_map_reset(&graph->closure);
+	user_map_set(&graph->closure, granted->auth_token);
+	user_map_copy(&graph->current, &graph->closure);
+	while (!user_map_is_empty(&graph->current)) {
 		/*
 		 * As long as we're traversing a directed
 		 * acyclic graph, we're bound to end at some
 		 * point in a layer with no incoming edges.
 		 */
-		struct user_map next_layer = user_map_nil;
+		user_map_reset(&graph->next);
 		struct user_map_iterator it;
-		user_map_iterator_init(&it, &current_layer);
+		user_map_iterator_init(&it, &graph->current);
 		struct user *user;
 		while ((user = user_map_iterator_next(&it)))
-			user_map_add_users(&next_layer, &user->users);
-		user_map_union(&transitive_closure, &next_layer);
-		current_layer = next_layer;
+			user_map_add_users(&graph->next, &user->users);
+		user_map_union(&graph->closure, &graph->next);
+		user_map_swap(&graph->current, &graph->next);
 	}
+	return user_map_is_set(&graph->closure, role->auth_token);
+}
+
+int
+role_check(struct user *grantee, struct user *role)
+{
 	/*
-	 * Check if the role is in the list of roles to which the
-	 * grantee is granted.
+	 * Granting the role to the grantee closes a loop if the
+	 * role already holds the grantee.
 	 */
-	if (user_map_is_set(&transitive_closure,
-			    role->auth_token)) {
+	struct role_graph graph;
+	role_graph_create(&graph);
+	bool is_loop = role_has_role(&graph, role, grantee);
+	role_graph_destroy(&graph);
+	if (is_loop) {
 		diag_set(ClientError, ER_ROLE_LOOP,
 			  role->def->name, grantee->def->name);
 		return -1;
@@ -784,14 +866,9 @@ role_check(struct user *grantee, struct user *role)
 	return 0;
 }
 
-/**
- * Re-calculate effective grants of the linked subgraph this user/role is a
- * part of. For the purpose of the rolled back statement, please refer to
- * `user_reload_privs`.
- */
-int
-rebuild_effective_grants(struct user *grantee,
-			 struct txn_stmt *rolled_back_stmt)
+static int
+role_graph_rebuild(struct role_graph *graph, struct user *grantee,
+		   struct txn_stmt *rolled_back_stmt)
 {
 	/*
 	 * Recurse over all roles to which grantee is granted
@@ -799,20 +876,20 @@ rebuild_effective_grants(struct user *grantee,
 	 */
 	struct user_map_iterator it;
 	struct user *user;
-	struct user_map current_layer = user_map_nil;
-	user_map_set(&current_layer, grantee->auth_token);
-	while (!user_map_is_empty(&current_layer)) {
-		struct user_map next_layer = user_map_nil;
-		user_map_iterator_init(&it, &current_layer);
+	user_map_reset(&graph->current);
+	user_map_set(&graph->current, grantee->auth_token);
+	while (!user_map_is_empty(&graph->current)) {
+		user_map_reset(&graph->next);
+		user_map_iterator_init(&it, &graph->current);
 		while ((user = user_map_iterator_next(&it))) {
 			user->is_dirty = true;
-			user_map_add_users(&next_layer, &user->users);
+			user_map_add_users(&graph->next, &user->users);
 		}
 		/*
 		 * Switch to the nodes which are not in the set
 		 * yet.
 		 */
-		current_layer = next_layer;
+		user_map_swap(&graph->current, &graph->next);
 	}
 	/*
 	 * First, construct a subset of the transitive
@@ -827,26 +904,25 @@ rebuild_effective_grants(struct user *grantee,
 	 * Eventually this process will end with a set of
 	 * nodes with no outgoing edges.
 	 */
-	struct user_map transitive_closure = user_map_nil;
-	current_layer = user_map_nil;
-	user_map_set(&current_layer, grantee->auth_token);
+	user_map_reset(&graph->closure);
+	user_map_reset(&graph->current);
+	user_map_set(&graph->current, grantee->auth_token);
 	/*
 	 * Propagate effective privileges from the nodes
 	 * with no incoming edges to the remaining nodes.
 	 */
-	while (! user_map_is_empty(&current_layer)) {
-		struct user_map postponed = user_map_nil;
-		struct user_map next_layer = user_map_nil;
-		user_map_iterator_init(&it, &current_layer);
+	while (!user_map_is_empty(&graph->current)) {
+		user_map_reset(&graph->postponed);
+		user_map_reset(&graph->next);
+		user_map_iterator_init(&it, &graph->current);
 		while ((user = user_map_iterator_next(&it))) {
-			struct user_map indirect_edges;
-			user_map_copy_users(&indirect_edges, &user->roles);
-			user_map_minus(&indirect_edges, &transitive_closure);
-			if (user_map_is_empty(&indirect_edges)) {
+			user_map_copy_users(&graph->edges, &user->roles);
+			user_map_minus(&graph->edges, &graph->closure);
+			if (user_map_is_empty(&graph->edges)) {
 				if (user_reload_privs(user,
 						      rolled_back_stmt) != 0)
 					return -1;
-				user_map_add_users(&next_layer, &user->users);
+				user_map_add_users(&graph->next, &user->users);
 			} else {
 				/*
 				 * The user has roles whose
@@ -857,16 +933,33 @@ rebuild_effective_grants(struct user *grantee,
 				 * effective grants have been
 				 * built.
 				 */
-				user_map_union(&next_layer, &indirect_edges);
-				user_map_set(&postponed, user->auth_token);
-				user_map_set(&next_layer, user->auth_token);
+				user_map_union(&graph->next, &graph->edges);
+				user_map_set(&graph->postponed,
+					     user->auth_token);
+				user_map_set(&graph->next, user->auth_token);
 			}
 		}
-		user_map_minus(&current_layer, &postponed);
-		user_map_union(&transitive_closure, &current_layer);
-		current_layer = next_layer;
+		user_map_minus(&graph->current, &graph->postponed);
+		user_map_union(&graph->closure, &graph->current);
+		user_map_swap(&graph->current, &graph->next);
 	}
 	return 0;
+}
+
+/**
+ * Re-calculate effective grants of the linked subgraph this user/role is a
+ * part of. For the purpose of the rolled back statement, please refer to
+ * `user_reload_privs`.
+ */
+int
+rebuild_effective_grants(struct user *grantee,
+			 struct txn_stmt *rolled_back_stmt)
+{
+	struct role_graph graph;
+	role_graph_create(&graph);
+	int rc = role_graph_rebuild(&graph, grantee, rolled_back_stmt);
+	role_graph_destroy(&graph);
+	return rc;
 }
 
 
