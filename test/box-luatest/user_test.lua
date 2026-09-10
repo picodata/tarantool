@@ -278,3 +278,41 @@ g.test_the_type_of_a_user_cannot_change = function(cg)
         t.assert_equals(box.space._user.index.name:get('shifty')[4], 'role')
     end)
 end
+
+--
+-- A revoked privilege must not survive in a role that holds the
+-- source of it by two paths of different lengths. The rebuild
+-- reaches such a role while the longer path is still to be
+-- walked, and unless it waits, it merges what that path held
+-- before the revoke - and never revisits it, having already
+-- marked itself rebuilt.
+--
+g.test_revoke_reaches_a_role_held_by_two_paths = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        local s = box.schema.space.create('t')
+        s:create_index('pk')
+
+        box.schema.role.create('src')
+        box.schema.role.create('hop1')
+        box.schema.role.create('hop2')
+        box.schema.role.create('both')
+        box.schema.role.grant('hop1', 'src')
+        box.schema.role.grant('hop2', 'hop1')
+        -- One hop from src, and three the long way round.
+        box.schema.role.grant('both', 'src')
+        box.schema.role.grant('both', 'hop2')
+        box.schema.user.create('two_paths')
+        box.schema.user.grant('two_paths', 'both')
+
+        box.schema.role.grant('src', 'read', 'space', 't')
+        t.assert(pcall(box.session.su, 'two_paths', function()
+            box.space.t:select()
+        end))
+
+        box.schema.role.revoke('src', 'read', 'space', 't')
+        t.assert_not(pcall(box.session.su, 'two_paths', function()
+            box.space.t:select()
+        end))
+    end)
+end

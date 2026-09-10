@@ -208,21 +208,6 @@ user_map_union(struct user_map *lhs, struct user_map *rhs)
 		mh_i32ptr_put(lhs->h, mh_i32ptr_node(rhs->h, i), NULL, NULL);
 }
 
-/**
- * Remove all users present in rhs from lhs
- */
-static void
-user_map_minus(struct user_map *lhs, struct user_map *rhs)
-{
-	mh_int_t i;
-	mh_foreach(rhs->h, i) {
-		uint32_t uid = mh_i32ptr_node(rhs->h, i)->key;
-		mh_int_t k = mh_i32ptr_find(lhs->h, uid, NULL);
-		if (k != mh_end(lhs->h))
-			mh_i32ptr_del(lhs->h, k, NULL);
-	}
-}
-
 /** Replace the contents of the left map with a copy of the right one. */
 static inline void
 user_map_copy(struct user_map *lhs, struct user_map *rhs)
@@ -265,14 +250,6 @@ user_map_add_users(struct user_map *map, struct user_set *set)
 {
 	for (uint32_t i = 0; i < user_set_size(set); i++)
 		user_map_set(map, user_set_at(set, i));
-}
-
-/** Replace the contents of the map with the users of the set. */
-static void
-user_map_copy_users(struct user_map *map, struct user_set *set)
-{
-	user_map_reset(map);
-	user_map_add_users(map, set);
 }
 
 /* }}} */
@@ -861,10 +838,6 @@ struct role_graph {
 	struct user_map current;
 	/** The nodes to visit in the next layer. */
 	struct user_map next;
-	/** The nodes of the current layer left for a later round. */
-	struct user_map postponed;
-	/** The roles of a node that the closure does not cover. */
-	struct user_map edges;
 };
 
 static void
@@ -873,15 +846,11 @@ role_graph_create(struct role_graph *graph)
 	user_map_create(&graph->closure);
 	user_map_create(&graph->current);
 	user_map_create(&graph->next);
-	user_map_create(&graph->postponed);
-	user_map_create(&graph->edges);
 }
 
 static void
 role_graph_destroy(struct role_graph *graph)
 {
-	user_map_destroy(&graph->edges);
-	user_map_destroy(&graph->postponed);
 	user_map_destroy(&graph->next);
 	user_map_destroy(&graph->current);
 	user_map_destroy(&graph->closure);
@@ -962,33 +931,27 @@ role_graph_rebuild(struct role_graph *graph, struct user *grantee,
 		user_map_swap(&graph->current, &graph->next);
 	}
 	/*
-	 * First, construct a subset of the transitive
-	 * closure consisting from the nodes with no
-	 * incoming edges (roles which have no granted
-	 * roles). Build their list of effective grants
-	 * from their actual grants.
-	 *
-	 * Propagate the effective grants through the
-	 * outgoing edges of the nodes, avoiding the nodes
-	 * with incoming edges from not-yet-evaluated nodes.
-	 * Eventually this process will end with a set of
-	 * nodes with no outgoing edges.
+	 * Propagate effective privileges from the nodes with no
+	 * roles left to rebuild to the remaining nodes. Every
+	 * round ends at the nodes with no outgoing edges.
 	 */
-	user_map_reset(&graph->closure);
 	user_map_reset(&graph->current);
 	user_map_set(&graph->current, grantee);
-	/*
-	 * Propagate effective privileges from the nodes
-	 * with no incoming edges to the remaining nodes.
-	 */
 	while (!user_map_is_empty(&graph->current)) {
-		user_map_reset(&graph->postponed);
 		user_map_reset(&graph->next);
 		user_map_iterator_init(&it, &graph->current);
 		while ((user = user_map_iterator_next(&it))) {
-			user_map_copy_users(&graph->edges, &user->roles);
-			user_map_minus(&graph->edges, &graph->closure);
-			if (user_map_is_empty(&graph->edges)) {
+			bool is_ready = true;
+			for (uint32_t i = 0; i < user_set_size(&user->roles);
+			     i++) {
+				struct user *role =
+					user_set_at(&user->roles, i);
+				if (role->is_dirty) {
+					is_ready = false;
+					user_map_set(&graph->next, role);
+				}
+			}
+			if (is_ready) {
 				if (user_reload_privs(user,
 						      rolled_back_stmt) != 0)
 					return -1;
@@ -1003,13 +966,9 @@ role_graph_rebuild(struct role_graph *graph, struct user *grantee,
 				 * effective grants have been
 				 * built.
 				 */
-				user_map_union(&graph->next, &graph->edges);
-				user_map_set(&graph->postponed, user);
 				user_map_set(&graph->next, user);
 			}
 		}
-		user_map_minus(&graph->current, &graph->postponed);
-		user_map_union(&graph->closure, &graph->current);
 		user_map_swap(&graph->current, &graph->next);
 	}
 	return 0;
