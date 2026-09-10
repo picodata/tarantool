@@ -1229,6 +1229,14 @@ wal_write_to_disk(struct cmsg *msg)
 	 */
 	int rc;
 	stailq_foreach_entry(entry, &wal_msg->commit, fifo) {
+		/*
+		 * A transaction committed with TXN_SYNC_WAL is made
+		 * durable synchronously, before reporting success to tx.
+		 * With wal_mode = 'fsync' the xlog is opened with O_SYNC
+		 * and every write is already synchronous.
+		 */
+		if (entry->sync_wal && writer->wal_mode == WAL_WRITE)
+			l->sync_wal = true;
 		wal_assign_lsn(&vclock_diff, &writer->vclock, entry);
 		entry->res = vclock_sum(&vclock_diff) +
 			     vclock_sum(&writer->vclock);

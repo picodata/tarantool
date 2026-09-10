@@ -114,6 +114,15 @@ enum txn_flag {
 	 * by any DDL operation.
 	 */
 	TXN_HANDLES_DDL = 0x1000,
+	/**
+	 * Flush the transaction to stable storage before reporting its
+	 * completion. Unlike wal_mode = fsync, which makes every write in
+	 * the instance synchronous, this is requested per transaction by
+	 * the caller. Ignored under wal_mode = none and redundant (but
+	 * harmless) under wal_mode = fsync, where the WAL is already
+	 * opened with O_SYNC.
+	 */
+	TXN_SYNC_WAL = 0x2000,
 };
 
 enum {
@@ -1091,6 +1100,12 @@ API_EXPORT int
 box_txn_set_flags(uint32_t flags);
 
 /** \endcond public */
+
+/**
+ * The current transaction's flags, or 0 if there is no current transaction.
+ */
+uint32_t
+box_txn_flags(void);
 
 typedef struct txn_savepoint box_txn_savepoint_t;
 

@@ -808,6 +808,7 @@ xlog_init(struct xlog *xlog, const struct xlog_opts *opts)
 	xlog->opts = *opts;
 	xlog->sync_time = ev_monotonic_time();
 	xlog->is_autocommit = true;
+	xlog->sync_wal = false;
 	obuf_create(&xlog->obuf, &cord()->slabc, XLOG_TX_AUTOCOMMIT_THRESHOLD);
 	obuf_create(&xlog->zbuf, &cord()->slabc, XLOG_TX_AUTOCOMMIT_THRESHOLD);
 	if (!opts->no_compression) {
@@ -1306,7 +1307,8 @@ xlog_tx_write(struct xlog *log)
 	log->offset += written;
 	log->rows += log->tx_rows;
 	log->tx_rows = 0;
-	if ((log->opts.sync_interval && log->offset >=
+	if (log->sync_wal ||
+	    (log->opts.sync_interval && log->offset >=
 	    (off_t)(log->synced_size + log->opts.sync_interval)) ||
 	    (log->opts.rate_limit && log->offset >=
 	    (off_t)(log->synced_size + log->opts.rate_limit))) {
@@ -1320,15 +1322,51 @@ xlog_tx_write(struct xlog *log)
 			if (throttle_time > 0)
 				ev_sleep(throttle_time);
 		}
-		/** sync data from cache to disk */
+#ifndef HAVE_SYNC_FILE_RANGE
+		/* Without sync_file_range() every sync goes to the device. */
+		log->sync_wal = true;
+#endif
+		if (log->sync_wal) {
+#ifndef NDEBUG
+			/* For tests counts the syncs to the device. */
+			++errinj(ERRINJ_SYNC_WAL_COUNT,
+				 ERRINJ_INT)->iparam;
+			ERROR_INJECT_WHILE(ERRINJ_SYNC_WAL_DELAY, {
+				errinj(ERRINJ_SYNC_WAL_HIT,
+				       ERRINJ_BOOL)->bparam = true;
+				usleep(1000);
+			});
+#endif
+			/*
+			 * Sync to the device since committing transaction
+			 * was promised durability. The periodic
+			 * sync_file_range() below waits for the writeback
+			 * of the range but does not guarantee durability
+			 * (see man sync_file_range). So its job is pacing:
+			 * it keeps the WAL pushing its data out of the cache
+			 * regularly to make final sync cheaper which
+			 * would otherwise flush all pending pages at
+			 * once, with a huge latency spike for the write
+			 * that triggers it.
+			 *
+			 * A failed sync must crash the process, because the
+			 * rows are written and cannot be rolled back,
+			 * and the failure discards the dirty pages, so
+			 * retrying would not help.
+			 */
+			if (fdatasync(log->fd) != 0)
+				panic_syserror("%s: fdatasync() failed",
+					       log->filename);
+			log->sync_wal = false;
+		} else {
 #ifdef HAVE_SYNC_FILE_RANGE
-		sync_file_range(log->fd, sync_from, sync_len,
-				SYNC_FILE_RANGE_WAIT_BEFORE |
-				SYNC_FILE_RANGE_WRITE |
-				SYNC_FILE_RANGE_WAIT_AFTER);
-#else
-		fdatasync(log->fd);
+			/** sync data from cache to disk */
+			sync_file_range(log->fd, sync_from, sync_len,
+					SYNC_FILE_RANGE_WAIT_BEFORE |
+					SYNC_FILE_RANGE_WRITE |
+					SYNC_FILE_RANGE_WAIT_AFTER);
 #endif /* HAVE_SYNC_FILE_RANGE */
+		}
 		log->sync_time = ev_monotonic_time();
 		if (log->opts.free_cache) {
 #ifdef HAVE_POSIX_FADVISE

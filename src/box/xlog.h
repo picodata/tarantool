@@ -421,6 +421,15 @@ struct xlog {
 	 * during replication.
 	 */
 	bool is_autocommit;
+	/**
+	 * A durability request from the writer: the next write
+	 * to the file is synced to the device before it
+	 * returns, with fdatasync() rather than the periodic
+	 * sync_file_range(). Set for a transaction committed
+	 * with TXN_SYNC_WAL, consumed by the write that
+	 * carries it.
+	 */
+	bool sync_wal;
 	/** The current offset in the log file, for writing. */
 	off_t offset;
 	/**

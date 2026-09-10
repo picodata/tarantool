@@ -862,6 +862,8 @@ txn_journal_entry_new(struct txn *txn)
 	if (req == NULL)
 		return NULL;
 
+	req->sync_wal = txn_has_flag(txn, TXN_SYNC_WAL);
+
 	struct xrow_header **remote_row = req->rows;
 	struct xrow_header **local_row = req->rows + txn->n_applier_rows;
 	bool is_sync = false;
@@ -1315,6 +1317,13 @@ box_txn_set_flags(uint32_t flags)
 	}
 	txn_set_flags(txn, flags);
 	return 0;
+}
+
+uint32_t
+box_txn_flags(void)
+{
+	struct txn *txn = in_txn();
+	return txn != NULL ? txn->flags : 0;
 }
 
 void

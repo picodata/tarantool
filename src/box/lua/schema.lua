@@ -295,6 +295,8 @@ box.internal.normalize_txn_isolation_level = normalize_txn_isolation_level
 -- Txn flags for box.begin{flags = ...}.
 -- See TXN_FORCE_ASYNC in src/box/txn.h.
 box.internal.TXN_FORCE_ASYNC = 0x40
+-- See TXN_SYNC_WAL in src/box/txn.h.
+box.internal.TXN_SYNC_WAL = 0x2000
 
 local begin_options = {
     timeout = function(timeout)

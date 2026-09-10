@@ -116,6 +116,12 @@ struct journal_entry {
 	 */
 	bool is_complete;
 	/**
+	 * If set, the journal implementation must flush this entry to stable
+	 * storage before reporting completion, regardless of wal_mode. Set for
+	 * transactions committed with TXN_SYNC_WAL.
+	 */
+	bool sync_wal;
+	/**
 	 * Fiber which put the request in journal queue.
 	 */
 	struct fiber *fiber;
@@ -146,6 +152,7 @@ journal_entry_create(struct journal_entry *entry, size_t n_rows,
 	entry->res		= JOURNAL_ENTRY_ERR_UNKNOWN;
 	entry->flags		= 0;
 	entry->is_complete = false;
+	entry->sync_wal = false;
 	entry->fiber = NULL;
 }
 
