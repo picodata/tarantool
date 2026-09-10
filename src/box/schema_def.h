@@ -183,6 +183,11 @@ enum {
 	BOX_PRIV_FIELD_ACCESS = 4,
 };
 
+/** _priv indexes. */
+enum {
+	BOX_PRIV_OBJECT_INDEX_ID = 2,
+};
+
 /** _func fields. */
 enum {
 	BOX_FUNC_FIELD_ID = 0,

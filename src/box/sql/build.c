@@ -52,6 +52,7 @@
 #include "box/session.h"
 #include "box/identifier.h"
 #include "box/schema.h"
+#include "box/tuple.h"
 #include "box/tuple_format.h"
 #include "box/coll_id_cache.h"
 #include "box/user.h"
@@ -1576,33 +1577,57 @@ vdbe_emit_index_drop(struct Parse *parse_context, const char *name,
  * @param parser Parsing context.
  * @param object_type Object type.
  * @param object_id Object id.
- * @param access Access array associated with an object.
  */
 static void
 vdbe_emit_revoke_object(struct Parse *parser, const char *object_type,
-			uint32_t object_id, const struct access_map *access)
+			uint32_t object_id)
 {
 	struct Vdbe *v = sqlGetVdbe(parser);
 	assert(v != NULL);
 	/*
-	 * Get uid of users through access array
-	 * and generate code to delete corresponding
-	 * entries from _priv.
+	 * Get the grantees from the _priv index on the object and
+	 * generate code to delete their entries.
 	 */
+	struct space *priv = space_cache_find(BOX_PRIV_ID);
+	if (priv == NULL) {
+		parser->is_aborted = true;
+		return;
+	}
+	struct index *index = index_find(priv, BOX_PRIV_OBJECT_INDEX_ID);
+	if (index == NULL) {
+		parser->is_aborted = true;
+		return;
+	}
+	/* The type is a literal: "space", "sequence", "function". */
+	char key[32];
+	assert(mp_sizeof_str(strlen(object_type)) +
+	       mp_sizeof_uint(object_id) <= sizeof(key));
+	mp_encode_uint(mp_encode_str0(key, object_type), object_id);
+	struct iterator *it = index_create_iterator(index, ITER_EQ, key, 2);
+	if (it == NULL) {
+		parser->is_aborted = true;
+		return;
+	}
 	int key_reg = sqlGetTempRange(parser, 4);
 	bool had_grants = false;
-	for (uint32_t token = 0; token < access->size; ++token) {
-		if (!access->data[token].granted)
-			continue;
+	struct tuple *tuple;
+	int rc;
+	while ((rc = iterator_next(it, &tuple)) == 0 && tuple != NULL) {
+		uint32_t grantee_id;
+		rc = tuple_field_u32(tuple, BOX_PRIV_FIELD_UID, &grantee_id);
+		if (rc != 0)
+			break;
 		had_grants = true;
-		const struct user *user = user_find_by_token(token);
-		sqlVdbeAddOp2(v, OP_Integer, user->def->uid, key_reg);
+		sqlVdbeAddOp2(v, OP_Integer, grantee_id, key_reg);
 		sqlVdbeAddOp4(v, OP_String8, 0, key_reg + 1, 0,
 			      object_type, P4_STATIC);
 		sqlVdbeAddOp2(v, OP_Integer, object_id, key_reg + 2);
 		sqlVdbeAddOp3(v, OP_MakeRecord, key_reg, 3, key_reg + 3);
 		sqlVdbeAddOp2(v, OP_SDelete, BOX_PRIV_ID, key_reg + 3);
 	}
+	if (rc != 0)
+		parser->is_aborted = true;
+	iterator_delete(it);
 	if (had_grants)
 		VdbeComment((v, "remove %s grants", object_type));
 	sqlReleaseTempRange(parser, key_reg, 4);
@@ -1627,8 +1652,7 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 	 * Remove all grants associated with
 	 * the table being dropped.
 	 */
-	vdbe_emit_revoke_object(parse_context, "space", space->def->id,
-				&space->access);
+	vdbe_emit_revoke_object(parse_context, "space", space->def->id);
 	/*
 	 * Drop all triggers associated with the table being
 	 * dropped. Code is generated to remove entries from
@@ -1674,8 +1698,7 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 			VdbeComment((v, "delete entry from _sequence_data"));
 			/* Delete entries from _priv */
 		        vdbe_emit_revoke_object(parse_context, "sequence",
-						space->sequence->def->id,
-						&space->sequence->access);
+						space->sequence->def->id);
 			/* Delete entry by id from _sequence. */
 			sqlVdbeAddOp3(v, OP_MakeRecord, sequence_id_reg, 1,
 				      idx_rec_reg);

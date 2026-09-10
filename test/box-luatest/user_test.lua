@@ -211,3 +211,25 @@ g.test_cannot_run_setuid_as_a_role = function(cg)
         t.assert_error(box.func.whoami.call, box.func.whoami)
     end)
 end
+
+--
+-- Dropping a table in SQL takes the grants on it out of _priv.
+-- The grantees come from _priv itself rather than from the cache
+-- of grants on the space, so a role loses its grant as surely as
+-- a user does.
+--
+g.test_sql_drop_revokes_grants = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        box.execute([[CREATE TABLE dropme (id INTEGER PRIMARY KEY);]])
+        local id = box.space.DROPME.id
+        box.schema.user.create('grantee_user')
+        box.schema.role.create('grantee_role')
+        box.schema.user.grant('grantee_user', 'read', 'space', 'DROPME')
+        box.schema.role.grant('grantee_role', 'read', 'space', 'DROPME')
+        t.assert_equals(#box.space._priv.index.object:select{'space', id}, 2)
+
+        box.execute([[DROP TABLE dropme;]])
+        t.assert_equals(box.space._priv.index.object:select{'space', id}, {})
+    end)
+end
