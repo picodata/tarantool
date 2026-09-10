@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "schema_def.h" /* for SCHEMA_OBJECT_TYPE */
 #define RB_COMPACT 1
@@ -128,6 +129,67 @@ struct access {
 	 */
 	box_user_access_mask_t effective;
 };
+
+/**
+ * The grants on an object, one slot per grantee, indexed by the
+ * grantee's authentication token. Most objects are granted to
+ * nobody and hold no slots at all; a grant makes room up to the
+ * token of its grantee, and the tokens above that are absent
+ * rather than empty.
+ */
+struct access_map {
+	/** The slots, NULL while the object has no grants. */
+	struct access *data;
+	/** The number of slots. */
+	uint32_t size;
+};
+
+/** Initialize a map with no grants. */
+static inline void
+access_map_create(struct access_map *map)
+{
+	map->data = NULL;
+	map->size = 0;
+}
+
+/** Release the memory the map owns. */
+static inline void
+access_map_destroy(struct access_map *map)
+{
+	free(map->data);
+	access_map_create(map);
+}
+
+/** The effective access of the grantee, none if it has no slot. */
+static inline box_user_access_mask_t
+access_map_effective(const struct access_map *map, uint32_t auth_token)
+{
+	return auth_token < map->size ? map->data[auth_token].effective : 0;
+}
+
+/**
+ * Make room up to the given grantee and return its slot. The
+ * map must not reach the grantee yet.
+ */
+struct access *
+access_map_grow(struct access_map *map, uint32_t auth_token);
+
+/** The slot of the given grantee, made if the map lacks one. */
+static inline struct access *
+access_map_slot(struct access_map *map, uint32_t auth_token)
+{
+	if (auth_token >= map->size)
+		return access_map_grow(map, auth_token);
+	return &map->data[auth_token];
+}
+
+/**
+ * Copy the grants on one object to another.
+ * @param dst The map to copy to, must be empty.
+ * @param src The map to copy from.
+ */
+void
+access_map_copy(struct access_map *dst, const struct access_map *src);
 
 /**
  * A cache entry for an existing user. Entries for all existing

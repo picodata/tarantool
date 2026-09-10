@@ -100,15 +100,37 @@ struct user
 	 */
 	struct rlist credentials_list;
 	/** Cached runtime access imformation. */
-	struct access access[BOX_USER_MAX];
+	struct access_map access;
 };
 
 /**
- * Find the corresponding access structure
- * given object type and object id.
+ * Find the slot of a grantee on an object, creating the slot if
+ * the object has none for the grantee yet. Used to change a grant.
+ * @param object_type Type of the object.
+ * @param object_id Id of the object, ignored for the universe and
+ *                  the entity classes.
+ * @param auth_token Authentication token of the grantee.
+ * @retval NULL The object does not exist.
+ * @retval not NULL The slot of the grantee.
  */
 struct access *
-access_find(enum box_schema_object_type object_type, uint32_t object_id);
+access_slot(enum box_schema_object_type object_type, uint32_t object_id,
+	    uint32_t auth_token);
+
+/**
+ * Get the effective access of a grantee to an object. Unlike
+ * access_slot(), never creates a slot, so an access check does
+ * not allocate memory.
+ * @param object_type Type of the object.
+ * @param object_id Id of the object, ignored for the universe and
+ *                  the entity classes.
+ * @param auth_token Authentication token of the grantee.
+ * @return The effective access, 0 if nothing is granted or the
+ *         object does not exist.
+ */
+box_user_access_mask_t
+access_effective(enum box_schema_object_type object_type, uint32_t object_id,
+		 uint32_t auth_token);
 
 /** Find user by id. */
 struct user *

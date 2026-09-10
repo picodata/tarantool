@@ -8,10 +8,40 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "authentication.h"
 #include "salad/grp_alloc.h"
 #include "trivia/util.h"
+
+struct access *
+access_map_grow(struct access_map *map, uint32_t auth_token)
+{
+	assert(auth_token >= map->size);
+	/*
+	 * A token indexes the slots, so the map never outgrows
+	 * the token space: doubling costs no more at the ceiling
+	 * than reaching for each grantee in turn would.
+	 */
+	uint32_t size = MIN(MAX(map->size * 2, auth_token + 1),
+			    (uint32_t)BOX_USER_MAX);
+	map->data = xrealloc(map->data, size * sizeof(*map->data));
+	memset(map->data + map->size, 0,
+	       (size - map->size) * sizeof(*map->data));
+	map->size = size;
+	return &map->data[auth_token];
+}
+
+void
+access_map_copy(struct access_map *dst, const struct access_map *src)
+{
+	assert(dst->size == 0);
+	if (src->size == 0)
+		return;
+	dst->data = xmalloc(src->size * sizeof(*dst->data));
+	memcpy(dst->data, src->data, src->size * sizeof(*src->data));
+	dst->size = src->size;
+}
 
 const char *
 priv_name(box_user_access_mask_t access)

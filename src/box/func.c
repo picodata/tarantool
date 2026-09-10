@@ -441,7 +441,7 @@ func_new(const struct func_def *def)
 	func->def = func_def_dup(def);
 	rlist_create(&func->func_cache_pin_list);
 	/** Nobody has access to the function but the owner. */
-	memset(func->access, 0, sizeof(func->access));
+	access_map_create(&func->access);
 	/*
 	 * Do not initialize the privilege cache right away since
 	 * when loading up a function definition during recovery,
@@ -543,6 +543,7 @@ func_delete(struct func *func)
 {
 	assert(rlist_empty(&func->func_cache_pin_list));
 	struct func_def *def = func->def;
+	access_map_destroy(&func->access);
 	credentials_destroy(&func->owner_credentials);
 	func->vtab->destroy(func);
 	free(def);
@@ -570,7 +571,8 @@ func_access_check(struct func *func)
 		access & ~credentials->universal_access;
 	if ((func_access & BOX_PRIVILEGE_USAGE) != 0 ||
 	    (func->def->uid != credentials->uid &&
-	     func_access & ~func->access[credentials->auth_token].effective)) {
+	     func_access & ~access_map_effective(&func->access,
+						 credentials->auth_token))) {
 		/* Access violation, report error. */
 		struct user *user = user_find(credentials->uid);
 		if (user != NULL) {

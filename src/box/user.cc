@@ -306,6 +306,7 @@ user_create(struct user *user, uint8_t auth_token)
 	user->auth_token = auth_token;
 	user_set_create(&user->users);
 	user_set_create(&user->roles);
+	access_map_create(&user->access);
 	privset_new(&user->privs);
 	region_create(&user->pool, &cord()->slabc);
 	rlist_create(&user->credentials_list);
@@ -324,6 +325,7 @@ user_destroy(struct user *user)
 	 */
 	user_set_destroy(&user->users);
 	user_set_destroy(&user->roles);
+	access_map_destroy(&user->access);
 	region_destroy(&user->pool);
 	user_def_delete(user->def);
 	memset(user, 0, sizeof(*user));
@@ -354,85 +356,80 @@ user_grant_priv(struct user *user, struct priv_def *def)
 }
 
 /**
- * Find the corresponding access structure
- * given object type and object id.
+ * Find the grants on an object that keeps them in an access map:
+ * a space, a function, a user or a role, or a sequence.
+ * @param object_type Type of the object.
+ * @param object_id Id of the object.
+ * @retval NULL The object does not exist or keeps no map.
+ * @retval not NULL The grants on the object.
  */
-struct access *
-access_find(enum box_schema_object_type object_type, uint32_t object_id)
+static struct access_map *
+access_map_find(enum box_schema_object_type object_type, uint32_t object_id)
 {
-	struct access *access = NULL;
 	switch (object_type) {
-	case BOX_SC_UNIVERSE:
-	{
-		access = universe.access;
-		break;
-	}
-	case BOX_SC_ENTITY_SPACE:
-	{
-		access = entity_access.space;
-		break;
-	}
-	case BOX_SC_ENTITY_FUNCTION:
-	{
-		access = entity_access.function;
-		break;
-	}
-	case BOX_SC_ENTITY_USER:
-	{
-		access = entity_access.user;
-		break;
-	}
-	case BOX_SC_ENTITY_ROLE:
-	{
-		access = entity_access.role;
-		break;
-	}
-	case BOX_SC_ENTITY_SEQUENCE:
-	{
-		access = entity_access.sequence;
-		break;
-	}
 	case BOX_SC_SPACE:
 	{
 		struct space *space = space_by_id(object_id);
-		if (space)
-			access = space->access;
-		break;
+		return space != NULL ? &space->access : NULL;
 	}
 	case BOX_SC_FUNCTION:
 	{
 		struct func *func = func_by_id(object_id);
-		if (func)
-			access = func->access;
-		break;
+		return func != NULL ? &func->access : NULL;
 	}
 	case BOX_SC_USER:
-	{
-		struct user *user = user_by_id(object_id);
-		if (user)
-			access = user->access;
-		break;
-	}
 	case BOX_SC_ROLE:
 	{
-		struct user *role = user_by_id(object_id);
-		if (role)
-			access = role->access;
-		break;
+		struct user *user = user_by_id(object_id);
+		return user != NULL ? &user->access : NULL;
 	}
 	case BOX_SC_SEQUENCE:
 	{
 		struct sequence *seq = sequence_by_id(object_id);
-		if (seq)
-			access = seq->access;
-		break;
+		return seq != NULL ? &seq->access : NULL;
 	}
+	default:
+		return NULL;
+	}
+}
+
+struct access *
+access_slot(enum box_schema_object_type object_type, uint32_t object_id,
+	    uint32_t auth_token)
+{
+	/* A role holds no token, and never reaches a slot. */
+	assert(auth_token < BOX_USER_MAX);
+	switch (object_type) {
+	case BOX_SC_UNIVERSE:
+		return &universe.access[auth_token];
+	case BOX_SC_ENTITY_SPACE:
+	case BOX_SC_ENTITY_FUNCTION:
+	case BOX_SC_ENTITY_USER:
+	case BOX_SC_ENTITY_ROLE:
+	case BOX_SC_ENTITY_SEQUENCE:
+		return &entity_access_get(object_type)[auth_token];
 	default:
 		break;
 	}
-	return access;
+	struct access_map *map = access_map_find(object_type, object_id);
+	return map != NULL ? access_map_slot(map, auth_token) : NULL;
 }
 
+box_user_access_mask_t
+access_effective(enum box_schema_object_type object_type, uint32_t object_id,
+		 uint32_t auth_token)
+{
+	struct access_map *map = access_map_find(object_type, object_id);
+	if (map != NULL)
+		return access_map_effective(map, auth_token);
+	/*
+	 * The universe and the entity classes keep a slot per token
+	 * in an array rather than a map.
+	 */
+	struct access *access = access_slot(object_type, object_id,
+					    auth_token);
+	return access != NULL ? access->effective : 0;
+}
 
 /**
  * Reset effective access of the user in the
@@ -445,12 +442,12 @@ user_set_effective_access(struct user *user)
 	privset_ifirst(&user->privs, &it);
 	struct priv_def *priv;
 	while ((priv = privset_inext(&it)) != NULL) {
-		struct access *object = access_find(priv->object_type,
-						    priv->object_id);
-		 /* Protect against a concurrent drop. */
-		if (object == NULL)
+		struct access *access = access_slot(priv->object_type,
+						    priv->object_id,
+						    user->auth_token);
+		/* Protect against a concurrent drop. */
+		if (access == NULL)
 			continue;
-		struct access *access = &object[user->auth_token];
 		access->effective = access->granted | priv->access;
 	}
 }
@@ -1026,8 +1023,9 @@ int
 priv_grant(struct user *grantee, struct priv_def *priv,
 	   struct txn_stmt *rolled_back_stmt)
 {
-	struct access *object = access_find(priv->object_type, priv->object_id);
-	if (object == NULL)
+	struct access *access = access_slot(priv->object_type, priv->object_id,
+					    grantee->auth_token);
+	if (access == NULL)
 		return 0;
 	if (grantee->auth_token == ADMIN &&
 	    priv->object_type == BOX_SC_UNIVERSE &&
@@ -1036,7 +1034,6 @@ priv_grant(struct user *grantee, struct priv_def *priv,
 			 "can't revoke universe from the admin user");
 		return -1;
 	}
-	struct access *access = &object[grantee->auth_token];
 	access->granted = priv->access;
 	if (rebuild_effective_grants(grantee, rolled_back_stmt) != 0)
 		return -1;
@@ -1051,7 +1048,8 @@ credentials_create(struct credentials *cr, struct user *user)
 	/* Nothing runs as a role, so nothing caches one. */
 	assert(user->def->type == BOX_SC_USER);
 	cr->auth_token = user->auth_token;
-	cr->universal_access = universe.access[user->auth_token].effective;
+	cr->universal_access =
+		universe.access[user->auth_token].effective;
 	cr->uid = user->def->uid;
 	rlist_add_entry(&user->credentials_list, cr, in_user);
 }

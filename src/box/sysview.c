@@ -285,7 +285,7 @@ vspace_filter(struct space *source, struct tuple *tuple)
 	/* Allow access for a user with space privileges. */
 	if (PRIV_WRDA & entity_access_get(BOX_SC_SPACE)[cr->auth_token].effective)
 		return true;
-	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & access_map_effective(&source->access, cr->auth_token))
 		return true; /* read access to _space space */
 	uint32_t space_id;
 	if (tuple_field_u32(tuple, BOX_SPACE_FIELD_ID, &space_id) != 0)
@@ -294,7 +294,7 @@ vspace_filter(struct space *source, struct tuple *tuple)
 	if (space == NULL)
 		return false;
 	box_user_access_mask_t effective =
-		space->access[cr->auth_token].effective;
+		access_map_effective(&space->access, cr->auth_token);
 	/*
 	 * Allow access for space owners and users with any
 	 * privilege for the space.
@@ -313,7 +313,7 @@ vuser_filter(struct space *source, struct tuple *tuple)
 	 */
 	if (PRIV_WRDA & cr->universal_access)
 		return true;
-	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & access_map_effective(&source->access, cr->auth_token))
 		return true; /* read access to _user space */
 
 	uint32_t uid;
@@ -336,7 +336,7 @@ vpriv_filter(struct space *source, struct tuple *tuple)
 	 */
 	if (PRIV_WRDA & cr->universal_access)
 		return true;
-	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & access_map_effective(&source->access, cr->auth_token))
 		return true; /* read access to _priv space */
 
 	uint32_t grantor_id;
@@ -363,7 +363,7 @@ vfunc_filter(struct space *source, struct tuple *tuple)
 	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) &
 	    entity_access_get(BOX_SC_FUNCTION)[cr->auth_token].effective)
 		return true;
-	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & access_map_effective(&source->access, cr->auth_token))
 		return true; /* read access to _func space */
 
 	uint32_t name_len;
@@ -374,7 +374,7 @@ vfunc_filter(struct space *source, struct tuple *tuple)
 	struct func *func = func_by_name(name, name_len);
 	assert(func != NULL);
 	box_user_access_mask_t effective =
-		func->access[cr->auth_token].effective;
+		access_map_effective(&func->access, cr->auth_token);
 	return func->def->uid == cr->uid ||
 	       ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) & effective);
 }
@@ -393,7 +393,7 @@ vsequence_filter(struct space *source, struct tuple *tuple)
 	if ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) &
 	    entity_access_get(BOX_SC_SEQUENCE)[cr->auth_token].effective)
 		return true;
-	if (BOX_PRIVILEGE_READ & source->access[cr->auth_token].effective)
+	if (BOX_PRIVILEGE_READ & access_map_effective(&source->access, cr->auth_token))
 		return true; /* read access to _sequence space */
 
 	uint32_t id;
@@ -403,7 +403,7 @@ vsequence_filter(struct space *source, struct tuple *tuple)
 	if (sequence == NULL)
 		return false;
 	box_user_access_mask_t effective =
-		sequence->access[cr->auth_token].effective;
+		access_map_effective(&sequence->access, cr->auth_token);
 	return sequence->def->uid == cr->uid ||
 	       ((PRIV_WRDA | BOX_PRIVILEGE_EXECUTE) & effective);
 }

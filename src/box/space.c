@@ -81,7 +81,8 @@ access_check_space(struct space *space, box_user_access_mask_t access)
 	    (space_access & BOX_PRIVILEGE_USAGE ||
 	     /* Check for missing specific access, respect owner rights. */
 	    (space->def->uid != cr->uid &&
-	     space_access & ~space->access[cr->auth_token].effective))) {
+	     space_access & ~access_map_effective(&space->access,
+						  cr->auth_token)))) {
 		/*
 		 * Report access violation. Throw "no such user"
 		 * error if there is no user with this id.
@@ -409,6 +410,7 @@ fail_free_indexes:
 fail:
 	free(space->index_map);
 	free(space->check_unique_constraint_map);
+	access_map_destroy(&space->access);
 	if (space->def != NULL)
 		space_def_delete(space->def);
 	if (space->format != NULL) {
@@ -467,6 +469,7 @@ space_delete(struct space *space)
 	}
 	free(space->index_map);
 	free(space->check_unique_constraint_map);
+	access_map_destroy(&space->access);
 	if (space->format != NULL) {
 		space_cleanup_constraints(space);
 		tuple_format_unref(space->format);

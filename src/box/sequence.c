@@ -149,6 +149,7 @@ sequence_delete(struct sequence *seq)
 {
 	/* Delete sequence data. */
 	sequence_reset(seq);
+	access_map_destroy(&seq->access);
 	free(seq->def);
 	free(seq);
 }
@@ -285,7 +286,8 @@ access_check_sequence(struct sequence *seq)
 	    (sequence_access & BOX_PRIVILEGE_USAGE ||
 	     /* Check for missing specific access, respect owner rights. */
 	     (seq->def->uid != cr->uid &&
-	      sequence_access & ~seq->access[cr->auth_token].effective))) {
+	      sequence_access & ~access_map_effective(&seq->access,
+						      cr->auth_token)))) {
 
 		/* Access violation, report error. */
 		struct user *user = user_find(cr->uid);

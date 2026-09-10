@@ -98,9 +98,7 @@ access_check_ddl(const char *name, uint32_t object_id, uint32_t owner_uid,
 	 */
 	if (!(access & BOX_PRIVILEGE_USAGE)) {
 		/* Check for privileges on a single object. */
-		struct access *object = access_find(type, object_id);
-		if (object != NULL)
-			access &= ~object[cr->auth_token].effective;
+		access &= ~access_effective(type, object_id, cr->auth_token);
 		if (access == 0)
 			return 0; /* Access granted. */
 	}
@@ -1015,8 +1013,7 @@ alter_space_do(struct txn_stmt *stmt, struct alter_space *alter)
 	alter->new_space->sequence = alter->old_space->sequence;
 	alter->new_space->sequence_fieldno = alter->old_space->sequence_fieldno;
 	alter->new_space->sequence_path = alter->old_space->sequence_path;
-	memcpy(alter->new_space->access, alter->old_space->access,
-	       sizeof(alter->old_space->access));
+	access_map_copy(&alter->new_space->access, &alter->old_space->access);
 
 	space_prepare_upgrade_xc(alter->old_space, alter->new_space);
 
