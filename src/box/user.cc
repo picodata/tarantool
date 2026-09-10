@@ -713,9 +713,12 @@ struct user *
 user_find(uint32_t uid)
 {
 	struct user *user = user_by_id(uid);
-	if (user == NULL)
-		diag_set(ClientError, ER_NO_SUCH_USER, int2str(uid));
-	return user;
+	if (user != NULL && user->def->type == BOX_SC_USER)
+		return user;
+	/* Name the role rather than the id the caller had. */
+	diag_set(ClientError, ER_NO_SUCH_USER,
+		 user != NULL ? user->def->name : int2str(uid));
+	return NULL;
 }
 
 /* Find a user by authentication token. */
@@ -1045,6 +1048,8 @@ priv_grant(struct user *grantee, struct priv_def *priv,
 void
 credentials_create(struct credentials *cr, struct user *user)
 {
+	/* Nothing runs as a role, so nothing caches one. */
+	assert(user->def->type == BOX_SC_USER);
 	cr->auth_token = user->auth_token;
 	cr->universal_access = universe.access[user->auth_token].effective;
 	cr->uid = user->def->uid;

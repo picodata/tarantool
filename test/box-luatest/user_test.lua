@@ -166,3 +166,48 @@ g.test_grant_order_does_not_change_the_rights = function(cg)
         end)
     end)
 end
+
+--
+-- A role is a bundle of privileges to be granted onwards, not
+-- somebody who can act. box.schema.role.grant refuses to hand a
+-- role a system privilege, but the refusal is not the schema's:
+-- writing the grant into _priv gets past it. Switching to a role
+-- has to be refused whatever the role was granted.
+--
+g.test_cannot_switch_to_a_role = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        box.schema.role.create('actor')
+        local rid = box.space._user.index.name:get('actor')[1]
+        -- 'session' and 'usage' on the universe.
+        box.space._priv:insert{1, rid, 'universe', 0, 8 + 16}
+
+        -- Looking a role up by name already refuses it; by id
+        -- it does not.
+        t.assert_error(box.session.su, 'actor')
+        t.assert_error(box.session.su, rid)
+    end)
+end
+
+--
+-- A setuid function runs as its owner, so a function owned by a
+-- role is a second way into acting as one. The owner is taken
+-- from the _func tuple, which can name a role outright.
+--
+g.test_cannot_run_setuid_as_a_role = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        box.schema.role.create('owner_role')
+        local rid = box.space._user.index.name:get('owner_role')[1]
+
+        box.schema.func.create('whoami', {
+            body = 'function() return box.session.effective_user() end',
+            setuid = true,
+        })
+        local tuple = box.space._func.index.name:get('whoami')
+        box.space._func:delete{tuple[1]}
+        box.space._func:insert(tuple:update{{'=', 2, rid}})
+
+        t.assert_error(box.func.whoami.call, box.func.whoami)
+    end)
+end
