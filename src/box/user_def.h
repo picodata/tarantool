@@ -31,7 +31,7 @@ typedef uint16_t box_user_access_mask_t;
  */
 struct credentials {
 	/** A look up key to quickly find session user. */
-	uint8_t auth_token;
+	uint16_t auth_token;
 	/**
 	 * Cached global grants, to avoid an extra look up
 	 * when checking global grants.

@@ -82,7 +82,7 @@ struct user
 	 * An id in privileges array to quickly find a
 	 * respective privilege.
 	 */
-	uint8_t auth_token;
+	uint16_t auth_token;
 	/** List of users or roles this role has been granted to */
 	struct user_set users;
 	/** List of roles granted to this role or user. */

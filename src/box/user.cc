@@ -310,12 +310,12 @@ user_is_role(const struct user *user)
 }
 
 /** Take a free authentication token. */
-static uint8_t
+static uint16_t
 auth_token_get(void);
 
 /** Give an authentication token back. */
 static void
-auth_token_put(uint8_t auth_token);
+auth_token_put(uint16_t auth_token);
 
 /**
  * Make a cache entry. A user is looked up by its authentication
@@ -330,7 +330,7 @@ user_new(enum box_schema_object_type type)
 		user = (struct user *)xcalloc(1, sizeof(*user));
 		user->auth_token = BOX_USER_MAX;
 	} else {
-		uint8_t auth_token = auth_token_get();
+		uint16_t auth_token = auth_token_get();
 		user = users + auth_token;
 		assert(user->auth_token == 0);
 		user->auth_token = auth_token;
@@ -638,7 +638,7 @@ user_auth_method_name(const char *user_name, uint32_t user_name_len)
 static umap_int_t tokens[USER_MAP_SIZE];
 
 static inline int
-auth_token_calc_idx(uint8_t auth_token, uint8_t *bit_no)
+auth_token_calc_idx(uint16_t auth_token, uint8_t *bit_no)
 {
 	*bit_no = auth_token & (UMAP_INT_BITS - 1);
 	return auth_token / UMAP_INT_BITS;
@@ -655,31 +655,32 @@ static int min_token_idx = 0;
  * Raise an exception when the maximal number of users
  * is reached (and we're out of tokens).
  */
-static uint8_t
+static uint16_t
 auth_token_get(void)
 {
 	uint8_t bit_no = 0;
 	while (min_token_idx < USER_MAP_SIZE) {
-                bit_no = __builtin_ffs(tokens[min_token_idx]);
+		bit_no = __builtin_ffs(tokens[min_token_idx]);
 		if (bit_no)
 			break;
 		min_token_idx++;
-        }
-	if (bit_no == 0 || bit_no > BOX_USER_MAX) {
-		/* A cap on the number of users was reached.
-		 * Check for BOX_USER_MAX to cover case when
-		 * USER_MAP_BITS > BOX_USER_MAX.
+	}
+	/*
+	 * find-first-set returns bit index starting from 1,
+	 * or 0 if no bit is set. Rebase the index to offset 0.
+	 */
+	uint32_t auth_token = bit_no > 0 ?
+			      min_token_idx * UMAP_INT_BITS + bit_no - 1 :
+			      BOX_USER_MAX;
+	if (auth_token >= BOX_USER_MAX) {
+		/*
+		 * A cap on the number of users was reached. The
+		 * map holds more tokens than the cap allows when
+		 * the cap is not a multiple of the word size.
 		 */
 		tnt_raise(LoggedError, ER_USER_MAX, BOX_USER_MAX);
 	}
-        /*
-         * find-first-set returns bit index starting from 1,
-         * or 0 if no bit is set. Rebase the index to offset 0.
-         */
-	bit_no--;
-	tokens[min_token_idx] ^= ((umap_int_t) 1) << bit_no;
-	int auth_token = min_token_idx * UMAP_INT_BITS + bit_no;
-	assert(auth_token < UINT8_MAX);
+	tokens[min_token_idx] ^= ((umap_int_t)1) << (bit_no - 1);
 	return auth_token;
 }
 
@@ -688,7 +689,7 @@ auth_token_get(void)
  * tokens.
  */
 static void
-auth_token_put(uint8_t auth_token)
+auth_token_put(uint16_t auth_token)
 {
 	uint8_t bit_no;
 	int idx = auth_token_calc_idx(auth_token, &bit_no);

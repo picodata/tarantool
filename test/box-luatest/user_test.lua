@@ -236,28 +236,26 @@ end
 
 --
 -- A role never acts, so it holds no authentication token and
--- does not count against the limit on users. Roles beyond that
--- limit can be created, granted and granted onwards.
+-- does not count against the limit on users. There have to be
+-- more of them than a token space holds, or the test would pass
+-- just as well with roles drawing tokens again.
 --
 g.test_roles_are_not_bounded_by_the_user_limit = function(cg)
     cg.server:exec(function()
         local t = require('luatest')
-        local n = 300
-        for i = 1, n do
-            box.schema.role.create('many' .. i)
-        end
-        -- Every one of them carries a grant, and the last one
-        -- hands the lot to a user through a chain of two.
+        local n = 600
+        t.assert_gt(n, box.schema.USER_MAX or 512)
         local s = box.schema.space.create('t')
         s:create_index('pk')
         s:insert{1}
-        box.schema.role.grant('many1', 'read', 'space', 't')
-        for i = 2, n do
-            box.schema.role.grant('many' .. i, 'many' .. (i - 1))
+        for i = 1, n do
+            box.schema.role.create('many' .. i)
+            box.schema.role.grant('many' .. i, 'read', 'space', 't')
         end
+
+        -- One user reaches the space through the last of them.
         box.schema.user.create('many_user')
         box.schema.user.grant('many_user', 'many' .. n)
-
         box.session.su('many_user', function()
             t.assert_equals(box.space.t:select{1}, {{1}})
         end)
