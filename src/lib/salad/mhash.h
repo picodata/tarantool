@@ -428,6 +428,8 @@ _mh(clear)(struct _mh(t) *h)
 	h->p = p;
 	h->b = b;
 	h->size = 0;
+	h->n_dirty = 0;
+	h->resize_position = 0;
 	h->upper_bound = h->n_buckets * MH_DENSITY;
 }
 
