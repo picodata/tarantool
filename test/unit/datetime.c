@@ -651,6 +651,38 @@ datetime_parse_unterminated_test(void)
 }
 
 static void
+datetime_parse_exact_buffer_test(void)
+{
+	const char *samples[] = {
+		"2012-12-24",
+		"2012-12-24T17",
+		"2012-12-24 17",
+		"2012-12-24T17:30",
+		"2012-12-24T17:30:00",
+		"2012-12-24T17:30+01",
+		"2012-12-24T17:30 MSK",
+	};
+
+	plan(lengthof(samples));
+	header();
+
+	for (size_t i = 0; i < lengthof(samples); i++) {
+		size_t len = strlen(samples[i]);
+		char *buf = xmalloc(len);
+		memcpy(buf, samples[i], len);
+
+		struct datetime date = {.epoch = 0};
+		ssize_t rc = datetime_parse_full(&date, buf, len);
+		is(rc, (ssize_t)len, "consumes '%s' without looking past it",
+		   samples[i]);
+		free(buf);
+	}
+
+	footer();
+	check_plan();
+}
+
+static void
 datetime_parse_zone_suffix_test(void)
 {
 	struct {
@@ -694,7 +726,7 @@ datetime_parse_zone_suffix_test(void)
 int
 main(void)
 {
-	plan(9);
+	plan(10);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -703,6 +735,7 @@ main(void)
 	mp_print_test();
 	interval_from_map_test();
 	datetime_parse_unterminated_test();
+	datetime_parse_exact_buffer_test();
 	datetime_parse_zone_suffix_test();
 
 	return check_plan();
