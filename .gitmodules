@@ -9,7 +9,7 @@
 	ignore = dirty
 [submodule "src/lib/msgpuck"]
 	path = src/lib/msgpuck
-	url = https://github.com/tarantool/msgpuck.git
+	url = https://git.picodata.io/core/msgpuck.git
 	ignore = dirty
 [submodule "third_party/luafun"]
 	path = third_party/luafun
