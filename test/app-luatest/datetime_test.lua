@@ -1054,44 +1054,6 @@ local SUPPORTED_DATETIME_FORMATS = {
             fmt = '%Y-%M-%DT%h:%m-12:00',
             buf = '2024-07-31T02:30-12:00',
         },
-        -- Ranges.
-        {
-            fmt = '%Y-%M-%DT%h/P1DT1H',
-            buf = '2024-07-31T17/P1DT1H',
-        }, {
-            fmt = '%Y-%M-%DT%h:%m/P1DT1H',
-            buf = '2024-07-31T17:42/P1DT1H',
-        }, {
-            fmt = '%Y-%M-%DT%h:%m:%s/P1DT1H',
-            buf = '2024-07-31T17:42:56/P1DT1H',
-        }, {
-            fmt = '%Y-%M-%DT%h:%m:%.3s/P1DT1H',
-            buf = '2024-07-31T17:42:56.132/P1DT1H',
-        }, {
-            fmt = '%V-W%W-%wT%h/P1DT1H',
-            buf = '2024-W31-3T17/P1DT1H',
-        }, {
-            fmt = '%V-W%W-%wT%h:%m/P1DT1H',
-            buf = '2024-W31-3T17:42/P1DT1H',
-        }, {
-            fmt = '%V-W%W-%wT%h:%m:%s/P1DT1H',
-            buf = '2024-W31-3T17:42:56/P1DT1H',
-        }, {
-            fmt = '%V-W%W-%wT%h:%m:%.3s/P1DT1H',
-            buf = '2024-W31-3T17:42:56.132/P1DT1H',
-        }, {
-            fmt = '%Y-%OT%h/P1DT1H',
-            buf = '2024-213T17/P1DT1H',
-        }, {
-            fmt = '%Y-%OT%h:%m/P1DT1H',
-            buf = '2024-213T17:42/P1DT1H',
-        }, {
-            fmt = '%Y-%OT%h:%m:%s/P1DT1H',
-            buf = '2024-213T17:42:56/P1DT1H',
-        }, {
-            fmt = '%Y-%OT%h:%m:%.3s/P1DT1H',
-            buf = '2024-213T17:42:56.132/P1DT1H',
-        },
     },
 }
 
@@ -1905,6 +1867,42 @@ local UNSUPPORTED_DATETIME_FORMATS = {
         }, {
             fmt = 'P1D/%Y-%O',
             buf = 'P1D/2024-213',
+        }, {
+            fmt = '%Y-%M-%DT%h/P1DT1H',
+            buf = '2024-07-31T17/P1DT1H',
+        }, {
+            fmt = '%Y-%M-%DT%h:%m/P1DT1H',
+            buf = '2024-07-31T17:42/P1DT1H',
+        }, {
+            fmt = '%Y-%M-%DT%h:%m:%s/P1DT1H',
+            buf = '2024-07-31T17:42:56/P1DT1H',
+        }, {
+            fmt = '%Y-%M-%DT%h:%m:%.3s/P1DT1H',
+            buf = '2024-07-31T17:42:56.132/P1DT1H',
+        }, {
+            fmt = '%V-W%W-%wT%h/P1DT1H',
+            buf = '2024-W31-3T17/P1DT1H',
+        }, {
+            fmt = '%V-W%W-%wT%h:%m/P1DT1H',
+            buf = '2024-W31-3T17:42/P1DT1H',
+        }, {
+            fmt = '%V-W%W-%wT%h:%m:%s/P1DT1H',
+            buf = '2024-W31-3T17:42:56/P1DT1H',
+        }, {
+            fmt = '%V-W%W-%wT%h:%m:%.3s/P1DT1H',
+            buf = '2024-W31-3T17:42:56.132/P1DT1H',
+        }, {
+            fmt = '%Y-%OT%h/P1DT1H',
+            buf = '2024-213T17/P1DT1H',
+        }, {
+            fmt = '%Y-%OT%h:%m/P1DT1H',
+            buf = '2024-213T17:42/P1DT1H',
+        }, {
+            fmt = '%Y-%OT%h:%m:%s/P1DT1H',
+            buf = '2024-213T17:42:56/P1DT1H',
+        }, {
+            fmt = '%Y-%OT%h:%m:%.3s/P1DT1H',
+            buf = '2024-213T17:42:56.132/P1DT1H',
         }, {
             fmt = '%Y-%M-%DT%h:%mZ/P1DT1H',
             buf = '2024-07-31T17:42Z/P1DT1H',

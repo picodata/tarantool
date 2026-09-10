@@ -313,6 +313,7 @@ datetime_parse_full(struct datetime *date, const char *str, size_t len)
 	size_t n;
 	dt_t dt;
 	const char *svp = str;
+	const char *end = str + len;
 	char c;
 	int sec_of_day = 0, nanosecond = 0;
 	int16_t tzindex = 0;
@@ -320,7 +321,7 @@ datetime_parse_full(struct datetime *date, const char *str, size_t len)
 
 	n = dt_parse_iso_date(str, len, &dt);
 	if (n == 0)
-		return 0;
+		return -1;
 
 	str += n;
 	len -= n;
@@ -329,14 +330,14 @@ datetime_parse_full(struct datetime *date, const char *str, size_t len)
 
 	c = *str++;
 	if (c != 'T' && c != 't' && c != ' ')
-		return 0;
+		return -1;
 	len--;
 	if (len <= 0)
 		goto exit;
 
 	n = dt_parse_iso_time(str, len, &sec_of_day, &nanosecond);
 	if (n == 0)
-		return 0;
+		return -1;
 
 	str += n;
 	len -= n;
@@ -357,6 +358,11 @@ datetime_parse_full(struct datetime *date, const char *str, size_t len)
 	str += l;
 
 exit:
+	/* The literal has to be consumed completely, no trailer allowed. */
+	assert(str <= end);
+	if (str != end)
+		return -1;
+
 	date->epoch = dt_epoch(dt) + sec_of_day - offset * 60;
 	date->nsec = nanosecond;
 	date->tzoffset = offset;

@@ -190,12 +190,13 @@ datetime_isdst(const struct datetime *date);
  * Parse datetime text in ISO-8601 given format, and construct output
  * datetime value
  * @param date output datetime value
- * @param str input text in relaxed ISO-8601 format (0-terminated)
+ * @param str input text in relaxed ISO-8601 format, not necessarily
+ *        0-terminated
  * @param len length of str buffer
- * @retval Upon successful completion returns length of accepted
- *         prefix substring. It's ok if there is some unaccepted trailer.
- *         Returns 0 only if text is not recognizable as date/time string.
- *         Returns negative value is there is unaccepted timezone.
+ * @retval Upon successful completion returns @a len, i.e. the whole buffer
+ *         has been accepted. Returns -1 if text is not recognizable as a
+ *         date/time string, or if it has not been consumed completely.
+ *         Returns -TZ_NYI or -TZ_AMBIGUOUS if there is unaccepted timezone.
  * @sa datetime_strptime()
  */
 ssize_t

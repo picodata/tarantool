@@ -683,40 +683,58 @@ datetime_parse_exact_buffer_test(void)
 }
 
 static void
-datetime_parse_zone_suffix_test(void)
+datetime_parse_trailer_test(void)
 {
-	struct {
-		const char *str;
-		const char *prefix;
-	} samples[] = {
-		{"2012-12-24 15:30Z 12:00", "2012-12-24 15:30Z"},
-		{"2012-12-24 15:30 MSK 12:00", "2012-12-24 15:30 MSK"},
-		{"2012-12-24 15:30 MSK, note", "2012-12-24 15:30 MSK"},
-		{"2012-12-24 15:30 UTC 12:00", "2012-12-24 15:30 UTC"},
-		{"2012-12-24 15:30 Europe/Moscow 12:00",
-		 "2012-12-24 15:30 Europe/Moscow"},
-		{"2012-12-24 15:30 America/New_York 12:00",
-		 "2012-12-24 15:30 America/New_York"},
+#define S(s) {s, sizeof(s) - 1}
+	struct datetime_sample rejected[] = {
+		S("2012-12-24 15:30Z 12:00"),
+		S("2012-12-24 15:30 MSK 12:00"),
+		S("2012-12-24 15:30 MSK, note"),
+		S("2012-12-24 15:30 UTC 12:00"),
+		S("2012-12-24 15:30 Europe/Moscow 12:00"),
+		S("2012-12-24 15:30 America/New_York 12:00"),
+		S("2012-12-24 15:30:00Z "),
+		S("2012-12-24T "),
+		S("2024-07-31T17/P1DT1H"),
+		S("2021-08-20 22:59:59 +180"),
+		S("2024-08-28 00:00:00.0 +00:00:"),
+		S("2024-08-28 00:00:00.0 +00:00:01"),
+		S("2024-08-28 00:00:00.0 +05:30:45"),
+		S("2012-12-24 15:30Z\0junk"),
 	};
 
-	plan(4 * lengthof(samples));
+	struct datetime_sample accepted[] = {
+		S("2012-12-24T"),
+		S("2012-12-24t"),
+		S("2012-12-24 "),
+		S("2012-12-24 15:30 "),
+		S("2012-12-24 15:30:00 "),
+		S("2024-07-31T17.5"),
+		S("2024-07-31T17.5+03:00"),
+		S("2024-07-31T17:30.5"),
+		S("2024-08-28 00:00:00.0 +00:00:00"),
+		S("2024-08-28 00:00:00.0 -05:30:00"),
+	};
+#undef S
+
+	plan(2 * lengthof(rejected) + lengthof(accepted));
 	header();
 
-	for (size_t i = 0; i < lengthof(samples); i++) {
-		const char *s = samples[i].str;
-		const char *prefix = samples[i].prefix;
-		size_t prefix_len = strlen(prefix);
+	for (size_t i = 0; i < lengthof(rejected); i++) {
+		struct datetime date = {.epoch = INT64_MIN};
+		ssize_t rc = datetime_parse_full(&date, rejected[i].str,
+						 rejected[i].len);
+		is(rc, -1, "rejected trailer in '%s'", rejected[i].str);
+		is(date.epoch, INT64_MIN, "output is intact for '%s'",
+		   rejected[i].str);
+	}
 
-		struct datetime got = {.epoch = 0};
-		ssize_t rc = datetime_parse_full(&got, s, strlen(s));
-		is(rc, (ssize_t)prefix_len, "stops at the end of the zone "
-		   "of '%s'", s);
-
-		struct datetime ref = {.epoch = 0};
-		rc = datetime_parse_full(&ref, prefix, prefix_len);
-		is(rc, (ssize_t)prefix_len, "consumes '%s'", prefix);
-		is(got.epoch, ref.epoch, "same epoch as '%s'", prefix);
-		is(got.tzoffset, ref.tzoffset, "same tzoffset as '%s'", prefix);
+	for (size_t i = 0; i < lengthof(accepted); i++) {
+		struct datetime date = {.epoch = 0};
+		ssize_t rc = datetime_parse_full(&date, accepted[i].str,
+						 accepted[i].len);
+		is(rc, (ssize_t)accepted[i].len, "consumes '%s' in full",
+		   accepted[i].str);
 	}
 
 	footer();
@@ -736,7 +754,7 @@ main(void)
 	interval_from_map_test();
 	datetime_parse_unterminated_test();
 	datetime_parse_exact_buffer_test();
-	datetime_parse_zone_suffix_test();
+	datetime_parse_trailer_test();
 
 	return check_plan();
 }

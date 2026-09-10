@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include "datetime.h"
@@ -15,7 +16,9 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	memcpy(buf, data, size);
 	buf[size] = '\0';
 	struct datetime date_expected;
-	datetime_parse_full(&date_expected, buf, size);
+	ssize_t rc = datetime_parse_full(&date_expected, buf, size);
+	assert(rc < 0 || rc == (ssize_t)size);
+	(void)rc;
 	free(buf);
 
 	return 0;
