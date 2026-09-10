@@ -55,6 +55,85 @@ enum {
 	USER_ACCESS_FULL = (box_user_access_mask_t)~0,
 };
 
+/* {{{ user_set */
+
+/** The capacity a set is given on the first insert. */
+static const uint32_t USER_SET_CAPACITY_MIN = 4;
+
+/** Initialize an empty set. */
+static inline void
+user_set_create(struct user_set *set)
+{
+	set->users = NULL;
+	set->count = 0;
+	set->capacity = 0;
+}
+
+/** Release the memory the set owns. */
+static inline void
+user_set_destroy(struct user_set *set)
+{
+	free(set->users);
+	user_set_create(set);
+}
+
+/** The number of users in the set. */
+static inline uint32_t
+user_set_size(struct user_set *set)
+{
+	return set->count;
+}
+
+/** The user stored at the given position. */
+static inline struct user *
+user_set_at(struct user_set *set, uint32_t i)
+{
+	assert(i < set->count);
+	return set->users[i];
+}
+
+/** The position of the user in the set, UINT32_MAX if absent. */
+static uint32_t
+user_set_find(struct user_set *set, struct user *user)
+{
+	for (uint32_t i = 0; i < set->count; i++) {
+		if (set->users[i] == user)
+			return i;
+	}
+	return UINT32_MAX;
+}
+
+/**
+ * Add a user to the set. A grant of an already granted role
+ * arrives as a plain update of the _priv tuple, and is applied
+ * as another grant, so a repeated add has to be a no-op.
+ */
+static void
+user_set_add(struct user_set *set, struct user *user)
+{
+	if (user_set_find(set, user) != UINT32_MAX)
+		return;
+	if (set->count == set->capacity) {
+		set->capacity = set->capacity > 0 ? set->capacity * 2 :
+				USER_SET_CAPACITY_MIN;
+		set->users = (struct user **)
+			xrealloc(set->users,
+				 set->capacity * sizeof(*set->users));
+	}
+	set->users[set->count++] = user;
+}
+
+/** Remove a user from the set. */
+static void
+user_set_del(struct user_set *set, struct user *user)
+{
+	uint32_t i = user_set_find(set, user);
+	if (i != UINT32_MAX)
+		set->users[i] = set->users[--set->count];
+}
+
+/* }}} */
+
 /* {{{ user_map */
 
 static inline int
@@ -72,15 +151,6 @@ user_map_set(struct user_map *map, uint8_t auth_token)
 	uint8_t bit_no;
 	int idx = user_map_calc_idx(auth_token, &bit_no);
 	map->m[idx] |= ((umap_int_t) 1) << bit_no;
-}
-
-/** Clear a bit in the user map - remove a user. */
-static inline void
-user_map_clear(struct user_map *map, uint8_t auth_token)
-{
-	uint8_t bit_no;
-	int idx = user_map_calc_idx(auth_token, &bit_no);
-	map->m[idx] &= ~(((umap_int_t) 1) << bit_no);
 }
 
 /* Check if a bit is set in the user map. */
@@ -135,6 +205,22 @@ user_map_iterator_next(struct user_map_iterator *it)
 	return NULL;
 }
 
+/** Add all the users of the set to the map. */
+static void
+user_map_add_users(struct user_map *map, struct user_set *set)
+{
+	for (uint32_t i = 0; i < user_set_size(set); i++)
+		user_map_set(map, user_set_at(set, i)->auth_token);
+}
+
+/** Replace the contents of the map with the users of the set. */
+static void
+user_map_copy_users(struct user_map *map, struct user_set *set)
+{
+	*map = user_map_nil;
+	user_map_add_users(map, set);
+}
+
 /* }}} */
 
 /* {{{ privset_t - set of effective privileges of a user */
@@ -164,6 +250,8 @@ user_create(struct user *user, uint8_t auth_token)
 {
 	assert(user->auth_token == 0);
 	user->auth_token = auth_token;
+	user_set_create(&user->users);
+	user_set_create(&user->roles);
 	privset_new(&user->privs);
 	region_create(&user->pool, &cord()->slabc);
 	rlist_create(&user->credentials_list);
@@ -180,6 +268,8 @@ user_destroy(struct user *user)
 	 * to drop a user, one has to revoke
 	 * all privileges from them first.
 	 */
+	user_set_destroy(&user->users);
+	user_set_destroy(&user->roles);
 	region_destroy(&user->pool);
 	user_def_delete(user->def);
 	memset(user, 0, sizeof(*user));
@@ -416,10 +506,8 @@ next_tuple:
 	}
 	{
 		/* Take into account privs granted through roles. */
-		struct user_map_iterator it;
-		user_map_iterator_init(&it, &user->roles);
-		struct user *role;
-		while ((role = user_map_iterator_next(&it))) {
+		for (uint32_t i = 0; i < user_set_size(&user->roles); i++) {
+			struct user *role = user_set_at(&user->roles, i);
 			struct privset_iterator it;
 			privset_ifirst(&role->privs, &it);
 			struct priv_def *def;
@@ -536,8 +624,8 @@ user_cache_delete(uint32_t uid)
 			mh_i32ptr_node(user_registry, k)->val;
 		assert(user->auth_token > ADMIN);
 		auth_token_put(user->auth_token);
-		assert(user_map_is_empty(&user->roles));
-		assert(user_map_is_empty(&user->users));
+		assert(user_set_is_empty(&user->roles));
+		assert(user_set_is_empty(&user->users));
 		user_destroy(user);
 		/*
 		 * Sic: we don't have to remove a deleted
@@ -679,7 +767,7 @@ role_check(struct user *grantee, struct user *role)
 		user_map_iterator_init(&it, &current_layer);
 		struct user *user;
 		while ((user = user_map_iterator_next(&it)))
-			user_map_union(&next_layer, &user->users);
+			user_map_add_users(&next_layer, &user->users);
 		user_map_union(&transitive_closure, &next_layer);
 		current_layer = next_layer;
 	}
@@ -718,7 +806,7 @@ rebuild_effective_grants(struct user *grantee,
 		user_map_iterator_init(&it, &current_layer);
 		while ((user = user_map_iterator_next(&it))) {
 			user->is_dirty = true;
-			user_map_union(&next_layer, &user->users);
+			user_map_add_users(&next_layer, &user->users);
 		}
 		/*
 		 * Switch to the nodes which are not in the set
@@ -751,13 +839,14 @@ rebuild_effective_grants(struct user *grantee,
 		struct user_map next_layer = user_map_nil;
 		user_map_iterator_init(&it, &current_layer);
 		while ((user = user_map_iterator_next(&it))) {
-			struct user_map indirect_edges = user->roles;
+			struct user_map indirect_edges;
+			user_map_copy_users(&indirect_edges, &user->roles);
 			user_map_minus(&indirect_edges, &transitive_closure);
 			if (user_map_is_empty(&indirect_edges)) {
 				if (user_reload_privs(user,
 						      rolled_back_stmt) != 0)
 					return -1;
-				user_map_union(&next_layer, &user->users);
+				user_map_add_users(&next_layer, &user->users);
 			} else {
 				/*
 				 * The user has roles whose
@@ -789,8 +878,8 @@ rebuild_effective_grants(struct user *grantee,
 int
 role_grant(struct user *grantee, struct user *role)
 {
-	user_map_set(&role->users, grantee->auth_token);
-	user_map_set(&grantee->roles, role->auth_token);
+	user_set_add(&role->users, grantee);
+	user_set_add(&grantee->roles, role);
 	if (rebuild_effective_grants(grantee, NULL) != 0)
 		return -1;
 	return 0;
@@ -803,8 +892,8 @@ role_grant(struct user *grantee, struct user *role)
 int
 role_revoke(struct user *grantee, struct user *role)
 {
-	user_map_clear(&role->users, grantee->auth_token);
-	user_map_clear(&grantee->roles, role->auth_token);
+	user_set_del(&role->users, grantee);
+	user_set_del(&grantee->roles, role);
 	if (rebuild_effective_grants(grantee, NULL) != 0)
 		return -1;
 	return 0;

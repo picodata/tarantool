@@ -68,6 +68,23 @@ user_map_is_empty(struct user_map *map)
 	return true;
 }
 
+/** A set of users, stored as a growable array. */
+struct user_set {
+	/** The members, NULL until the first one is added. */
+	struct user **users;
+	/** The number of members. */
+	uint32_t count;
+	/** The number of members the array has room for. */
+	uint32_t capacity;
+};
+
+/** Check if the set has no users. */
+static inline bool
+user_set_is_empty(struct user_set *set)
+{
+	return set->count == 0;
+}
+
 typedef rb_tree(struct priv_def) privset_t;
 rb_proto(, privset_, privset_t, struct priv_def);
 
@@ -80,9 +97,9 @@ struct user
 	 */
 	uint8_t auth_token;
 	/** List of users or roles this role has been granted to */
-	struct user_map users;
+	struct user_set users;
 	/** List of roles granted to this role or user. */
-	struct user_map roles;
+	struct user_set roles;
 	/** A cache of effective privileges of this user. */
 	privset_t privs;
 	/** True if this user privileges need to be reloaded. */

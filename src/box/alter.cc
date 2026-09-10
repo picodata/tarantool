@@ -2960,7 +2960,7 @@ user_has_data(struct user *user, bool *has_data)
 			return 0;
 		}
 	}
-	if (! user_map_is_empty(&user->users)) {
+	if (!user_set_is_empty(&user->users)) {
 		*has_data = true;
 		return 0;
 	}
@@ -2968,7 +2968,7 @@ user_has_data(struct user *user, bool *has_data)
 	 * If there was a role, the previous check would have
 	 * returned true.
 	 */
-	assert(user_map_is_empty(&user->roles));
+	assert(user_set_is_empty(&user->roles));
 	*has_data = false;
 	return 0;
 }
