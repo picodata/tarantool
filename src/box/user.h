@@ -55,19 +55,6 @@ enum {
 	USER_MAP_SIZE = (BOX_USER_MAX + UMAP_INT_BITS - 1)/UMAP_INT_BITS
 };
 
-struct user_map {
-	umap_int_t m[USER_MAP_SIZE];
-};
-
-static inline bool
-user_map_is_empty(struct user_map *map)
-{
-	for (int i = 0; i < USER_MAP_SIZE; i++)
-		if (map->m[i])
-			return false;
-	return true;
-}
-
 /** A set of users, stored as a growable array. */
 struct user_set {
 	/** The members, NULL until the first one is added. */

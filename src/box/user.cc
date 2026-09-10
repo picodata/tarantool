@@ -134,66 +134,66 @@ user_set_del(struct user_set *set, struct user *user)
 
 /* {{{ user_map */
 
-static inline int
-user_map_calc_idx(uint8_t auth_token, uint8_t *bit_no)
-{
-	*bit_no = auth_token & (UMAP_INT_BITS - 1);
-	return auth_token / UMAP_INT_BITS;
-}
+/**
+ * A set of users, keyed by user id. The role graph traversals
+ * build their layers in it, so it holds no more members than
+ * there are users and roles.
+ */
+struct user_map {
+	struct mh_i32ptr_t *h;
+};
 
 /** Initialize an empty map. */
 static inline void
 user_map_create(struct user_map *map)
 {
-	memset(map->m, 0, sizeof(map->m));
+	map->h = mh_i32ptr_new();
 }
 
 /** Release the resources the map holds. */
 static inline void
 user_map_destroy(struct user_map *map)
 {
-	(void)map;
+	mh_i32ptr_delete(map->h);
+	map->h = NULL;
 }
 
 /** Remove all the members of the map. */
 static inline void
 user_map_reset(struct user_map *map)
 {
-	memset(map->m, 0, sizeof(map->m));
-}
-
-/** Replace the contents of the left map with a copy of the right one. */
-static inline void
-user_map_copy(struct user_map *lhs, struct user_map *rhs)
-{
-	memcpy(lhs->m, rhs->m, sizeof(lhs->m));
+	mh_i32ptr_clear(map->h);
 }
 
 /** Exchange the contents of the two maps. */
 static inline void
 user_map_swap(struct user_map *lhs, struct user_map *rhs)
 {
-	struct user_map tmp = *lhs;
-	*lhs = *rhs;
-	*rhs = tmp;
+	struct mh_i32ptr_t *tmp = lhs->h;
+	lhs->h = rhs->h;
+	rhs->h = tmp;
 }
 
-/** Set a bit in the user map - add a user. */
+/** Add a user to the map. */
 static inline void
-user_map_set(struct user_map *map, uint8_t auth_token)
+user_map_set(struct user_map *map, struct user *user)
 {
-	uint8_t bit_no;
-	int idx = user_map_calc_idx(auth_token, &bit_no);
-	map->m[idx] |= ((umap_int_t) 1) << bit_no;
+	struct mh_i32ptr_node_t node = { user->def->uid, user };
+	mh_i32ptr_put(map->h, &node, NULL, NULL);
 }
 
-/* Check if a bit is set in the user map. */
+/* Check if the user is in the map. */
 static inline bool
-user_map_is_set(struct user_map *map, uint8_t auth_token)
+user_map_is_set(struct user_map *map, struct user *user)
 {
-	uint8_t bit_no;
-	int idx = user_map_calc_idx(auth_token, &bit_no);
-	return map->m[idx] & (((umap_int_t) 1) << bit_no);
+	return mh_i32ptr_find(map->h, user->def->uid, NULL) != mh_end(map->h);
+}
+
+/** Check if the map has no members. */
+static inline bool
+user_map_is_empty(struct user_map *map)
+{
+	return mh_size(map->h) == 0;
 }
 
 /**
@@ -203,8 +203,9 @@ user_map_is_set(struct user_map *map, uint8_t auth_token)
 static void
 user_map_union(struct user_map *lhs, struct user_map *rhs)
 {
-	for (int i = 0; i < USER_MAP_SIZE; i++)
-		lhs->m[i] |= rhs->m[i];
+	mh_int_t i;
+	mh_foreach(rhs->h, i)
+		mh_i32ptr_put(lhs->h, mh_i32ptr_node(rhs->h, i), NULL, NULL);
 }
 
 /**
@@ -213,30 +214,49 @@ user_map_union(struct user_map *lhs, struct user_map *rhs)
 static void
 user_map_minus(struct user_map *lhs, struct user_map *rhs)
 {
-	for (int i = 0; i < USER_MAP_SIZE; i++)
-		lhs->m[i] &= ~rhs->m[i];
+	mh_int_t i;
+	mh_foreach(rhs->h, i) {
+		uint32_t uid = mh_i32ptr_node(rhs->h, i)->key;
+		mh_int_t k = mh_i32ptr_find(lhs->h, uid, NULL);
+		if (k != mh_end(lhs->h))
+			mh_i32ptr_del(lhs->h, k, NULL);
+	}
 }
 
-/** Iterate over users in the set of users. */
+/** Replace the contents of the left map with a copy of the right one. */
+static inline void
+user_map_copy(struct user_map *lhs, struct user_map *rhs)
+{
+	user_map_reset(lhs);
+	user_map_union(lhs, rhs);
+}
+
+/**
+ * Iterate over users in the set of users. The map must not be
+ * changed while an iterator over it is alive: a hash resize
+ * moves the members an unfinished iterator has not seen yet.
+ */
 struct user_map_iterator
 {
-	struct bit_iterator it;
+	struct mh_i32ptr_t *h;
+	mh_int_t pos;
 };
 
 static void
 user_map_iterator_init(struct user_map_iterator *it, struct user_map *map)
 {
-	bit_iterator_init(&it->it, map->m,
-			  USER_MAP_SIZE * sizeof(umap_int_t), true);
+	it->h = map->h;
+	it->pos = mh_first(it->h);
 }
 
 static struct user *
 user_map_iterator_next(struct user_map_iterator *it)
 {
-	size_t auth_token = bit_iterator_next(&it->it);
-	if (auth_token != SIZE_MAX)
-		return users + auth_token;
-	return NULL;
+	if (it->pos >= mh_end(it->h))
+		return NULL;
+	struct user *user = (struct user *)mh_i32ptr_node(it->h, it->pos)->val;
+	it->pos = mh_next(it->h, it->pos);
+	return user;
 }
 
 /** Add all the users of the set to the map. */
@@ -244,7 +264,7 @@ static void
 user_map_add_users(struct user_map *map, struct user_set *set)
 {
 	for (uint32_t i = 0; i < user_set_size(set); i++)
-		user_map_set(map, user_set_at(set, i)->auth_token);
+		user_map_set(map, user_set_at(set, i));
 }
 
 /** Replace the contents of the map with the users of the set. */
@@ -575,6 +595,14 @@ user_auth_method_name(const char *user_name, uint32_t user_name_len)
 
 /** A map to quickly look up free slots in users[] array. */
 static umap_int_t tokens[USER_MAP_SIZE];
+
+static inline int
+auth_token_calc_idx(uint8_t auth_token, uint8_t *bit_no)
+{
+	*bit_no = auth_token & (UMAP_INT_BITS - 1);
+	return auth_token / UMAP_INT_BITS;
+}
+
 /**
  * Index of the minimal element of the tokens array which
  * has an unused token.
@@ -622,7 +650,7 @@ void
 auth_token_put(uint8_t auth_token)
 {
 	uint8_t bit_no;
-	int idx = user_map_calc_idx(auth_token, &bit_no);
+	int idx = auth_token_calc_idx(auth_token, &bit_no);
 	tokens[idx] |= ((umap_int_t) 1) << bit_no;
 	if (idx < min_token_idx)
 		min_token_idx = idx;
@@ -827,7 +855,7 @@ role_has_role(struct role_graph *graph, struct user *role,
 	      struct user *granted)
 {
 	user_map_reset(&graph->closure);
-	user_map_set(&graph->closure, granted->auth_token);
+	user_map_set(&graph->closure, granted);
 	user_map_copy(&graph->current, &graph->closure);
 	while (!user_map_is_empty(&graph->current)) {
 		/*
@@ -844,7 +872,7 @@ role_has_role(struct role_graph *graph, struct user *role,
 		user_map_union(&graph->closure, &graph->next);
 		user_map_swap(&graph->current, &graph->next);
 	}
-	return user_map_is_set(&graph->closure, role->auth_token);
+	return user_map_is_set(&graph->closure, role);
 }
 
 int
@@ -877,7 +905,7 @@ role_graph_rebuild(struct role_graph *graph, struct user *grantee,
 	struct user_map_iterator it;
 	struct user *user;
 	user_map_reset(&graph->current);
-	user_map_set(&graph->current, grantee->auth_token);
+	user_map_set(&graph->current, grantee);
 	while (!user_map_is_empty(&graph->current)) {
 		user_map_reset(&graph->next);
 		user_map_iterator_init(&it, &graph->current);
@@ -906,7 +934,7 @@ role_graph_rebuild(struct role_graph *graph, struct user *grantee,
 	 */
 	user_map_reset(&graph->closure);
 	user_map_reset(&graph->current);
-	user_map_set(&graph->current, grantee->auth_token);
+	user_map_set(&graph->current, grantee);
 	/*
 	 * Propagate effective privileges from the nodes
 	 * with no incoming edges to the remaining nodes.
@@ -934,9 +962,8 @@ role_graph_rebuild(struct role_graph *graph, struct user *grantee,
 				 * built.
 				 */
 				user_map_union(&graph->next, &graph->edges);
-				user_map_set(&graph->postponed,
-					     user->auth_token);
-				user_map_set(&graph->next, user->auth_token);
+				user_map_set(&graph->postponed, user);
+				user_map_set(&graph->next, user);
 			}
 		}
 		user_map_minus(&graph->current, &graph->postponed);
