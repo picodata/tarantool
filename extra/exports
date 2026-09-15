@@ -283,6 +283,7 @@ ibuf_create
 ibuf_destroy
 ibuf_reinit
 ibuf_reserve_slow
+key_hash
 lbox_socket_local_resolve
 lbox_socket_nonblock
 log_default_logger
