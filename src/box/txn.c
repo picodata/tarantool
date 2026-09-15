@@ -740,6 +740,8 @@ txn_complete_fail(struct txn *txn)
 		trigger_destroy(&txn->on_rollback);
 		/* Commit won't happen after rollback. */
 		trigger_destroy(&txn->on_commit);
+		/* WAL write won't happen after rollback. */
+		trigger_destroy(&txn->on_wal_write);
 	}
 	txn_free_or_wakeup(txn);
 	rmean_collect(rmean_box, IPROTO_ROLLBACK, 1);
@@ -770,6 +772,8 @@ txn_complete_success(struct txn *txn)
 		trigger_destroy(&txn->on_commit);
 		/* Rollback won't happen after commit. */
 		trigger_destroy(&txn->on_rollback);
+		/* No-op except for a nop commit, which never writes to WAL. */
+		trigger_destroy(&txn->on_wal_write);
 	}
 	txn_free_or_wakeup(txn);
 	rmean_collect(rmean_box, IPROTO_COMMIT, 1);
@@ -1602,6 +1606,8 @@ txn_on_yield(struct trigger *trigger, void *event)
 			trigger_destroy(&txn->on_rollback);
 			/* Commit won't happen after rollback. */
 			trigger_destroy(&txn->on_commit);
+			/* WAL write won't happen after rollback. */
+			trigger_destroy(&txn->on_wal_write);
 		}
 		return 0;
 	}
