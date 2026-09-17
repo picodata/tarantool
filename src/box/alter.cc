@@ -5138,6 +5138,10 @@ on_replace_dd_trigger(struct trigger * /* trigger */, void *event)
 				 "temporary spaces");
 			return -1;
 		}
+		if (access_check_ddl(space->def->name, space->def->id,
+				     space->def->uid, BOX_SC_SPACE,
+				     BOX_PRIVILEGE_ALTER) != 0)
+			return -1;
 
 		struct sql_trigger *old_trigger;
 		if (sql_trigger_replace(trigger_name,
