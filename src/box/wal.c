@@ -1155,6 +1155,36 @@ wal_assign_lsn(struct vclock *vclock_diff, struct vclock *base,
 	(*end)->is_commit = true;
 }
 
+/**
+ * Log the transactions of the batch a WAL delay injection parked.
+ * A locally generated row still has LSN zero here: wal_assign_lsn()
+ * runs after the delay.
+ */
+static MAYBE_UNUSED void
+wal_msg_debug_log(struct wal_msg *wal_msg, const char *what)
+{
+	/* Enough to see a batch without flooding the log. */
+	const int log_max = 10;
+	int count = 0;
+	struct journal_entry *entry;
+	stailq_foreach_entry(entry, &wal_msg->commit, fifo) {
+		if (++count > log_max)
+			continue;
+		const struct xrow_header *row =
+			entry->n_rows > 0 ? entry->rows[0] : NULL;
+		say_info("%s: transaction %d: %s, replica_id %u, lsn %lld, "
+			 "%d row(s)", what, count,
+			 row != NULL ? iproto_type_name(row->type) : "empty",
+			 row != NULL ? (unsigned)row->replica_id : 0,
+			 row != NULL ? (long long)row->lsn : 0,
+			 entry->n_rows);
+	}
+	if (count > log_max) {
+		say_info("%s: logged %d transaction(s) of %d", what, log_max,
+			 count);
+	}
+}
+
 static void
 wal_write_to_disk(struct cmsg *msg)
 {
@@ -1175,9 +1205,13 @@ wal_write_to_disk(struct cmsg *msg)
 	struct vclock vclock_diff;
 	vclock_create(&vclock_diff);
 
-	ERROR_INJECT_SLEEP(ERRINJ_WAL_DELAY);
+	ERROR_INJECT(ERRINJ_WAL_DELAY, {
+		wal_msg_debug_log(wal_msg, "ERRINJ_WAL_DELAY");
+		ERROR_INJECT_SLEEP(ERRINJ_WAL_DELAY);
+	});
 
 	ERROR_INJECT_COUNTDOWN(ERRINJ_WAL_DELAY_COUNTDOWN, {
+		wal_msg_debug_log(wal_msg, "ERRINJ_WAL_DELAY_COUNTDOWN");
 		struct errinj *e = errinj(ERRINJ_WAL_DELAY, ERRINJ_BOOL);
 		e->bparam = true;
 		ERROR_INJECT_SLEEP(ERRINJ_WAL_DELAY);
