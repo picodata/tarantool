@@ -64,6 +64,7 @@
 #include "tuple_convert.h"
 #include "session.h"
 #include "xrow.h"
+#include "msgpack.h"
 #include "schema.h"
 #include "replication.h" /* instance_uuid */
 #include "iproto_constants.h"
@@ -1628,7 +1629,9 @@ iproto_msg_prepare(struct iproto_msg *msg, const char **pos, const char *reqend,
 	struct cmsg_hop *route;
 	int rc;
 
-	if (xrow_header_decode(&msg->header, pos, reqend, true) != 0)
+	/* JSON is checked here, see doc/json-perimeter.md#iproto-request. */
+	if (xrow_header_decode(&msg->header, pos, reqend, true,
+			       msgpack_check_ext_data_strict) != 0)
 		goto error;
 	assert(*pos == reqend);
 

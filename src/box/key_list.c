@@ -178,6 +178,9 @@ key_list_iterator_next(struct key_list_iterator *it, struct tuple **value)
 	}
 out:
 	it->data = key_end;
+	/*
+	 * JSON is taken as is, see doc/json-perimeter.md#functional-index-key.
+	 */
 	*value = tuple_new(it->format, key, key_end);
 	if (*value == NULL)
 		return -1;

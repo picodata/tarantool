@@ -341,7 +341,7 @@ lbox_key_def_extract_key(struct lua_State *L)
 		return luaT_error(L);
 
 	struct tuple *ret =
-		tuple_new(tuple_format_runtime, key, key + key_size);
+		tuple_new_checked(tuple_format_runtime, key, key + key_size);
 	region_truncate(region, region_svp);
 	if (ret == NULL)
 		return luaT_error(L);
@@ -422,13 +422,14 @@ lbox_key_def_compare_with_key(struct lua_State *L)
 
 	struct region *region = &fiber()->gc;
 	size_t region_svp = region_used(region);
-	const char *key = luaT_tuple_encode(L, 3, NULL);
+	size_t key_len;
+	const char *key = luaT_tuple_encode(L, 3, &key_len);
 	if (key == NULL || box_key_def_validate_key(key_def, key, NULL) != 0) {
 		region_truncate(region, region_svp);
 		tuple_unref(tuple);
 		return luaT_error(L);
 	}
-
+	/* JSON is taken as is, see doc/json-perimeter.md#key-def-key. */
 	int rc = box_tuple_compare_with_key(tuple, key, key_def);
 	region_truncate(region, region_svp);
 	tuple_unref(tuple);

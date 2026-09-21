@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include "tuple_format.h"
+#include "tuple.h"
 #include "bit/bit.h"
 #include "fiber.h"
 #include "json/json.h"
@@ -223,6 +224,49 @@ tuple_field_path(const struct tuple_field *field,
 	json_tree_snprint_path(path, TT_STATIC_BUF_LEN, &field->token,
 			       TUPLE_INDEX_BASE);
 	return path;
+}
+
+/*
+ * mp_check() validates all of MsgPack, so a failure at @a value is a JSON
+ * error only when @a value is itself an MP_EXT/MP_JSON: a truncated UUID fails
+ * the same check. Returns the "invalid JSON value in " qualifier in that case
+ * and an empty prefix otherwise.
+ */
+static const char *
+tuple_field_invalid_prefix(const char *value)
+{
+	uint32_t len;
+	if (mp_decode_json(&value, &len) != NULL)
+		return "invalid JSON value in ";
+	return "";
+}
+
+const char *
+tuple_json_error_path(struct tuple_format *format, const char *data,
+		      const char *end, uint32_t errpos)
+{
+	const char *p = data;
+	if (p >= end || mp_typeof(*p) != MP_ARRAY)
+		return "tuple";
+	const char *value = data + errpos;
+	uint32_t count = mp_decode_array(&p);
+	for (uint32_t i = 0; i < count && p < end; i++) {
+		const char *field_start = p;
+		mp_next(&p);
+		if (value < field_start || value >= p)
+			continue;
+		/*
+		 * Name the field the way a format-driven rejection would, and
+		 * qualify it as JSON only when the value is an MP_EXT/MP_JSON.
+		 */
+		const char *path = i < tuple_format_field_count(format) ?
+			tuple_field_path(tuple_format_field(format, i),
+					 format) :
+			tt_sprintf("[%u]", i + 1);
+		return tt_sprintf("%sfield %s",
+				  tuple_field_invalid_prefix(value), path);
+	}
+	return tt_sprintf("%stuple", tuple_field_invalid_prefix(value));
 }
 
 /**
@@ -529,35 +573,16 @@ tuple_format_create(struct tuple_format *format, struct key_def *const *keys,
 				return -1;
 			}
 			size_t size = fields[i].default_value_size;
-			char *buf = NULL;
-			if (field->type == FIELD_TYPE_JSON) {
-				const char *p = default_value;
-				uint32_t inner_len;
-				const char *inner = mp_decode_json(&p,
-								   &inner_len);
-				uint32_t env_size = 0;
-				if (inner != NULL) {
-					uint32_t max_size =
-						mp_sizeof_json_len(inner_len);
-					buf = xmalloc(max_size);
-					env_size = mp_encode_json_normalized(
-						buf, inner, inner_len, NULL);
-				}
-				if (env_size == 0) {
-					free(buf);
-					diag_set(ClientError,
-						 ER_DEFAULT_VALUE_TYPE,
-						 tuple_field_path(field,
-								  format),
-						 field_type_strs[field->type],
-						 mp_type_strs[MP_EXT]);
-					return -1;
-				}
-				size = env_size;
-			} else {
-				buf = xmalloc(size);
-				memcpy(buf, default_value, size);
-			}
+			/*
+			 * JSON is taken as is,
+			 * see doc/json-perimeter.md#field-default.
+			 */
+			assert(field->type != FIELD_TYPE_JSON ||
+			       mp_verify_json(default_value,
+					      default_value + size,
+					      NULL) == JSON_NORM_OK);
+			char *buf = xmalloc(size);
+			memcpy(buf, default_value, size);
 			field->default_value = buf;
 			field->default_value_size = size;
 			format->default_field_count = i + 1;

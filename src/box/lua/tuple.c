@@ -303,6 +303,10 @@ luaT_tuple_new(struct lua_State *L, int idx, box_tuple_format_t *format)
 	if (tuple_data == NULL) {
 		tuple = NULL;
 	} else {
+		/*
+		 * JSON was checked by the encoder,
+		 * see doc/json-perimeter.md#lua-c-encoder.
+		 */
 		tuple = box_tuple_new(format, tuple_data,
 				      tuple_data + tuple_len);
 	}
@@ -330,6 +334,10 @@ lbox_tuple_new(lua_State *L)
 
 		if (luaT_tuple_encode_values(L, buf) != 0)
 			goto cleanup;
+		/*
+		 * JSON was checked by the encoder,
+		 * see doc/json-perimeter.md#lua-c-encoder.
+		 */
 		tuple = box_tuple_new(fmt, buf->buf, buf->buf + ibuf_used(buf));
 cleanup:
 		cord_ibuf_drop(buf);
@@ -656,8 +664,8 @@ lbox_tuple_transform(struct lua_State *L)
 				    old_data, old_data + bsize, format,
 				    &new_size, 1, NULL);
 	if (new_data != NULL)
-		new_tuple = tuple_new(box_tuple_format_default(),
-				      new_data, new_data + new_size);
+		new_tuple = tuple_new_checked(box_tuple_format_default(),
+					      new_data, new_data + new_size);
 	region_truncate(region, used);
 cleanup:
 	cord_ibuf_put(buf);

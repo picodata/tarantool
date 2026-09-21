@@ -70,7 +70,8 @@ create_tuple1(void)
 	end = mp_encode_uint(end, 333);
 	end = mp_encode_uint(end, 444);
 
-	struct tuple *tuple = tuple_new(tuple_format_runtime, data, end);
+	struct tuple *tuple =
+		tuple_new_checked(tuple_format_runtime, data, end);
 	tuple_ref(tuple);
 	return tuple;
 }
@@ -85,7 +86,8 @@ create_tuple2(void)
 	end = mp_encode_str0(end, "yyy");
 	end = mp_encode_str0(end, "zzz");
 
-	struct tuple *tuple = tuple_new(tuple_format_runtime, data, end);
+	struct tuple *tuple =
+		tuple_new_checked(tuple_format_runtime, data, end);
 	tuple_ref(tuple);
 	return tuple;
 }

@@ -1931,9 +1931,11 @@ xlog_tx_cursor_next_row(struct xlog_tx_cursor *tx_cursor,
 	if (ibuf_used(&tx_cursor->rows) == 0)
 		return 1;
 	/* Return row from xlog tx buffer */
+	/* JSON is taken as is, see doc/json-perimeter.md#recovery. */
 	int rc = xrow_header_decode(xrow,
 				    (const char **)&tx_cursor->rows.rpos,
-				    (const char *)tx_cursor->rows.wpos, false);
+				    (const char *)tx_cursor->rows.wpos, false,
+				    /*ext_check=*/NULL);
 	if (rc != 0) {
 		diag_set(XlogError, "can't parse row");
 		/* Discard remaining row data */

@@ -133,7 +133,12 @@ lbox_xlog_parse_body_kv(struct lua_State *L, int type, const char **beg)
 		const char *tuple_beg = *beg;
 		mp_next(beg);
 		struct tuple_format *format = box_tuple_format_default();
-		struct tuple *tuple = box_tuple_new(format, tuple_beg, *beg);
+		/*
+		 * JSON is checked here,
+		 * see doc/json-perimeter.md#tuple-from-raw-bytes.
+		 */
+		struct tuple *tuple =
+			tuple_new_checked(format, tuple_beg, *beg);
 		if (tuple == NULL)
 			luaT_error(L);
 		luaT_pushtuple(L, tuple);

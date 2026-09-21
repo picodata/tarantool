@@ -29,7 +29,8 @@
  * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-#include "mp_json.h"
+#include <stdint.h>
+
 
 #if defined(__cplusplus)
 extern "C" {
@@ -39,28 +40,13 @@ void
 msgpack_init(void);
 
 /**
- * Act on a verdict from json_verify() or mp_verify_json(): pass a normalized
- * value through, and name which of the two mistakes its producer made
- * otherwise. Spelled non-canonically gets ER_JSON_NOT_NORMALIZED and the
- * offset; anything else ER_INVALID_MSGPACK and "invalid JSON value in @a where
- * at offset N".
- *
- * Every perimeter in box reports through this, so the two verdicts reach a
- * client as the same pair of codes worded the same way whichever caught the
- * value. @a where is the only part a caller chooses: a noun for the thing
- * being decoded, as in "a bind" or "a key". It is evaluated on the good path
- * too, so it has to be cheap, a literal in practice. One site cannot meet that
- * and reports on its own: tuple_validate_json() names the offending field,
- * which costs a walk of the tuple.
- *
- * Above box, src/lua has no access to these codes and reports the same two
- * verdicts as a LuajitError through luaT_json_check().
- *
- * @retval 0 if @a rc is JSON_NORM_OK, -1 otherwise with the diag set.
+ * An mp_check_ext_data_f (see msgpuck.h), stricter than the global hook that
+ * msgpack_init() installs: it also refuses an MP_JSON value that is not in
+ * normal form, including one inside an MP_ERROR's payload fields. Where it is
+ * used is in doc/json-perimeter.md. Sets a diag on failure.
  */
 int
-json_norm_handle(enum json_norm_status rc, uint32_t err_off,
-		 const char *where);
+msgpack_check_ext_data_strict(int8_t type, const char *data, uint32_t len);
 
 #if defined(__cplusplus)
 }

@@ -1211,9 +1211,13 @@ netbox_transport_send_and_recv(struct netbox_transport *transport,
 			required = size + len;
 			if (data_len >= required) {
 				const char *body_end = rpos + len;
+				/*
+				 * JSON is taken as is,
+				 * see doc/json-perimeter.md#netbox-response.
+				 */
 				int rc = xrow_header_decode(
 						hdr, &rpos, body_end,
-						/*end_is_exact=*/true);
+						/*end_is_exact=*/true, NULL);
 				transport->last_msg_size = body_end - bufpos;
 				return rc;
 			}
@@ -1543,6 +1547,10 @@ netbox_decode_data(struct lua_State *L, const char **data,
 	for (uint32_t j = 0; j < count; ++j) {
 		const char *begin = *data;
 		mp_next(data);
+		/*
+		 * JSON is taken as is,
+		 * see doc/json-perimeter.md#netbox-response.
+		 */
 		struct tuple *tuple =
 			box_tuple_new(format, begin, *data);
 		if (tuple == NULL)
@@ -1615,6 +1623,10 @@ netbox_decode_tuple(struct lua_State *L, const char **data,
 	if (return_raw) {
 		luamp_push(L, response_body.data, response_body.data_end);
 	} else {
+		/*
+		 * JSON is taken as is,
+		 * see doc/json-perimeter.md#netbox-response.
+		 */
 		struct tuple *tuple =
 			box_tuple_new(format, response_body.data,
 				      response_body.data_end);

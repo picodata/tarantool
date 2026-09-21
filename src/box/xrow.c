@@ -179,15 +179,46 @@ dump_row_hex(const char *start, const char *end) {
 	}\
 } while (0)
 
+/**
+ * Check one MessagePack value at @a pos, with @a ext_check for extensions
+ * when it is not NULL. On failure the diag holds the reason: the hook's own
+ * if it set one (a JSON value not in normal form, say), which names it
+ * better, or an "invalid MsgPack" in @a what otherwise. A new error is what
+ * tells them apart, not an empty diag, which may hold an older error that
+ * has nothing to do with this packet.
+ */
+static int
+xrow_check(const char **pos, const char *end, mp_check_ext_data_f ext_check,
+	   const char *what)
+{
+	/* Held so that a new error cannot reuse its address. */
+	struct error *last = diag_last_error(diag_get());
+	if (last != NULL)
+		error_ref(last);
+	int rc = ext_check == NULL ? mp_check(pos, end) :
+		 mp_check_ext(pos, end, ext_check);
+	if (rc != 0 && diag_last_error(diag_get()) == last)
+		diag_set(ClientError, ER_INVALID_MSGPACK, what);
+	if (last != NULL)
+		error_unref(last);
+	return rc;
+}
+
 int
 xrow_header_decode(struct xrow_header *header, const char **pos,
-		   const char *end, bool end_is_exact)
+		   const char *end, bool end_is_exact,
+		   mp_check_ext_data_f ext_check)
 {
 	memset(header, 0, sizeof(struct xrow_header));
 	const char *tmp = *pos;
 	const char * const start = *pos;
-	if (mp_check(&tmp, end) != 0)
-		goto bad_header;
+	/*
+	 * A strict hook covers the header too. Its unknown keys are skipped
+	 * here, but box.iproto.override() handlers get the whole header as a
+	 * msgpack object, which is taken as checked.
+	 */
+	if (xrow_check(&tmp, end, ext_check, "packet header") != 0)
+		goto dump;
 	if (mp_typeof(**pos) != MP_MAP)
 		goto bad_header;
 	bool has_tsn = false;
@@ -253,8 +284,8 @@ xrow_header_decode(struct xrow_header *header, const char **pos,
 	/* Nop requests aren't supposed to have a body. */
 	if (*pos < end && header->type != IPROTO_NOP) {
 		const char *body = *pos;
-		if (mp_check(pos, end))
-			goto bad_body;
+		if (xrow_check(pos, end, ext_check, "packet body") != 0)
+			goto dump;
 		header->bodycnt = 1;
 		header->body[0].iov_base = (void *) body;
 		header->body[0].iov_len = *pos - body;

@@ -6,9 +6,7 @@
 #include "box/port.h"
 #include "box/execute.h"
 #include "box/bind.h"
-#include "box/msgpack.h"
 #include "mp_json.h"
-#include "mp_json_norm.h"
 #include "box/sql_stmt_cache.h"
 #include "box/schema.h"
 #include "mpstream/mpstream.h"
@@ -414,16 +412,9 @@ lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i, 
 		}
 		if (field.ext_type == MP_JSON) {
 			/*
-			 * A bind is a write perimeter: reject a non-normal
-			 * value rather than repair it, and say which of the
-			 * two mistakes the producer made.
+			 * JSON is taken as is,
+			 * see doc/json-perimeter.md#sql-bind-lua.
 			 */
-			uint32_t err_off = 0;
-			enum json_norm_status rc =
-				json_verify(field.sval.data, field.sval.len,
-					    &err_off);
-			if (json_norm_handle(rc, err_off, "a bind") != 0)
-				return -1;
 			struct json_norm norm =
 				json_norm_from_trusted(field.sval.data,
 						       field.sval.len);
@@ -459,14 +450,7 @@ lua_sql_bind_decode(struct lua_State *L, struct sql_bind *bind, int idx, int i, 
 		bind->bytes = region_used(region) - used;
 		bind->s = xregion_join(region, bind->bytes);
 		/*
-		 * Not walked for nested MP_JSON, unlike the MP_EXT branch
-		 * above. Everything luamp_encode_r() encoded it judged on the
-		 * way through, and everything it spliced came out of an
-		 * msgpack.object or a tuple, both of which hold JSON that was
-		 * judged already; the argument is above luamp_get() in
-		 * src/lua/msgpack.c. A walk here would re-derive an
-		 * established invariant, which is the one thing the interior
-		 * does not do.
+		 * JSON is taken as is, see doc/json-perimeter.md#sql-bind-lua.
 		 */
 		break;
 	}

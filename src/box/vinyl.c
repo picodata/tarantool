@@ -58,6 +58,7 @@
 #include "cbus.h"
 #include "histogram.h"
 #include "xrow_update.h"
+#include "request.h"
 #include "txn.h"
 #include "xrow.h"
 #include "xlog.h"
@@ -741,10 +742,10 @@ vinyl_space_check_index_def(struct space *space, struct index_def *index_def)
 		diag_set(ClientError, ER_NULLABLE_PRIMARY, space_name(space));
 		return -1;
 	}
-	/* Check that there are no ANY, ARRAY, MAP parts */
+	/* Check that every part is of an indexable type. */
 	for (uint32_t i = 0; i < key_def->part_count; i++) {
 		struct key_part *part = &key_def->parts[i];
-		if (part->type <= FIELD_TYPE_ANY ||
+		if (!field_type_can_be_index_part(part->type) ||
 		    part->type >= FIELD_TYPE_ARRAY) {
 			diag_set(ClientError, ER_MODIFY_INDEX,
 				 index_def->name, space_name(space),
@@ -1985,6 +1986,7 @@ vy_update(struct vy_env *env, struct vy_tx *tx, struct txn_stmt *stmt,
 		region_truncate(&fiber()->gc, region_svp);
 		return -1;
 	}
+	/* JSON is taken as is, see doc/json-perimeter.md#space-dml. */
 	stmt->new_tuple = vy_stmt_new_replace(pk->mem_format, new_tuple,
 					      new_tuple_end);
 	region_truncate(&fiber()->gc, region_svp);

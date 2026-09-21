@@ -61,8 +61,9 @@ test_tuple_new_va(const char *format, va_list ap)
 	fail_if(mp_size > mp_buf_size);
 
 	/* Create a tuple. */
-	struct tuple *tuple = tuple_new(tuple_format_runtime, mp_buf,
-					mp_buf + mp_size);
+	struct tuple *tuple =
+		tuple_new_checked(tuple_format_runtime, mp_buf,
+				  mp_buf + mp_size);
 	fail_if(tuple == NULL);
 
 	region_truncate(region, region_svp);

@@ -179,6 +179,13 @@ field_type_is_comparable(enum field_type type)
 	       type == FIELD_TYPE_JSON;
 }
 
+bool
+field_type_can_be_index_part(enum field_type type)
+{
+	return type > FIELD_TYPE_ANY && type != FIELD_TYPE_ARRAY &&
+	       type != FIELD_TYPE_MAP && type != FIELD_TYPE_JSON;
+}
+
 /**
  * Table of field type index lookup compatibility.
  * For an i row and j column:

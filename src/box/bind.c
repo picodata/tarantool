@@ -30,7 +30,6 @@
  */
 #include "bind.h"
 #include "errcode.h"
-#include "fiber.h"
 #include "small/region.h"
 #include "sql/sqlInt.h"
 #include "sql/sqlLimit.h"
@@ -40,7 +39,6 @@
 #include "mp_decimal.h"
 #include "mp_uuid.h"
 #include "mp_json.h"
-#include "box/msgpack.h"
 
 const char *
 sql_bind_name(const struct sql_bind *bind)
@@ -107,34 +105,21 @@ sql_bind_decode(struct sql_bind *bind, int i, const char **packet)
 		bind->s = mp_decode_bin(packet, &bind->bytes);
 		break;
 	case MP_EXT: {
+		const char *ext_start = *packet;
 		int8_t ext_type;
 		uint32_t size = mp_decode_extl(packet, &ext_type);
 		switch (ext_type) {
-		case MP_JSON: {
-			struct region *region = &fiber()->gc;
-			uint32_t max_size = mp_sizeof_json_len(size);
-			char *env = region_alloc(region, max_size);
-			if (env == NULL) {
-				diag_set(OutOfMemory, max_size, "region_alloc",
-					 "json bind");
-				return -1;
-			}
-			uint32_t err_off = 0;
-			uint32_t env_size =
-				mp_encode_json_normalized(env, *packet, size,
-							  &err_off);
-			if (env_size == 0) {
-				diag_set(ClientError, ER_INVALID_MSGPACK,
-					 tt_sprintf("invalid JSON value in a "
-						    "bind at offset %u",
-						    (unsigned)err_off));
-				return -1;
-			}
+		case MP_JSON:
+			/*
+			 * JSON is taken as is,
+			 * see doc/json-perimeter.md#sql-bind-module.
+			 */
 			*packet += size;
-			bind->s = env;
-			bind->bytes = env_size;
+			assert(mp_verify_json(ext_start, *packet, NULL) ==
+			       JSON_NORM_OK);
+			bind->s = ext_start;
+			bind->bytes = (uint32_t)(*packet - ext_start);
 			break;
-		}
 		case MP_UUID:
 			if (uuid_unpack(packet, size, &bind->uuid) == NULL) {
 				diag_set(ClientError, ER_INVALID_MSGPACK,
@@ -172,20 +157,13 @@ sql_bind_decode(struct sql_bind *bind, int i, const char **packet)
 		break;
 	}
 	case MP_ARRAY:
-	case MP_MAP: {
-		const char *value = *packet;
+	case MP_MAP:
+		bind->s = *packet;
 		mp_next(packet);
-		uint32_t size = (uint32_t)(*packet - value);
-		/* A container hides a JSON value from every other pass. */
-		uint32_t err_off = 0;
-		enum json_norm_status rc =
-			mp_verify_json(value, value + size, &err_off);
-		if (json_norm_handle(rc, err_off, "a bind") != 0)
-			return -1;
-		bind->s = value;
-		bind->bytes = size;
+		bind->bytes = *packet - bind->s;
+		/* The same promise as the MP_JSON arm, at any depth. */
+		assert(mp_verify_json(bind->s, *packet, NULL) == JSON_NORM_OK);
 		break;
-	}
 	default:
 		unreachable();
 	}

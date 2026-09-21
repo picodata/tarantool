@@ -35,6 +35,7 @@
 #include <stddef.h>
 #include <sys/uio.h> /* struct iovec */
 
+#include "msgpuck/msgpuck.h" /* mp_check_ext_data_f */
 #include "diag.h"
 #include "iproto_features.h"
 #include "iproto_constants.h"
@@ -155,6 +156,10 @@ xrow_header_encode(const struct xrow_header *header, uint64_t sync,
  * @param end the end of a packet
  * @param end_is_exact if set, raise an error in case the packet
  *                     ends before @end
+ * @param ext_check MP_EXT validator for the header and the body, or NULL
+ *                     for the process-wide default. Which callers pass
+ *                     msgpack_check_ext_data_strict() and which pass NULL
+ *                     is in doc/json-perimeter.md.
  * @retval 0 on success
  * @retval -1 on error (check diag)
  * @post *pos <= end on success
@@ -162,7 +167,8 @@ xrow_header_encode(const struct xrow_header *header, uint64_t sync,
  */
 int
 xrow_header_decode(struct xrow_header *header, const char **pos,
-		   const char *end, bool end_is_exact);
+		   const char *end, bool end_is_exact,
+		   mp_check_ext_data_f ext_check);
 
 /**
  * DML request.
@@ -1082,9 +1088,11 @@ vclock_follow_xrow(struct vclock* vclock, const struct xrow_header *row)
 /** @copydoc xrow_header_decode. */
 static inline void
 xrow_header_decode_xc(struct xrow_header *header, const char **pos,
-		      const char *end, bool end_is_exact)
+		      const char *end, bool end_is_exact,
+		      mp_check_ext_data_f ext_check)
 {
-	if (xrow_header_decode(header, pos, end, end_is_exact) < 0)
+	if (xrow_header_decode(header, pos, end, end_is_exact,
+			       ext_check) < 0)
 		diag_raise();
 }
 

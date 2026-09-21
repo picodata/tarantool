@@ -44,6 +44,7 @@
 #include "tuple_bloom.h"
 #include "tuple_format.h"
 #include "xrow.h"
+#include "mp_json.h"
 #include "fiber.h"
 #include "vy_mem.h"
 
@@ -334,7 +335,7 @@ struct tuple *
 vy_stmt_dup(struct tuple *stmt)
 {
 	/*
-	 * Avoid tuple_new() to skip rebuilding the field offset
+	 * Avoid a full tuple build to skip rebuilding the field offset
 	 * map; copy it verbatim from the source. The base tuple
 	 * header is left as set by tuple_create -- copying it
 	 * would clobber the dup's cord-bound TUPLE_TX_LOCAL flag.
@@ -807,6 +808,10 @@ vy_stmt_decode(struct xrow_header *xrow, struct tuple_format *format)
 	key_map &= ~(1ULL << IPROTO_SPACE_ID); /* space_id is optional */
 	if (xrow_decode_dml(xrow, &request, key_map) != 0)
 		return NULL;
+	/* JSON is taken as is, see doc/json-perimeter.md#vinyl-run-read. */
+	assert(request.tuple == NULL ||
+	       mp_verify_json(request.tuple, request.tuple_end,
+			      NULL) == JSON_NORM_OK);
 	struct tuple *stmt = NULL;
 	struct iovec ops;
 	switch (request.type) {

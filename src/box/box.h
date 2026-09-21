@@ -529,6 +529,8 @@ box_tuple_check_size(uint32_t space_id, size_t tuple_len);
  * expected to be a single encoded object. An attempt to encode
  * and return multiple objects without wrapping them into an
  * MP_ARRAY or MP_MAP is undefined behaviour.
+ * Every MP_JSON value in it, at any depth, must be in normal form,
+ * as for box_insert().
  *
  * \param ctx An opaque structure passed to the stored C procedure
  *        by Tarantool.
@@ -570,6 +572,12 @@ box_index_id_by_name(uint32_t space_id, const char *name, uint32_t len);
 /**
  * Execute an INSERT request.
  *
+ * Every MP_JSON value in the request, at any depth and in any field, must be
+ * in normal form. This call and box_replace(), box_update() and box_upsert()
+ * do not check it, and a value that is not sorts wrongly for as long as it is
+ * stored. If you are not sure, call tnt_json_normalize() first. See
+ * doc/json-perimeter.md#module-contract in the Tarantool source.
+ *
  * \param space_id space identifier
  * \param tuple encoded tuple in MsgPack Array format ([ field1, field2, ...])
  * \param tuple_end end of @a tuple
@@ -583,7 +591,9 @@ box_insert(uint32_t space_id, const char *tuple, const char *tuple_end,
 	   box_tuple_t **result);
 
 /**
- * Execute an REPLACE request.
+ * Execute a REPLACE request.
+ *
+ * Requires normal-form JSON exactly as box_insert() does; see there.
  *
  * \param space_id space identifier
  * \param tuple encoded tuple in MsgPack Array format ([ field1, field2, ...])
@@ -598,7 +608,9 @@ box_replace(uint32_t space_id, const char *tuple, const char *tuple_end,
 	    box_tuple_t **result);
 
 /**
- * Execute an DELETE request.
+ * Execute a DELETE request.
+ *
+ * Requires normal-form JSON exactly as box_insert() does; see there.
  *
  * \param space_id space identifier
  * \param index_id index identifier
@@ -615,6 +627,8 @@ box_delete(uint32_t space_id, uint32_t index_id, const char *key,
 
 /**
  * Execute an UPDATE request.
+ *
+ * Requires normal-form JSON exactly as box_insert() does; see there.
  *
  * \param space_id space identifier
  * \param index_id index identifier
@@ -638,6 +652,8 @@ box_update(uint32_t space_id, uint32_t index_id, const char *key,
 
 /**
  * Execute an UPSERT request.
+ *
+ * Requires normal-form JSON exactly as box_insert() does; see there.
  *
  * \param space_id space identifier
  * \param index_id index identifier

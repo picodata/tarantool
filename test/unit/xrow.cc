@@ -215,7 +215,7 @@ test_xrow_header_encode_decode()
 	char buffer[2048];
 	char *pos = mp_encode_uint(buffer, 300);
 	is(xrow_header_decode(&header, (const char **) &pos,
-			      buffer + 100, true), -1, "bad msgpack end");
+			      buffer + 100, true, NULL), -1, "bad msgpack end");
 
 	header.type = 100;
 	header.replica_id = 200;
@@ -255,8 +255,8 @@ test_xrow_header_encode_decode()
 		begin += fixheader_len;
 		const char *end = (const char *)vec[0].iov_base;
 		end += vec[0].iov_len;
-		is(xrow_header_decode(&decoded_header, &begin, end, true), 0,
-		   "header decode");
+		is(xrow_header_decode(&decoded_header, &begin, end, true, NULL),
+		   0, "header decode");
 		is(header.stream_id, decoded_header.stream_id, "decoded stream_id");
 		is(header.is_commit, decoded_header.is_commit, "decoded is_commit");
 		is(header.wait_sync, decoded_header.wait_sync, "decoded wait_sync");
@@ -448,7 +448,7 @@ test_xrow_decode_unknown_key(void)
 	const char *end = buf + mp_format(buf, sizeof(buf), "{%u%s}",
 					  0xDEAD, "foobar");
 	struct xrow_header header;
-	is(xrow_header_decode(&header, &p, end, /*end_is_exact=*/true), 0,
+	is(xrow_header_decode(&header, &p, end, /*end_is_exact=*/true, NULL), 0,
 	   "xrow_header_decode");
 
 	memset(&header, 0, sizeof(header));

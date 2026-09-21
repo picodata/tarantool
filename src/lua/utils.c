@@ -260,18 +260,15 @@ luaT_json_check(const char *data, uint32_t len, struct json_norm *out)
 const char *
 luaT_json_tostring(const char *data, uint32_t len, uint32_t *out_len)
 {
-	struct json_norm norm;
-	if (luaT_json_check(data, len, &norm) != 0)
-		return NULL;
-	const char *p = norm.data;
-	int size = mp_snprint_json(NULL, 0, &p, norm.len);
+	const char *p = data;
+	int size = mp_snprint_json(NULL, 0, &p, len);
 	if (size < 0) {
-		diag_set(LuajitError, "Failed to render JSON value");
+		diag_set(LuajitError, "Invalid JSON value");
 		return NULL;
 	}
 	char *buf = xregion_alloc(&fiber()->gc, size + 1);
-	p = norm.data;
-	mp_snprint_json(buf, size + 1, &p, norm.len);
+	p = data;
+	mp_snprint_json(buf, size + 1, &p, len);
 	*out_len = (uint32_t)size;
 	return buf;
 }
@@ -1093,6 +1090,11 @@ tarantool_lua_utils_init(struct lua_State *L)
 	assert(rc == 0);
 	CTID_VARBINARY = luaL_ctypeid(L, "struct varbinary");
 	assert(CTID_VARBINARY != 0);
+	/*
+	 * A JSON cdata holds the raw inner value, not a decoded struct. What a
+	 * consumer may assume about those bytes, and which ways of making one
+	 * vouch for them, is in doc/json-perimeter.md#cdata-contract.
+	 */
 	rc = luaL_cdef(L, "struct mp_json { char data[?]; };");
 	assert(rc == 0);
 	CTID_JSON = luaL_metatype(L, "struct mp_json", lua_mp_json_methods);

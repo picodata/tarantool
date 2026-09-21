@@ -97,7 +97,11 @@ tnt_mp_sizeof_json(uint32_t data_len);
 int
 tnt_mp_verify_json(const char *data, uint32_t len, uint32_t *err_off);
 
-/** Wrapper around mp_snprint_json(). Refuses a non-normalized payload. */
+/**
+ * Wrapper around mp_snprint_json(). The payload must be in normal form, as for
+ * box_insert(); this does not check it. Malformed bytes still give -1 rather
+ * than a read past @a len.
+ */
 int
 tnt_mp_snprint_json(char *buf, int size, const char **data, uint32_t len);
 

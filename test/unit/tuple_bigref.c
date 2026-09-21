@@ -83,7 +83,8 @@ static inline struct tuple *
 create_tuple()
 {
 	struct tuple *ret =
-		tuple_new(box_tuple_format_default(), tuple_buf, tuple_end);
+		tuple_new_checked(box_tuple_format_default(), tuple_buf,
+				  tuple_end);
 	tuple_ref(ret);
 	return ret;
 }

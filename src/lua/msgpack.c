@@ -127,36 +127,8 @@ struct luaL_serializer *luaL_msgpack_default = NULL;
 /*
  * Return the bytes an msgpack.object holds, or NULL if the value at @a idx is
  * not one. Every caller copies them straight through, so this is the one way
- * MessagePack gets into an encoder without being encoded.
- *
- * That is why the places that copy such a range without checking it again can
- * get away with it: only three things make an msgpack.object, and all three
- * check first.
- *
- *   msgpack.object(value)         encodes through luamp_encode(), the same
- *                                 path as msgpack.encode().
- *   msgpack.object_from_raw(str)  walks the bytes with luamp_check_or_raise()
- *                                 before the object exists.
- *   luamp_push()                  wraps bytes this process already has: a
- *                                 stored function's raw arguments and an
- *                                 iproto override handler's header and body,
- *                                 which xrow_header_decode() walked at the
- *                                 network boundary, and a net.box response
- *                                 body, required to be in normal form by the
- *                                 peer contract and asserted in
- *                                 netbox_transport_send_and_recv() in a debug
- *                                 build.
- *
- * So JSON in a spliced range has been judged already, and a site that can only
- * ever see spliced bytes is not the last look it would be if an object could
- * be forged. Three rely on that and say so: the MAP/ARRAY bind in
- * box/lua/execute.c, the MAP/ARRAY Lua function return in box/sql/mem.c, and
- * the key in box/lua/key_def.c.
- *
- * The cost is stated where it is taken: a peer that breaks the contract in a
- * release build can put a non-normal, or malformed, JSON value into an object
- * through return_raw, and those three sites will pass it on. A fourth
- * unchecked producer would invalidate all three at once.
+ * MessagePack gets into an encoder without being encoded. Why that is safe is
+ * in doc/json-perimeter.md#msgpack-object.
  */
 const char *
 luamp_get(struct lua_State *L, int idx, size_t *data_len)
@@ -382,16 +354,8 @@ restart: /* used by MP_EXT of unidentified subtype */
 			break;
 		case MP_JSON: {
 			/*
-			 * Emits normal form or nothing, and does not establish
-			 * it: every producer of a JSON cdata already does (JSON
-			 * text through tnt_json_parse(); a SQL cast and a tuple
-			 * field read off values normal by storage's own
-			 * invariant). So bytes arriving here non-normal come
-			 * only from an ffi.new('struct mp_json', n) forgery or
-			 * a raw value the script decoded and chose not to fix.
-			 * Repairing those would repair on the producer's
-			 * behalf, and leave the encoder as the one place where
-			 * a wrong spelling is silently acceptable.
+			 * JSON is checked here,
+			 * see doc/json-perimeter.md#lua-c-encoder.
 			 */
 			struct json_norm value;
 			if (luaT_json_check(field->sval.data,

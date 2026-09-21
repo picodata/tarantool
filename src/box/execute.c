@@ -76,6 +76,7 @@ sql_changed_to_port(struct region *region, struct port *port)
 	mem_set_int(&mem, sql_get()->nChange);
 	char *pos = mem_encode_array(&mem, 1, &size, region);
 
+	/* JSON is taken as is, see doc/json-perimeter.md#vdbe-tuple. */
 	struct tuple *tuple =
 		tuple_new(box_tuple_format_default(), pos, pos + size);
 	if (tuple == NULL)
@@ -107,6 +108,7 @@ sql_row_to_port(struct sql_stmt *stmt, struct region *region, struct port *port)
 	struct Vdbe *vdbe = (struct Vdbe *)stmt;
 	char *pos = mem_encode_array(vdbe->pResultSet, vdbe->nResColumn, &size,
 				     region);
+	/* JSON is taken as is, see doc/json-perimeter.md#vdbe-tuple. */
 	struct tuple *tuple =
 		tuple_new(box_tuple_format_default(), pos, pos + size);
 	if (tuple == NULL)

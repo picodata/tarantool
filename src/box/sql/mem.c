@@ -39,6 +39,7 @@
 #include "box/tuple.h"
 #include "mpstream/mpstream.h"
 #include "box/port.h"
+#include "box/msgpack.h"
 #include "lua/utils.h"
 #include "lua/serializer.h"
 #include "lua/msgpack.h"
@@ -49,8 +50,6 @@
 #include "mp_uuid.h"
 #include "mp_util.h"
 #include "mp_json.h"
-#include "mp_json_norm.h"
-#include "box/msgpack.h"
 #include "json_parse.h"
 
 #define CMP_OLD_NEW(a, b, type) (((a) > (type)(b)) - ((a) < (type)(b)))
@@ -3914,11 +3913,10 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 			}
 			uint32_t size = region_used(region) - used;
 			const char *raw = xregion_join(region, size);
-			uint32_t err_off = 0;
-			if (json_norm_handle(mp_verify_json(raw, raw + size,
-							    &err_off),
-					     err_off, "a Lua function") != 0)
-				goto error;
+			/*
+			 * JSON is taken as is,
+			 * see doc/json-perimeter.md#lua-return.
+			 */
 			if (is_map)
 				mem_copy_map(&val[i], raw, size);
 			else
@@ -3936,13 +3934,10 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 			} else if (field.ext_type == MP_INTERVAL) {
 				mem_set_interval(&val[i], field.interval);
 			} else if (field.ext_type == MP_JSON) {
-				uint32_t err_off = 0;
-				enum json_norm_status status =
-					json_verify(field.sval.data,
-						    field.sval.len, &err_off);
-				if (json_norm_handle(status, err_off,
-						     "a Lua function") != 0)
-					goto error;
+				/*
+				 * JSON is taken as is,
+				 * see doc/json-perimeter.md#lua-return.
+				 */
 				struct json_norm norm =
 					json_norm_from_trusted(field.sval.data,
 							       field.sval.len);
@@ -4059,21 +4054,16 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 			mem_copy_bin(&val[i], str, len);
 			break;
 		case MP_MAP:
-		case MP_ARRAY: {
-			uint32_t size = mp_value_size;
-			bool is_map = mp_typeof(*data) == MP_MAP;
-			const char *raw = data;
-			uint32_t err_off = 0;
-			if (json_norm_handle(mp_verify_json(raw, raw + size,
-							    &err_off),
-					     err_off, "a C function") != 0)
-				goto error;
-			if (is_map)
-				mem_copy_map(&val[i], raw, size);
+		case MP_ARRAY:
+			/*
+			 * JSON is taken as is,
+			 * see doc/json-perimeter.md#c-return.
+			 */
+			if (mp_typeof(*data) == MP_MAP)
+				mem_copy_map(&val[i], data, mp_value_size);
 			else
-				mem_copy_array(&val[i], raw, size);
+				mem_copy_array(&val[i], data, mp_value_size);
 			break;
-		}
 		case MP_EXT:
 			str = data;
 			int8_t type;
@@ -4122,24 +4112,13 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 				val[i].type = MEM_TYPE_INTERVAL;
 				break;
 			} else if (type == MP_JSON) {
-				uint32_t max_size = mp_sizeof_json_len(len);
-				char *env = region_alloc(region, max_size);
-				if (env == NULL) {
-					diag_set(OutOfMemory, max_size,
-						 "region_alloc", "json");
-					goto error;
-				}
-				uint32_t env_size = mp_encode_json_normalized(
-					env, data, len, NULL);
-				if (env_size == 0) {
-					diag_set(ClientError,
-						 ER_INVALID_MSGPACK, "Invalid "
-						 "MP_JSON MsgPack format");
-					goto error;
-				}
+				/*
+				 * JSON is taken as is,
+				 * see doc/json-perimeter.md#c-return.
+				 */
+				mem_set_json(&val[i],
+					     json_norm_from_trusted(data, len));
 				data += len;
-				mem_copy_bytes(&val[i], env, env_size,
-					       MEM_TYPE_JSON);
 				break;
 			}
 			data += len;

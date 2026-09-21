@@ -57,8 +57,9 @@ coio_read_xrow(struct iostream *io, struct ibuf *in, struct xrow_header *row)
 	if (len > ibuf_used(in))
 		coio_breadn(io, in, len - ibuf_used(in));
 
+	/* JSON is taken as is, see doc/json-perimeter.md#applier. */
 	xrow_header_decode_xc(row, (const char **) &in->rpos, in->rpos + len,
-			      true);
+			      true, /*ext_check=*/NULL);
 }
 
 void
@@ -88,8 +89,9 @@ coio_read_xrow_timeout_xc(struct iostream *io, struct ibuf *in,
 	if (len > ibuf_used(in))
 		coio_breadn_timeout(io, in, len - ibuf_used(in), delay);
 
+	/* JSON is taken as is, see doc/json-perimeter.md#applier. */
 	xrow_header_decode_xc(row, (const char **) &in->rpos, in->rpos + len,
-			      true);
+			      true, /*ext_check=*/NULL);
 }
 
 

@@ -154,13 +154,8 @@ tnt_mp_verify_json(const char *data, uint32_t len, uint32_t *err_off)
 int
 tnt_mp_snprint_json(char *buf, int size, const char **data, uint32_t len)
 {
-	/*
-	 * mp_snprint_json() assumes a normalized payload, but an external
-	 * module cannot know whether its bytes are. Check here so a malformed
-	 * payload is a clean -1 rather than a walk off the end.
-	 */
-	if (!json_is_normalized(*data, len))
-		return -1;
+	/* JSON is taken as is, see doc/json-perimeter.md#external-renderer. */
+	assert(json_is_normalized(*data, len));
 	return mp_snprint_json(buf, size, data, len);
 }
 

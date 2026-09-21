@@ -54,7 +54,7 @@ merge_source_array_new(bool even)
 	struct tuple_format *format = tuple_format_runtime;
 	for (uint32_t i = 0; i < tuple_count; ++i) {
 		const char *end = data[i] + tuple_size;
-		source->tuples[i] = tuple_new(format, data[i], end);
+		source->tuples[i] = tuple_new_checked(format, data[i], end);
 		tuple_ref(source->tuples[i]);
 	}
 	source->tuple_count = tuple_count;

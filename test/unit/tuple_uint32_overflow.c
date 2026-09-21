@@ -16,7 +16,7 @@ tuple_new_data()
 	end = mp_encode_uint(end, UINT32_MAX);
 	end = mp_encode_uint(end, UINT64_MAX);
 	struct tuple *tuple;
-	tuple = tuple_new(tuple_format_runtime, data, end);
+	tuple = tuple_new_checked(tuple_format_runtime, data, end);
 	tuple_ref(tuple);
 
 	return tuple;

@@ -711,6 +711,7 @@ after_old_tuple_lookup:;
 
 	struct tuple *new_tuple = NULL;
 	if (new_data != NULL) {
+		/* JSON is taken as is, see doc/json-perimeter.md#space-dml. */
 		new_tuple = tuple_new(tuple_format_runtime,
 				      new_data, new_data_end);
 		region_truncate(&fiber()->gc, region_svp);

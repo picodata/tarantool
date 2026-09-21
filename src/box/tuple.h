@@ -37,6 +37,7 @@
 #include "tt_static.h"
 #include "tt_uuid.h"
 #include "tuple_format.h"
+#include "mp_json.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -48,7 +49,7 @@ struct key_part;
 
 /**
  * A format for standalone tuples allocated on runtime arena.
- * \sa tuple_new().
+ * \sa tuple_new_checked(), tuple_new().
  */
 extern struct tuple_format *tuple_format_runtime;
 
@@ -322,14 +323,22 @@ box_tuple_next(box_tuple_iterator_t *it);
  * \param end the end of \a data
  * \retval tuple
  * \pre data, end is valid MsgPack Array
+ * \pre every MP_JSON value in it is in normal form, as for box_insert(): this
+ * does not check, and a debug build asserts
  * \sa \code box.tuple.new(data) \endcode
  */
 box_tuple_t *
 box_tuple_new(box_tuple_format_t *format, const char *data, const char *end);
 
+/**
+ * Apply update operations @a expr to @a tuple and return the result as a new
+ * tuple. Every MP_JSON value in @a expr must be in normal form, as for
+ * box_insert(): this does not check, and a debug build asserts.
+ */
 box_tuple_t *
 box_tuple_update(box_tuple_t *tuple, const char *expr, const char *expr_end);
 
+/** Like box_tuple_update(), with upsert operations. */
 box_tuple_t *
 box_tuple_upsert(box_tuple_t *tuple, const char *expr, const char *expr_end);
 
@@ -719,8 +728,11 @@ tuple_is_compressed(struct tuple *tuple)
 
 /**
  * Instantiate a new engine-independent tuple from raw MsgPack Array data
- * using runtime arena. Use this function to create a standalone tuple
- * from Lua or C procedures.
+ * using runtime arena, without normalizing anything.
+ *
+ * Internal to the two calls below. Nothing else may use it: picking one of
+ * those two forces the caller to say whether the bytes have been checked,
+ * which is the whole reason the split exists.
  *
  * \param format tuple format.
  * \param data tuple data in MsgPack Array format ([field1, field2, ...]).
@@ -729,10 +741,79 @@ tuple_is_compressed(struct tuple *tuple)
  * \retval NULL on out of memory
  */
 static inline struct tuple *
-tuple_new(struct tuple_format *format, const char *data, const char *end)
+tuple_new_impl(struct tuple_format *format, const char *data, const char *end)
 {
 	return format->vtab.tuple_new(format, data, end);
 }
+
+/**
+ * Turn the answer from json_verify() or mp_verify_json() into an error, or
+ * into nothing when the value is fine. Wrong key order gets
+ * ER_JSON_NOT_NORMALIZED and the offset; anything else gets
+ * ER_INVALID_MSGPACK and "invalid JSON value in @a where at offset N".
+ *
+ * Every check in box reports through here, so a client sees the same two error
+ * codes worded the same way whichever one caught the value. It sits in
+ * libtuple, away from the check in src/box/msgpack.c that is its main
+ * caller, because libtuple is the lowest library that reaches the box error
+ * codes, and the check below it in the stack, tuple_validate_json(), needs it
+ * as well.
+ *
+ * @a where is the only part a caller picks: a noun for whatever is being
+ * decoded, as in "a request". It is evaluated on the good path too, so keep
+ * it cheap, a string literal in practice. Pass NULL when the caller words the
+ * malformed case itself, as tuple_validate_json() does to name the offending
+ * field.
+ *
+ * Above box, src/lua cannot reach these codes and reports the same two
+ * failures as a LuajitError through luaT_json_check().
+ *
+ * @retval 0 if @a rc is JSON_NORM_OK, -1 otherwise with the diag set.
+ */
+int
+json_norm_handle(enum json_norm_status rc, uint32_t err_off,
+		 const char *where);
+
+/**
+ * Refuse a MessagePack tuple unless every JSON value in [@a data, @a end), at
+ * any depth and position, is in normal form. Bounds-checked on both sides, so
+ * it is safe to pass bytes from anywhere.
+ */
+int
+tuple_validate_json(struct tuple_format *format, const char *data,
+		    const char *end);
+
+/**
+ * Build a tuple from bytes of unknown origin, refusing it unless every JSON
+ * value in @a data is in normal form. See
+ * doc/json-perimeter.md#trusted-builders for when to use this and when
+ * tuple_new().
+ *
+ * What gets trusted is the bytes, not where they sit: @a format is read only
+ * to name a bad value, so a tuple with no format, a field past the end of the
+ * format and an undescribed position inside a described container are all
+ * covered on the same terms as a typed column.
+ *
+ * \retval tuple on success
+ * \retval NULL on out of memory, or on a value that is not normalized JSON
+ */
+struct tuple *
+tuple_new_checked(struct tuple_format *format, const char *data,
+		  const char *end);
+
+/**
+ * Build a tuple from bytes already known to be in normal form. What comes out
+ * is the same as from tuple_new_checked(), guaranteed by an assert instead of
+ * by work, so nothing downstream has to know which of the two built a tuple.
+ *
+ * The caller MUST say in a comment why it is sure, normally by pointing into
+ * doc/json-perimeter.md. Under NDEBUG this checks nothing.
+ *
+ * \retval tuple on success
+ * \retval NULL on out of memory
+ */
+struct tuple *
+tuple_new(struct tuple_format *format, const char *data, const char *end);
 
 /**
  * Free the tuple of any engine.

@@ -598,7 +598,10 @@ luaL_merge_source_buffer_next(struct merge_source *base,
 	--source->remaining_tuple_count;
 	if (format == NULL)
 		format = tuple_format_runtime;
-	struct tuple *tuple = tuple_new(format, tuple_beg, tuple_end);
+	/*
+	 * JSON is checked here, see doc/json-perimeter.md#tuple-from-raw-bytes.
+	 */
+	struct tuple *tuple = tuple_new_checked(format, tuple_beg, tuple_end);
 	ibuf_consume_before(source->buf, tuple_end);
 	if (tuple == NULL)
 		return -1;

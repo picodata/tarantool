@@ -494,6 +494,7 @@ t;
  |   273: box.error.SQL_STATEMENT_DUPLICATE
  |   274: box.error.UNCONFIGURED
  |   275: box.error.JSON_PARSE
+ |   276: box.error.JSON_NOT_NORMALIZED
  |   277: box.error.INVALID_DEC
  |   278: box.error.IN_ANOTHER_PROMOTE
  |   280: box.error.PICO_CLUSTER_UUID_MISMATCH

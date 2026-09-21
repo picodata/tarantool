@@ -55,6 +55,11 @@ static struct tuple_format_vtab test_tuple_format_vtab = {
 static struct tuple *
 alloc_tuple()
 {
+	/*
+	 * Nothing to prove here. This format's tuple_new is a stub that
+	 * asserts the range is NULL and never reads a byte of it, so there is
+	 * nothing to check and nothing to walk.
+	 */
 	struct tuple *tuple = tuple_new(test_tuple_format, NULL, NULL);
 	fail_if(tuple == NULL);
 	return tuple;

@@ -122,6 +122,15 @@ bool
 field_type_is_comparable(enum field_type type);
 
 /**
+ * Check if values of @a type may be an index part. False for ANY/ARRAY/MAP,
+ * which have no ordering, and for JSON, whose comparator assumes normal form
+ * and is reachable only through the key_def API and SQL. Engines restrict this
+ * further, so a true answer is necessary rather than sufficient.
+ */
+bool
+field_type_can_be_index_part(enum field_type type);
+
+/**
  * Check if type1 is index-lookup-compatible with type2, meaning that
  * we may find value of type1 in an index of values of type2.
  *

@@ -59,7 +59,8 @@ sql_unprepare(uint32_t stmt_id);
  * Extract a prepared statement from the statement cache and execute it.
  * The result is stored into an out buffer (exported version).
  * @param stmt_id prepared statement ID.
- * @param mp_params MessagePack array of parameters.
+ * @param mp_params MessagePack array of parameters. Every MP_JSON value in
+ *        it must be in normal form, as for box_insert().
  * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
  * @param[out] out_buf Output buffer for SQL result.
  *
@@ -74,7 +75,8 @@ sql_execute_prepared_ext(uint32_t stmt_id, const char *mp_params,
  * Extract a prepared statement from the statement cache and execute it.
  * The result is stored into a port (exported version).
  * @param stmt_id prepared statement ID.
- * @param mp_params MessagePack array of parameters.
+ * @param mp_params MessagePack array of parameters. Every MP_JSON value in
+ *        it must be in normal form, as for box_insert().
  * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
  * @param[out] port Initialized port to store SQL result.
  *
@@ -95,7 +97,8 @@ sql_execute_prepared(uint32_t query_id, const struct sql_bind *bind,
  * into an out buffer (exported version).
  * @param sql SQL text.
  * @param len Length of the SQL text.
- * @param mp_params MessagePack array of parameters.
+ * @param mp_params MessagePack array of parameters. Every MP_JSON value in
+ *        it must be in normal form, as for box_insert().
  * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
  * @param[out] out_buf Output buffer for SQL result.
  */
@@ -108,7 +111,8 @@ sql_prepare_and_execute_ext(const char *sql, int len, const char *mp_params,
  * into a port (exported version).
  * @param sql SQL text.
  * @param len Length of the SQL text.
- * @param mp_params MessagePack array of parameters.
+ * @param mp_params MessagePack array of parameters. Every MP_JSON value in
+ *        it must be in normal form, as for box_insert().
  * @param vdbe_max_steps Maximum number of VDBE instructions to execute.
  * @param[out] port Initialized port to store SQL result.
  */
@@ -128,6 +132,9 @@ sql_execute_into_port(const char *sql, int len, const char *mp_params,
  * has a valid schema version and take appropriate measures
  * (e.g. recreate or reprepare it) before calling this function
  * to avoid "statement is busy" or "invalid schema verions" errors.
+ *
+ * Every MP_JSON value in @a mp_params must be in normal form, as for
+ * box_insert().
  */
 int
 sql_stmt_execute_into_port_ext(struct sql_stmt *stmt, const char *mp_params,

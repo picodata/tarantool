@@ -688,6 +688,18 @@ bool
 tuple_format_apply_defaults(struct tuple_format *format, const char **data,
 			    const char **data_end);
 
+/**
+ * Describe where in a tuple an invalid value sits, for a diagnostic.
+ * Runs only on a rejection, never on the hot path.
+ *
+ * @param format the tuple's format, used only to name a described field.
+ * @param errpos the offset within @a data of the offending value.
+ * @return a static-buffer string, valid until the next tt_sprintf() call.
+ */
+const char *
+tuple_json_error_path(struct tuple_format *format, const char *data,
+		      const char *end, uint32_t errpos);
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */

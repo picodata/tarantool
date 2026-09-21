@@ -37,6 +37,8 @@
 #include "small/small.h"
 #include "xrow_update.h"
 #include "coll_id_cache.h"
+#include "mp_json.h"
+#include "tuple_format.h"
 
 static struct mempool tuple_iterator_pool;
 static struct small_alloc runtime_alloc;
@@ -766,6 +768,7 @@ box_tuple_update(box_tuple_t *tuple, const char *expr, const char *expr_end)
 				    format, &new_size, 1, NULL);
 	if (new_data == NULL)
 		return NULL;
+	/* JSON is taken as is, see doc/json-perimeter.md#space-dml. */
 	struct tuple *ret = tuple_new(format, new_data, new_data + new_size);
 	region_truncate(region, used);
 	if (ret != NULL)
@@ -786,7 +789,7 @@ box_tuple_upsert(box_tuple_t *tuple, const char *expr, const char *expr_end)
 				    format, &new_size, 1, false, NULL);
 	if (new_data == NULL)
 		return NULL;
-
+	/* JSON is taken as is, see doc/json-perimeter.md#space-dml. */
 	struct tuple *ret = tuple_new(format, new_data, new_data + new_size);
 	region_truncate(region, used);
 	if (ret != NULL)
@@ -794,9 +797,64 @@ box_tuple_upsert(box_tuple_t *tuple, const char *expr, const char *expr_end)
 	return NULL;
 }
 
+struct tuple *
+tuple_new_checked(struct tuple_format *format, const char *data,
+		  const char *end)
+{
+	if (tuple_validate_json(format, data, end) != 0)
+		return NULL;
+	return tuple_new_impl(format, data, end);
+}
+
+int
+json_norm_handle(enum json_norm_status rc, uint32_t err_off, const char *where)
+{
+	switch (rc) {
+	case JSON_NORM_OK:
+		return 0;
+	case JSON_NORM_REWRITABLE:
+		diag_set(ClientError, ER_JSON_NOT_NORMALIZED,
+			 (unsigned)err_off);
+		return -1;
+	default:
+		assert(where != NULL);
+		diag_set(ClientError, ER_INVALID_MSGPACK,
+			 tt_sprintf("invalid JSON value in %s at offset %u",
+				    where, (unsigned)err_off));
+		return -1;
+	}
+}
+
+int
+tuple_validate_json(struct tuple_format *format, const char *data,
+		    const char *end)
+{
+	/*
+	 * The one check that words the malformed case itself, because naming
+	 * the offending field costs another walk of the tuple and must only
+	 * happen when something is wrong. The good path and the key order
+	 * case go to json_norm_handle() like every other check.
+	 */
+	uint32_t errpos = 0;
+	enum json_norm_status rc = mp_verify_json(data, end, &errpos);
+	if (rc != JSON_NORM_INVALID)
+		return json_norm_handle(rc, errpos, NULL);
+	diag_set(ClientError, ER_INVALID_MSGPACK,
+		 tuple_json_error_path(format, data, end, errpos));
+	return -1;
+}
+
+struct tuple *
+tuple_new(struct tuple_format *format, const char *data, const char *end)
+{
+	assert(data == end || mp_verify_json(data, end, NULL) == JSON_NORM_OK);
+	return tuple_new_impl(format, data, end);
+}
+
 box_tuple_t *
 box_tuple_new(box_tuple_format_t *format, const char *data, const char *end)
 {
+	/* JSON is taken as is, see doc/json-perimeter.md#box-c-api. */
 	struct tuple *ret = tuple_new(format, data, end);
 	if (ret == NULL)
 		return NULL;

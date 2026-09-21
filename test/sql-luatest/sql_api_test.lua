@@ -453,3 +453,40 @@ g.test_dml_stmt_execute_into_port = function()
         t.assert_equals(port_c.size, 1)
     end)
 end
+
+-- The exported entry points take JSON binds on trust, like box_insert(): the
+-- caller must pass normal form, and only a debug build asserts on it. So all
+-- this can check is that a normal value binds, bare and inside a bound MAP.
+g.test_sql_api_bind_takes_json_as_is = function()
+    g.server:exec(function()
+        local ffi = require('ffi')
+        local port_alloc = ffi.new("struct port[1]")
+        local port = ffi.cast("struct port *", port_alloc)
+        ffi.C.port_c_create(port)
+        local sql = 'SELECT ?'
+
+        --- [ <MP_EXT/MP_JSON ext8 around inner> ]
+        local function bind(inner)
+            return ffi.cast('char *', '\x91\xc7' .. string.char(#inner) ..
+                                      '\x14' .. inner)
+        end
+
+        -- {"a": 2, "b": 1} in normal form.
+        local res = ffi.C.sql_execute_into_port(
+            sql, #sql, bind('\x82\xa1a\x02\xa1b\x01'), 1024, port)
+        t.assert_equals(res, 0, tostring(box.error.last()))
+
+        -- The same value inside a bound MAP. The outer single-key map is the
+        -- {name: value} wrapper a named parameter travels in, so the MAP
+        -- under it is the bound value.
+        --   [ {":m": {"k": <json>}} ]
+        local function bind_map(inner)
+            return ffi.cast('char *', '\x91\x81\xa2:m\x81\xa1k\xc7' ..
+                                      string.char(#inner) .. '\x14' .. inner)
+        end
+        local sql_m = 'SELECT :m'
+        res = ffi.C.sql_execute_into_port(
+            sql_m, #sql_m, bind_map('\x82\xa1a\x02\xa1b\x01'), 1024, port)
+        t.assert_equals(res, 0, tostring(box.error.last()))
+    end)
+end

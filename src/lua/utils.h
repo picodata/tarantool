@@ -94,8 +94,8 @@ luaT_pushjson(struct lua_State *L, const char *data, uint32_t len);
 /**
  * The inner value of the JSON cdata at @a index, or NULL if it is not one.
  *
- * The bytes are the cdata's own and unverified, since a JSON cdata can be
- * forged over FFI: every consumer runs them through luaT_json_check() first.
+ * The bytes belong to the cdata and are not verified here, see
+ * doc/json-perimeter.md#cdata-contract.
  */
 const char *
 luaT_tojson(struct lua_State *L, int index, uint32_t *len);
@@ -105,10 +105,6 @@ luaT_tojson(struct lua_State *L, int index, uint32_t *len);
  * points into @a data and may be NULL to ask only for the answer. It hands
  * back a json_norm rather than a plain pointer and length, so code that needs
  * normal form cannot be given raw bytes by mistake.
- *
- * Renderers call this as well as writers. One that fixed up its input would
- * print a value the encoder beside it refuses, and the two would then disagree
- * about the same cdata.
  *
  * This is where src/lua words the two failures, the way json_norm_handle()
  * does for box: a LuajitError each, since the box error codes are out of reach
@@ -124,10 +120,8 @@ luaT_json_check(const char *data, uint32_t len, struct json_norm *out);
  * NUL-terminated. The caller captures a region savepoint and reclaims it
  * after using the text. Nothing is allocated on failure.
  *
- * It checks with luaT_json_check() first: the renderer assumes normal form,
- * and a JSON cdata can be built by hand over FFI. Checking first is what makes
- * printing a value and storing it agree about the same cdata. Every renderer
- * above src/lua comes through here, so the reasoning sits in one place.
+ * JSON is taken as is, see doc/json-perimeter.md#renderers. Malformed bytes
+ * give an error and never a read past @a len.
  *
  * @param[out] out_len the text length, not counting the terminating NUL.
  * @return the text, or NULL with the diag set.

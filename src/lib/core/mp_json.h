@@ -191,21 +191,19 @@ mp_encode_json_normalized(char *buf, const char *data, uint32_t len,
 enum json_norm_status
 mp_verify_json(const char *data, const char *end, uint32_t *errpos);
 
-struct region;
-
 /**
- * Compare two MP_EXT/MP_JSON values using PostgreSQL JSONB ordering:
+ * Compare two MP_EXT/MP_JSON values in PostgreSQL JSONB order:
  * null < string < number < bool < array < object. Strings compare bytewise,
  * then by length once a shared prefix ties; numbers by value across
  * representations; arrays by element count first, then element by element;
  * objects by size, then sorted keys, then values.
  *
- * Needs no error channel: taking json_norm makes it structurally unreachable
- * from unparsed bytes. It asserts its depth bound rather than rejecting, and
- * compares object keys positionally, both safe exactly because the type says
- * the keys are sorted and the depth is bounded.
+ * It needs no way to report an error: taking a json_norm means it can never be
+ * reached with bytes nobody parsed. It asserts its depth limit rather than
+ * refusing, and compares object keys by position, and both are safe precisely
+ * because the type promises the keys are sorted and the depth is bounded.
  *
- * @return <0, 0 or >0 if @a a is less than, equal to or greater than @a b.
+ * @return <0, 0 or >0 as @a a is less than, equal to or greater than @a b.
  */
 int
 mp_compare_json(struct json_norm a, struct json_norm b);

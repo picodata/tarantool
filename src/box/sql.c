@@ -474,6 +474,7 @@ insertOrReplace(struct space *space, const char *tuple, const char *tuple_end,
 	request.tuple_end = tuple_end;
 	request.space_id = space->def->id;
 	request.type = type;
+	/* JSON is taken as is, see doc/json-perimeter.md#vdbe-tuple. */
 	mp_tuple_assert(request.tuple, request.tuple_end);
 	return box_process1(&request, NULL);
 }

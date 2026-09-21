@@ -39,9 +39,8 @@
 #include "mp_interval.h"
 #include "mp_compression.h"
 #include "mp_json.h"
-#include "error.h"
-#include "tt_static.h"
-#include "diag.h"
+#include "mp_json_norm.h"
+#include "tuple.h"
 
 static int
 msgpack_fprint_ext(FILE *file, const char **data, int depth)
@@ -119,21 +118,31 @@ msgpack_check_ext_data(int8_t type, const char *data, uint32_t len)
 }
 
 int
-json_norm_handle(enum json_norm_status rc, uint32_t err_off, const char *where)
+msgpack_check_ext_data_strict(int8_t type, const char *data, uint32_t len)
 {
-	switch (rc) {
-	case JSON_NORM_OK:
-		return 0;
-	case JSON_NORM_REWRITABLE:
-		diag_set(ClientError, ER_JSON_NOT_NORMALIZED,
-			 (unsigned)err_off);
-		return -1;
-	default:
-		diag_set(ClientError, ER_INVALID_MSGPACK,
-			 tt_sprintf("invalid JSON value in %s at offset %u",
-				    where, (unsigned)err_off));
-		return -1;
+	if (type == MP_ERROR) {
+		/*
+		 * An error's fields hold any MessagePack, JSON included, and
+		 * mp_validate_error() walks them with the lenient hook. Walk
+		 * them with this one first, or a bad JSON value could ride in
+		 * on an error and come out of error:unpack() looking checked.
+		 */
+		const char *p = data;
+		if (mp_check_ext(&p, data + len,
+				 msgpack_check_ext_data_strict) != 0)
+			return 1;
 	}
+	if (type != MP_JSON)
+		return msgpack_check_ext_data(type, data, len);
+	/*
+	 * Where bytes arrive from outside we refuse them rather than fix
+	 * them. A badly spelled value off the network means the client's
+	 * driver did not encode it canonically, so point at the offending
+	 * offset instead of raising a vague type error.
+	 */
+	uint32_t err_off = 0;
+	enum json_norm_status rc = json_verify(data, len, &err_off);
+	return json_norm_handle(rc, err_off, "a request");
 }
 
 void
