@@ -5030,6 +5030,12 @@ sqlExprCompare(Expr * pA, Expr * pB, int iTab)
 		}
 		return 2;
 	}
+	/*
+	 * A CAST has no token: its target type is what tells two casts
+	 * of the same operand apart.
+	 */
+	if (pA->op == TK_CAST && pA->type != pB->type)
+		return 2;
 	if (pA->op != TK_COLUMN_REF && pA->op != TK_AGG_COLUMN &&
 	    pA->u.zToken) {
 		if (pA->op == TK_FUNCTION) {
