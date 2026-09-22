@@ -1401,13 +1401,19 @@ txn_set_xrow_flags(uint8_t xrow_flags)
 	if (!txn)
 		return;
 
-	const uint8_t flags_map[] = {
-		[IPROTO_FLAG_WAIT_SYNC] = TXN_WAIT_SYNC,
-		[IPROTO_FLAG_WAIT_ACK] = TXN_WAIT_ACK,
-	};
-
-	txn->flags |= flags_map[xrow_flags & IPROTO_FLAG_WAIT_SYNC];
-	txn->flags |= flags_map[xrow_flags & IPROTO_FLAG_WAIT_ACK];
+	/*
+	 * A row with WAIT_SYNC only needs no flags here. It only depends on
+	 * the preceding synchronous transactions, and its WAL row can follow
+	 * their CONFIRM if it was submitted while the CONFIRM was being
+	 * written. So whether there is anything to wait for depends on the
+	 * local limbo, and txn_journal_entry_new() checks that right before
+	 * the transaction is submitted. It can't be checked here, because the
+	 * limbo may change while the engine prepares the transaction.
+	 */
+	if ((xrow_flags & IPROTO_FLAG_WAIT_ACK) != 0)
+		txn_set_flags(txn, TXN_WAIT_SYNC | TXN_WAIT_ACK);
+	else if ((xrow_flags & IPROTO_FLAG_WAIT_SYNC) == 0)
+		txn_set_flags(txn, TXN_FORCE_ASYNC);
 }
 
 /** Wait for a linearization point for a transaction. */

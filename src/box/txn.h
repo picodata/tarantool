@@ -579,7 +579,8 @@ txn_set_flags(struct txn *txn, unsigned int flags)
 }
 
 /**
- * Set flags from xrow on the transaction.
+ * Make the current transaction follow the limbo decision made by the instance
+ * that wrote the transaction, which comes in the flags of its last xrow.
  */
 void
 txn_set_xrow_flags(uint8_t xrow_flags);

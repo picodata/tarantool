@@ -1491,6 +1491,19 @@ apply_plain_tx(uint32_t replica_id, struct stailq *rows)
 	item = stailq_last_entry(rows, struct applier_tx_row, next);
 	rcb->replica_id = replica_id;
 	rcb->txn_last_tm = item->row.tm;
+	/*
+	 * Whether a transaction enters the limbo is decided by the limbo
+	 * owner, and the decision comes in the flags of the last row. Mirror
+	 * it instead of re-deriving it from the local state of the spaces,
+	 * which may disagree with the master's: the master may have written
+	 * the transaction with TXN_FORCE_ASYNC, or a space may be synchronous
+	 * on one side only. A transaction the master did not put into its
+	 * limbo gets no CONFIRM, so putting it into ours would leave it there
+	 * until some later CONFIRM happens to cover it, blocking checkpoints
+	 * in the meantime - and forever during join, which checkpoints before
+	 * subscribing. Recovery does the same in wal_stream_apply_dml_row().
+	 */
+	txn_set_xrow_flags(item->row.flags);
 
 	trigger_create(on_wal_write, applier_txn_wal_write_cb, rcb, NULL);
 	txn_on_wal_write(txn, on_wal_write);
@@ -1618,6 +1631,12 @@ nopify:
 		row = &item->row;
 		row->type = IPROTO_NOP;
 		row->bodycnt = 0;
+		/*
+		 * The NOP must not enter the limbo: apply_plain_tx() takes
+		 * the limbo decision from these flags.
+		 */
+		row->wait_sync = false;
+		row->wait_ack = false;
 		memset(&item->req.dml, 0, sizeof(item->req.dml));
 		item->req.dml.header = row;
 		item->req.dml.type = IPROTO_NOP;
