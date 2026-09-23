@@ -2702,7 +2702,6 @@ vy_env_delete(struct vy_env *e)
 {
 	vy_scheduler_destroy(&e->scheduler);
 	vy_squash_queue_delete(e->squash_queue);
-	vy_tx_manager_delete(e->xm);
 	free(e->path);
 	mempool_destroy(&e->iterator_pool);
 	vy_run_env_destroy(&e->run_env);
@@ -2722,6 +2721,10 @@ vy_env_delete(struct vy_env *e)
 	 */
 	vy_stmt_env_destroy(&e->stmt_env);
 	vy_mem_env_destroy(&e->mem_env);
+	/*
+	 * vy_cache_env_destroy -> vy_cache_evict -> vy_tx_manager_horizon
+	 */
+	vy_tx_manager_delete(e->xm);
 	vy_quota_destroy(&e->quota);
 	if (e->recovery != NULL)
 		vy_recovery_delete(e->recovery);
