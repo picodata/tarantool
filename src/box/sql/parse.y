@@ -648,6 +648,23 @@ seltablist(A) ::= stl_prefix(A) LP seltablist(F) RP
       pNew->pSubq = pOld->pSubq;
       pOld->zName =  0;
       pOld->pSubq = 0;
+      /*
+       * The hints and restrictions of the item stay in force: INDEXED BY,
+       * NOT INDEXED, the arguments of a table function, and the ban on
+       * scanning it without SEQSCAN.
+       */
+      pNew->fg.notIndexed = pOld->fg.notIndexed;
+      pNew->fg.isIndexedBy = pOld->fg.isIndexedBy;
+      pNew->fg.isTabFunc = pOld->fg.isTabFunc;
+      pNew->fg.disallow_scan = pOld->fg.disallow_scan;
+      pNew->u1 = pOld->u1;
+      pOld->fg.isIndexedBy = 0;
+      pOld->fg.isTabFunc = 0;
+      /* Without an alias of its own, the item keeps that of the inside. */
+      if( pNew->zAlias==0 ){
+        pNew->zAlias = pOld->zAlias;
+        pOld->zAlias = 0;
+      }
     }
     sqlSrcListDelete(F);
   }else{
