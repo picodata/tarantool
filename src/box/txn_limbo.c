@@ -345,7 +345,23 @@ txn_limbo_submit(struct txn_limbo *limbo, uint32_t id, struct txn *txn)
 	 */
 	assert(txn->signature == TXN_SIGNATURE_UNKNOWN);
 	assert(txn->status == TXN_PREPARED);
-	if (txn_limbo_is_trying_to_promote(limbo)) {
+	if (id == 0)
+		id = instance_id;
+	/*
+	 * An instance trying to promote must not start new synchronous
+	 * transactions of its own: the queue is about to change hands. Other
+	 * transactions go on to the checks below, same as on any replica.
+	 *
+	 * Remote transactions of the current owner are the tail of the
+	 * deposed leader, which the delayed term application in
+	 * txn_limbo_apply_promote() lets every instance catch up with. The
+	 * pending PROMOTE confirms or rolls them back once it is applied.
+	 * Rejecting them here fails the applier, and the rollback it triggers
+	 * stops all the other appliers too, so the PROMOTE loses its quorum
+	 * and this instance never learns the tail it would need to win the
+	 * next election.
+	 */
+	if (id == instance_id && txn_limbo_is_trying_to_promote(limbo)) {
 		diag_set(ClientError, ER_SYNC_QUEUE_UNCLAIMED);
 		return -1;
 	}
@@ -361,8 +377,6 @@ txn_limbo_submit(struct txn_limbo *limbo, uint32_t id, struct txn *txn)
 		diag_set(ClientError, ER_SYNC_ROLLBACK);
 		return -1;
 	}
-	if (id == 0)
-		id = instance_id;
 	if  (limbo->owner_id == REPLICA_ID_NIL) {
 		diag_set(ClientError, ER_SYNC_QUEUE_UNCLAIMED);
 		return -1;
