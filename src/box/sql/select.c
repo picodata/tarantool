@@ -4579,10 +4579,10 @@ minMaxQuery(AggInfo * pAggInfo, ExprList ** ppMinMax)
 		if (pEList && pEList->nExpr == 1
 		    && pEList->a[0].pExpr->op == TK_AGG_COLUMN) {
 			const char *zFunc = pExpr->u.zToken;
-			if (sqlStrICmp(zFunc, "min") == 0) {
+			if (strcmp(zFunc, "MIN") == 0) {
 				eRet = WHERE_ORDERBY_MIN;
 				*ppMinMax = pEList;
-			} else if (sqlStrICmp(zFunc, "max") == 0) {
+			} else if (strcmp(zFunc, "MAX") == 0) {
 				eRet = WHERE_ORDERBY_MAX;
 				*ppMinMax = pEList;
 			}
@@ -4866,10 +4866,8 @@ withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
 			SrcList *pSrc = pSel->pSrc;
 			for (i = 0; i < pSrc->nSrc; i++) {
 				struct SrcItem *pItem = &pSrc->a[i];
-				if (pItem->zName != 0
-				    && 0 == sqlStrICmp(pItem->zName,
-							   pCte->zName)
-				    ) {
+				if (pItem->zName != NULL &&
+				    strcmp(pItem->zName, pCte->zName) == 0) {
 					pItem->space = pFrom->space;
 					pItem->fg.isRecursive = 1;
 					ref_counter++;

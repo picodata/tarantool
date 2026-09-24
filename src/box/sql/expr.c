@@ -5100,7 +5100,7 @@ sqlExprCompare(Expr * pA, Expr * pB, int iTab)
 	if (pA->op != TK_COLUMN_REF && pA->op != TK_AGG_COLUMN &&
 	    pA->u.zToken) {
 		if (pA->op == TK_FUNCTION) {
-			if (sqlStrICmp(pA->u.zToken, pB->u.zToken) != 0)
+			if (strcmp(pA->u.zToken, pB->u.zToken) != 0)
 				return 2;
 			/* Justification for the assert():
 			 ** window functions have p->op==TK_FUNCTION but aggregate functions

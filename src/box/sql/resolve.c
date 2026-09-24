@@ -177,7 +177,7 @@ sqlMatchEName(const struct ExprList_item *item, const char *zCol,
 	zSpan = item->zEName;
 	for (n = 0; ALWAYS(zSpan[n]) && zSpan[n] != '.'; n++) {
 	}
-	if (zTab && (sqlStrNICmp(zSpan, zTab, n) != 0 || zTab[n] != 0)) {
+	if (zTab && (strncmp(zSpan, zTab, n) != 0 || zTab[n] != 0)) {
 		return 0;
 	}
 	zSpan += n + 1;
@@ -374,11 +374,11 @@ lookupName(Parse * pParse,	/* The parsing context */
 			assert(op == TK_DELETE || op == TK_UPDATE
 			       || op == TK_INSERT);
 			struct space_def *space_def = NULL;
-			if (op != TK_DELETE && sqlStrICmp("new", zTab) == 0) {
+			if (op != TK_DELETE && strcmp(zTab, "NEW") == 0) {
 				pExpr->iTable = 1;
 				space_def = pParse->triggered_space->def;
-			} else if (op != TK_INSERT
-				   && sqlStrICmp("old", zTab) == 0) {
+			} else if (op != TK_INSERT &&
+				   strcmp(zTab, "OLD") == 0) {
 				pExpr->iTable = 0;
 				space_def = pParse->triggered_space->def;
 			}

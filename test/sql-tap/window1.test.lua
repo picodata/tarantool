@@ -397,7 +397,7 @@ test:do_catchsql_test(
     [[
         SELECT max(x) OVER abc FROM t1 WINDOW def AS (ORDER BY y);
     ]],
-    {1, "no such window: abc"})
+    {1, "no such window: ABC"})
 
 -- FIXME: This test returns wrong result in tarantool,
 --        sum and max columns are swapped.
@@ -933,7 +933,7 @@ test:do_catchsql_test(
 SELECT c, sum(d) OVER (win1 ORDER BY b) FROM t1
 WINDOW win1 AS (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)
     ]],
-    {1, "cannot override frame specification of window: win1"}
+    {1, "cannot override frame specification of window: WIN1"}
 )
 
 test:do_catchsql_test(
@@ -942,7 +942,7 @@ test:do_catchsql_test(
 SELECT c, sum(d) OVER (win4 ORDER BY b) FROM t1
 WINDOW win1 AS ()
     ]],
-    {1, "no such window: win4"}
+    {1, "no such window: WIN4"}
 )
 
 test:do_catchsql_test(
@@ -951,7 +951,7 @@ test:do_catchsql_test(
 SELECT c, sum(d) OVER (win1 PARTITION BY d) FROM t1
 WINDOW win1 AS ()
     ]],
-    {1, "cannot override PARTITION clause of window: win1"}
+    {1, "cannot override PARTITION clause of window: WIN1"}
 )
 
 test:do_catchsql_test(
@@ -960,7 +960,7 @@ test:do_catchsql_test(
 SELECT c, sum(d) OVER (win1 ORDER BY d) FROM t1
 WINDOW win1 AS (ORDER BY b)
     ]],
-    {1, "cannot override ORDER BY clause of window: win1"}
+    {1, "cannot override ORDER BY clause of window: WIN1"}
 )
 
 test:do_execsql_test(

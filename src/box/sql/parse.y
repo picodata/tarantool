@@ -1837,7 +1837,7 @@ windowdefn_list(A) ::= windowdefn_list(Y) COMMA windowdefn(Z). {
 %destructor windowdefn {sqlWindowDelete($$);}
 windowdefn(A) ::= nm(X) AS LP window(Y) RP. {
   if (ALWAYS(Y)) {
-    Y->zName = sql_xstrndup(X.z, X.n);
+    Y->zName = sql_name_from_token(&X);
   }
   A = Y;
 }
@@ -1915,7 +1915,7 @@ over_opt(A) ::= filter_opt(W) OVER LP window(Z) RP. {
 over_opt(A) ::= filter_opt(W) OVER nm(Z). {
   A = (Window *)sql_xmalloc0(sizeof(Window));
   if (A) {
-    A->zName = sql_xstrndup(Z.z, Z.n);
+    A->zName = sql_name_from_token(&Z);
     A->pFilter = W;
   } else {
     sql_expr_delete(W);

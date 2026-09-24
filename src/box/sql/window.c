@@ -147,7 +147,7 @@ windowFind(Parse *pParse, Window *pList, const char *zName)
 {
 	Window *p;
 	for (p = pList; p; p = p->pNextWin) {
-		if (sqlStrICmp(p->zName, zName) == 0)
+		if (strcmp(p->zName, zName) == 0)
 			break;
 	}
 	if (p == 0) {
@@ -703,8 +703,7 @@ sqlWindowAssemble(Window *pWin, ExprList *pPartition, ExprList *pOrderBy,
 		pWin->pPartition = pPartition;
 		pWin->pOrderBy = pOrderBy;
 		if (pBase)
-			pWin->zBase = sql_xstrndup(pBase->z,
-						   pBase->n);
+			pWin->zBase = sql_name_from_token(pBase);
 	} else {
 		sql_expr_list_delete(pPartition);
 		sql_expr_list_delete(pOrderBy);
