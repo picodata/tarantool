@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(93)
+test:plan(97)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -1066,41 +1066,89 @@ ORDER BY 10+sum(a) OVER (ORDER BY a) DESC;
 )
 
 test:do_execsql_test(
-    "window1-18.0",
+    "window1-25.0",
     [[
-DROP TABLE IF EXISTS t18a;
-DROP TABLE IF EXISTS t18b;
-DROP TABLE IF EXISTS t18c;
-CREATE TABLE t18a ( t1_id INTEGER PRIMARY KEY );
-CREATE TABLE t18b ( t2_id INTEGER PRIMARY KEY );
-CREATE TABLE t18c ( t3_id INTEGER PRIMARY KEY );
+DROP TABLE IF EXISTS t25a;
+DROP TABLE IF EXISTS t25b;
+DROP TABLE IF EXISTS t25c;
+CREATE TABLE t25a ( t1_id INTEGER PRIMARY KEY );
+CREATE TABLE t25b ( t2_id INTEGER PRIMARY KEY );
+CREATE TABLE t25c ( t3_id INTEGER PRIMARY KEY );
 
-INSERT INTO t18a VALUES(1),  (3), (5);
-INSERT INTO t18b VALUES      (3), (5);
-INSERT INTO t18c VALUES(10), (11), (12);
+INSERT INTO t25a VALUES(1),  (3), (5);
+INSERT INTO t25b VALUES      (3), (5);
+INSERT INTO t25c VALUES(10), (11), (12);
     ]]
 )
 
 test:do_execsql_test(
-    "window1-18.1",
+    "window1-25.1",
     [[
-SELECT t18a.* FROM t18a, t18b WHERE
+SELECT t25a.* FROM t25a, t25b WHERE
   t1_id=t2_id AND t1_id IN (
-      SELECT t1_id + row_number() OVER ( ORDER BY t1_id ) FROM t18c
+      SELECT t1_id + row_number() OVER ( ORDER BY t1_id ) FROM t25c
   )
     ]],
     {}
 )
 
 test:do_execsql_test(
-    "window1-18.2",
+    "window1-25.2",
     [[
-SELECT t18a.* FROM t18a, t18b WHERE
+SELECT t25a.* FROM t25a, t25b WHERE
   t1_id=t2_id AND t1_id IN (
-      SELECT         row_number() OVER ( ORDER BY t1_id ) FROM t18c
+      SELECT         row_number() OVER ( ORDER BY t1_id ) FROM t25c
   )
     ]],
     {3}
+)
+
+-- A window function in a correlated subquery, which refers to the outer
+-- query from a subquery in its FROM clause.
+test:do_execsql_test(
+    "window1-26.0",
+    [[
+DROP TABLE IF EXISTS t26a;
+DROP TABLE IF EXISTS t26b;
+CREATE TABLE t26a(id INT PRIMARY KEY AUTOINCREMENT, x INT);
+CREATE TABLE t26b(id INT PRIMARY KEY AUTOINCREMENT, c INT);
+    ]]
+)
+
+test:do_execsql_test(
+    "window1-26.1",
+    [[
+SELECT ( SELECT row_number() OVER () FROM ( SELECT c FROM t26a ) ) FROM t26b
+    ]],
+    {}
+)
+
+test:do_execsql_test(
+    "window1-26.2",
+    [[
+INSERT INTO t26a(x) VALUES(1), (2), (3), (4);
+INSERT INTO t26b(c) VALUES(2), (6), (8), (4);
+SELECT c, c IN (
+  SELECT row_number() OVER () FROM ( SELECT c FROM t26a )
+) FROM t26b
+    ]],
+    {2, true, 6, false, 8, false, 4, true}
+)
+
+test:do_execsql_test(
+    "window1-26.3",
+    [[
+DELETE FROM t26a;
+DELETE FROM t26b;
+
+INSERT INTO t26b(c) VALUES(1), (2), (3), (4);
+INSERT INTO t26a(x) VALUES(1), (1), (2), (3), (3), (3), (3), (4), (4);
+
+SELECT c, c IN (
+  SELECT row_number() OVER () FROM ( SELECT 1 FROM t26a WHERE x=c )
+) FROM t26b
+    ]],
+    {1, true, 2, false, 3, true, 4, false}
 )
 
 -- Do not push outer constraints into compound queries with window functions.
