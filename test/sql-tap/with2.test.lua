@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(59)
+test:plan(62)
 
 --!./tcltestrunner.lua
 -- 2014 January 11
@@ -706,6 +706,57 @@ test:do_execsql_test(
         -- <8.3>
         1, 2, 3, 4, 5
         -- </8.3>
+    })
+
+-- 2021-05-21
+-- Forum post https://sqlite.org/forum/forumpost/aa4a7a3980
+--
+-- Tests 11.1 and 11.2 use ALTER TABLE RENAME COLUMN, which is not supported.
+test:execsql([[
+    DROP TABLE IF EXISTS t1;
+    CREATE TABLE t1(id INT PRIMARY KEY AUTOINCREMENT, a INT);
+    INSERT INTO t1(a) VALUES(55);
+]])
+
+-- An error in a CTE nested in another CTE.
+test:do_catchsql_test(
+    11.3,
+    [[
+        WITH x AS (
+          WITH y AS (
+             WITH z AS(SELECT * FROM t1)
+             SELECT * FROM v2
+          ) SELECT a
+        ) SELECT * from t1, x;
+    ]], {
+        1, "Can’t resolve field 'A'"
+    })
+
+test:do_catchsql_test(
+    11.4,
+    [[
+        WITH x AS (
+          WITH y AS (
+             WITH z AS(SELECT * FROM t1)
+             SELECT * FROM v2
+          ) SELECT *
+        ) SELECT * from t1, x;
+    ]], {
+        1, "Failed to expand '*' in SELECT statement without FROM clause"
+    })
+
+-- An unused CTE with an error is not an error.
+test:do_catchsql_test(
+    11.5,
+    [[
+        WITH x AS (
+          WITH y AS (
+             WITH z AS(SELECT * FROM t1)
+             SELECT * FROM no_such_table
+          ) SELECT a
+        ) SELECT a from t1;
+    ]], {
+        0, {55}
     })
 
 test:finish_test()
