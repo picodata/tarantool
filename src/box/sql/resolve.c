@@ -1687,13 +1687,41 @@ sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions i
 			    ExprList * pList	/* The expression list to be analyzed. */
     )
 {
-	int i;
-	if (pList) {
-		for (i = 0; i < pList->nExpr; i++) {
-			if (sqlResolveExprNames(pNC, pList->a[i].pExpr))
-				return WRC_Abort;
+	int savedHasAgg = 0;
+	Walker w;
+	if (pList == NULL)
+		return WRC_Continue;
+	w.pParse = pNC->pParse;
+	w.xExprCallback = resolveExprStep;
+	w.xSelectCallback = resolveSelectStep;
+	w.xSelectCallback2 = 0;
+	w.u.pNC = pNC;
+	savedHasAgg = pNC->ncFlags & (NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
+	pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
+	for (int i = 0; i < pList->nExpr; i++) {
+		struct Expr *pExpr = pList->a[i].pExpr;
+		if (pExpr == NULL)
+			continue;
+#if SQL_MAX_EXPR_DEPTH > 0
+		w.pParse->nHeight += pExpr->nHeight;
+		if (sqlExprCheckHeight(w.pParse, w.pParse->nHeight))
+			return WRC_Abort;
+#endif
+		sqlWalkExpr(&w, pExpr);
+#if SQL_MAX_EXPR_DEPTH > 0
+		w.pParse->nHeight -= pExpr->nHeight;
+#endif
+		if (pNC->ncFlags & (NC_HasAgg | NC_MinMaxAgg | NC_HasWin)) {
+			ExprSetProperty(pExpr,
+					pNC->ncFlags & (NC_HasAgg | NC_HasWin));
+			savedHasAgg |= pNC->ncFlags &
+				       (NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
+			pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
 		}
+		if (pNC->nErr > 0 || w.pParse->is_aborted)
+			return WRC_Abort;
 	}
+	pNC->ncFlags |= savedHasAgg;
 	return WRC_Continue;
 }
 
