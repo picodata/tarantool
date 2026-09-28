@@ -1716,6 +1716,8 @@ sqlResolveExprNames(NameContext * pNC,	/* Namespace to resolve expressions in. *
  * Resolve all names for all expression in an expression list.  This is
  * just like sqlResolveExprNames() except that it works for an expression
  * list rather than a single expression.
+ *
+ * The return value is 0 for success or 1 for a failure.
  */
 int
 sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions in. */
@@ -1725,7 +1727,7 @@ sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions i
 	int savedHasAgg = 0;
 	Walker w;
 	if (pList == NULL)
-		return WRC_Continue;
+		return 0;
 	w.pParse = pNC->pParse;
 	w.xExprCallback = resolveExprStep;
 	w.xSelectCallback = resolveSelectStep;
@@ -1740,7 +1742,7 @@ sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions i
 #if SQL_MAX_EXPR_DEPTH > 0
 		w.pParse->nHeight += pExpr->nHeight;
 		if (sqlExprCheckHeight(w.pParse, w.pParse->nHeight))
-			return WRC_Abort;
+			return 1;
 #endif
 		sqlWalkExpr(&w, pExpr);
 #if SQL_MAX_EXPR_DEPTH > 0
@@ -1754,10 +1756,10 @@ sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions i
 			pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
 		}
 		if (pNC->nErr > 0 || w.pParse->is_aborted)
-			return WRC_Abort;
+			return 1;
 	}
 	pNC->ncFlags |= savedHasAgg;
-	return WRC_Continue;
+	return 0;
 }
 
 /*
