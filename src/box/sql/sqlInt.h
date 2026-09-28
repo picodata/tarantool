@@ -1584,6 +1584,15 @@ struct ExprList {
 			unsigned done:1;
 			/* Constant expression is reusable */
 			unsigned reusable:1;
+			/* This column used in a SF_NestedFrom subquery */
+			unsigned bUsed:1;
+			/* Term from the USING clause of a NestedFrom */
+			unsigned bUsingTerm:1;
+			/*
+			 * Term is an auxiliary in NestedFrom and should
+			 * not be expanded by "*" in parent queries
+			 */
+			unsigned bNoExpand:1;
 		} fg;
 		union {
 			struct {
@@ -2579,6 +2588,23 @@ sqlWindowCodeStep(Parse *pParse, Select *p, WhereInfo *pWInfo,
 
 int
 sqlWindowRewrite(Parse *pParse, Select *p);
+
+/**
+ * Return the index of the column zCol of the FROM clause item, or -1 if it
+ * has no such column. The hidden columns of a parenthesized join, which are
+ * only visible by a name with a table, are skipped unless withHidden is
+ * set.
+ */
+int
+sqlSrcItemColumnIndex(const struct SrcItem *item, const char *zCol,
+		      bool withHidden);
+
+/**
+ * Mark the column iCol of the FROM clause item as used, if the item is a
+ * parenthesized join. The columns that are never used are not computed.
+ */
+void
+sqlSrcItemColumnUsed(struct SrcItem *item, int iCol);
 
 /**
  * Create the space definition of the subquery in the FROM clause item

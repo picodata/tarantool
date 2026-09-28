@@ -181,34 +181,31 @@ sqlMatchEName(const struct ExprList_item *item, const char *zCol,
 }
 
 /*
- * Return the index of the column zCol of a space, or -1 if it has no such
- * column.
+ * Look a column up in the result set of the parenthesized join pItem, whose
+ * columns are matched by their "TABLE.COLUMN" names. A hidden column, such
+ * as a table's own copy of a join column, is only matched by a name with a
+ * table. If cntBefore columns have been found to the left of the join, and
+ * it is joined to them by USING on the name, the join column is not taken
+ * again. Return the number of matching columns, marking them as used, and
+ * write the index of the last one to pExpr->iColumn.
  */
 static int
-spaceDefColumnIndex(const struct space_def *def, const char *zCol)
+lookupNestedFromName(struct SrcItem *pItem, const char *zCol,
+		     const char *zTab, struct Expr *pExpr, int cntBefore)
 {
-	for (uint32_t i = 0; i < def->field_count; i++) {
-		if (strcmp(def->fields[i].name, zCol) == 0)
-			return (int)i;
-	}
-	return -1;
-}
-
-/*
- * Look a column up in the result set pEList of a parenthesized join, whose
- * columns are matched by their "TABLE.COLUMN" names. Return the number of
- * matching columns, and write the index of the last one to pExpr->iColumn.
- */
-static int
-lookupNestedFromName(const struct ExprList *pEList, const char *zCol,
-		     const char *zTab, struct Expr *pExpr)
-{
+	struct ExprList *pEList = pItem->pSelect->pEList;
 	int hit = 0;
 	for (int j = 0; j < pEList->nExpr; j++) {
-		if (sqlMatchEName(&pEList->a[j], zCol, zTab)) {
-			hit++;
-			pExpr->iColumn = j;
-		}
+		struct ExprList_item *pX = &pEList->a[j];
+		if (!sqlMatchEName(pX, zCol, zTab))
+			continue;
+		if (zTab == NULL && pX->fg.bNoExpand)
+			continue;
+		if (cntBefore > 0 && nameInUsingClause(pItem->pUsing, zCol))
+			continue;
+		hit++;
+		pExpr->iColumn = j;
+		pX->fg.bUsed = 1;
 	}
 	return hit;
 }
@@ -308,8 +305,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 				    && (pItem->pSelect->
 					selFlags & SF_NestedFrom) != 0) {
 					int hit = lookupNestedFromName(
-						pItem->pSelect->pEList, zCol,
-						zTab, pExpr);
+						pItem, zCol, zTab, pExpr, cnt);
 					if (hit > 0) {
 						cnt += hit;
 						cntTab = 2;
@@ -330,7 +326,8 @@ lookupName(Parse * pParse,	/* The parsing context */
 				if (0 == (cntTab++)) {
 					pMatch = pItem;
 				}
-				j = spaceDefColumnIndex(space_def, zCol);
+				j = sqlSrcItemColumnIndex(pItem, zCol,
+							  zTab != NULL);
 				/*
 				 * If there has been exactly one prior
 				 * match and this match is in a USING
@@ -345,6 +342,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 					cnt++;
 					pMatch = pItem;
 					pExpr->iColumn = (i16) j;
+					sqlSrcItemColumnUsed(pItem, j);
 				}
 			}
 			if (pMatch) {
@@ -532,6 +530,7 @@ sql_expr_new_column(struct SrcList *src_list, int src_idx, int column)
 	expr->iTable = item->iCursor;
 	expr->iColumn = column;
 	item->colUsed |= ((Bitmask) 1) << (column >= BMS ? BMS - 1 : column);
+	sqlSrcItemColumnUsed(item, column);
 	ExprSetProperty(expr, EP_Resolved);
 	return expr;
 }

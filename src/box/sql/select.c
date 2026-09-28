@@ -669,17 +669,41 @@ sqlJoinType(Parse * pParse, Token * pA, Token * pB, Token * pC)
 }
 
 /*
- * Return the index of a column in a table.  Return -1 if the column
- * is not contained in the table.
+ * Return true if the column iCol of a FROM clause item is hidden: a column
+ * of a parenthesized join that is only visible by its "TABLE.COLUMN" name,
+ * such as a table's own copy of a join column.
  */
-static int
-columnIndex(struct space_def *def, const char *zCol)
+static bool
+srcItemColumnIsHidden(const struct SrcItem *item, int iCol)
 {
+	const struct Select *sub = item->pSelect;
+	if (sub == NULL || (sub->selFlags & SF_NestedFrom) == 0)
+		return false;
+	assert(iCol < sub->pEList->nExpr);
+	return sub->pEList->a[iCol].fg.bNoExpand;
+}
+
+int
+sqlSrcItemColumnIndex(const struct SrcItem *item, const char *zCol,
+		      bool withHidden)
+{
+	const struct space_def *def = item->space->def;
 	for (uint32_t i = 0; i < def->field_count; i++) {
-		if (strcmp(def->fields[i].name, zCol) == 0)
+		if (strcmp(def->fields[i].name, zCol) == 0 &&
+		    (withHidden || !srcItemColumnIsHidden(item, i)))
 			return i;
 	}
 	return -1;
+}
+
+void
+sqlSrcItemColumnUsed(struct SrcItem *item, int iCol)
+{
+	struct Select *sub = item->pSelect;
+	if (sub == NULL || (sub->selFlags & SF_NestedFrom) == 0)
+		return;
+	assert(iCol >= 0 && iCol < sub->pEList->nExpr);
+	sub->pEList->a[iCol].fg.bUsed = 1;
 }
 
 /*
@@ -703,7 +727,7 @@ tableAndColumnIndex(SrcList * pSrc,	/* Array of tables to search */
 
 	assert((piTab == 0) == (piCol == 0));	/* Both or neither are NULL */
 	for (i = 0; i < N; i++) {
-		iCol = columnIndex(pSrc->a[i].space->def, zCol);
+		iCol = sqlSrcItemColumnIndex(&pSrc->a[i], zCol, false);
 		if (iCol >= 0) {
 			if (piTab) {
 				*piTab = i;
@@ -812,7 +836,8 @@ naturalJoinUsing(struct SrcList *pSrc, int N)
 	struct space_def *def = pSrc->a[N].space->def;
 	for (uint32_t j = 0; j < def->field_count; j++) {
 		const char *zName = def->fields[j].name;
-		if (!tableAndColumnIndex(pSrc, N, zName, NULL, NULL))
+		if (srcItemColumnIsHidden(&pSrc->a[N], j) ||
+		    !tableAndColumnIndex(pSrc, N, zName, NULL, NULL))
 			continue;
 		if (pUsing == NULL)
 			pUsing = sql_xmalloc0(sizeof(*pUsing));
@@ -911,7 +936,8 @@ sqlProcessJoin(Parse * pParse, Select * p)
 				int iRightCol;	/* Column number of matching column on the right */
 
 				zName = pList->a[j].zName;
-				iRightCol = columnIndex(right_space->def, zName);
+				iRightCol = sqlSrcItemColumnIndex(pRight, zName,
+								  false);
 				if (iRightCol < 0
 				    || !tableAndColumnIndex(pSrc, i + 1, zName,
 							    &iLeft, &iLeftCol)
@@ -4905,6 +4931,43 @@ expr_autoname_is_required(struct Expr *expr)
 }
 
 /*
+ * Return true if the column iCol of the item i of a FROM clause is the one
+ * that a later join by USING takes from its left-hand side.
+ */
+static bool
+srcListIsUsingLeft(struct SrcList *pSrc, int i, int iCol)
+{
+	const char *zName = pSrc->a[i].space->def->fields[iCol].name;
+	for (int k = i + 1; k < pSrc->nSrc; k++) {
+		int iLeft;
+		int iLeftCol;
+		if (sqlIdListIndex(pSrc->a[k].pUsing, zName) >= 0 &&
+		    tableAndColumnIndex(pSrc, k, zName, &iLeft, &iLeftCol) &&
+		    iLeft == i && iLeftCol == iCol)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Append the column joined by USING on zName to the result set of a
+ * parenthesized join. It is visible by its name alone, not by that of any
+ * table, as its span has an empty table part, and is taken from the left
+ * by the name resolution in the join.
+ */
+static struct ExprList *
+appendUsingTerm(struct ExprList *pList, const char *zName)
+{
+	pList = sql_expr_list_append(pList,
+				     sql_expr_new_named(TK_ID, zName));
+	struct ExprList_item *pX = &pList->a[pList->nExpr - 1];
+	pX->zEName = sqlMPrintf(".%s", zName);
+	pX->fg.eEName = ENAME_TAB;
+	pX->fg.bUsingTerm = 1;
+	return pList;
+}
+
+/*
  * This routine is a Walker callback for "expanding" a SELECT statement.
  * "Expanding" means to do the following:
  *
@@ -5105,6 +5168,8 @@ selectExpander(Walker * pWalker, Select * p)
 		 */
 		/* Set to 1 when TABLE matches */
 		int tableSeen = 0;
+		/* True if this is the SELECT of a parenthesized join */
+		bool isNested = (p->selFlags & SF_NestedFrom) != 0;
 		/* text of name of TABLE */
 		char *zTName = NULL;
 		if (pE->op == TK_DOT) {
@@ -5139,16 +5204,36 @@ selectExpander(Walker * pWalker, Select * p)
 				    sqlMatchEName(&pSub->pEList->a[j], NULL,
 						  zTName) == 0)
 					continue;
+				bool isHidden = srcItemColumnIsHidden(pFrom, j);
+				/*
+				 * A hidden column of a parenthesized join
+				 * is only expanded by "TABLE.*", or into
+				 * another parenthesized join.
+				 */
+				if (isHidden && zTName == NULL && !isNested)
+					continue;
 				tableSeen = 1;
 
 				/*
 				 * In a join with a USING clause, omit columns
 				 * in the using clause from the table on the
-				 * right.
+				 * right, unless this is a parenthesized join,
+				 * which keeps them hidden.
 				 */
-				if (i > 0 && zTName == NULL &&
-				    sqlIdListIndex(pFrom->pUsing, zName) >= 0)
+				int iUsing = sqlIdListIndex(pFrom->pUsing,
+							    zName);
+				bool isUsing = i > 0 && iUsing >= 0;
+				if (isUsing && zTName == NULL && !isNested)
 					continue;
+				/*
+				 * The column that a later join by USING takes
+				 * from the left is hidden in a parenthesized
+				 * join, and the joined column takes its place.
+				 */
+				bool isUsingLeft = isNested &&
+					srcListIsUsingLeft(pTabList, i, j);
+				if (isUsingLeft)
+					pNew = appendUsingTerm(pNew, zName);
 				pRight = sql_expr_new_named(TK_ID, zName);
 				zColname = zName;
 				zToFree = NULL;
@@ -5184,9 +5269,11 @@ selectExpander(Walker * pWalker, Select * p)
 				} else {
 					pX->zEName = sqlMPrintf("%s.%s",
 								zTabName,
-								zColname);
+								zName);
 				}
 				pX->fg.eEName = ENAME_TAB;
+				pX->fg.bNoExpand = isHidden || isUsing ||
+						   isUsingLeft;
 				sql_xfree(zToFree);
 			}
 		}
@@ -6047,6 +6134,13 @@ sqlSelect(Parse * pParse,		/* The parser context */
 				  pDest->reg_eph);
 
 		VdbeComment((v, "Output table"));
+		/* NULL-out result columns that will never be used */
+		if ((p->selFlags & SF_NestedFrom) != 0) {
+			for (int ii = 0; ii < pEList->nExpr; ii++) {
+				if (pEList->a[ii].fg.bUsed == 0)
+					pEList->a[ii].pExpr->op = TK_NULL;
+			}
+		}
 	}
 
 	/* Set the limiter.
