@@ -466,6 +466,8 @@ lookupName(Parse * pParse,	/* The parsing context */
 		pParse->is_aborted = true;
 		pTopNC->nErr++;
 	}
+	/* The operator the expression is turned into. */
+	int eNewExprOp = isTrigger ? TK_TRIGGER : TK_COLUMN_REF;
 	if (cnt == 0) {
 		if (zTab == NULL) {
 			diag_set(ClientError, ER_SQL_CANT_RESOLVE_FIELD, zCol);
@@ -475,6 +477,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 		}
 		pParse->is_aborted = true;
 		pTopNC->nErr++;
+		eNewExprOp = TK_NULL;
 	}
 
 	/* If a column from a table in pSrcList is referenced, then record
@@ -500,7 +503,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 		sql_expr_delete(pExpr->pRight);
 		pExpr->pRight = 0;
 	}
-	pExpr->op = (isTrigger ? TK_TRIGGER : TK_COLUMN_REF);
+	pExpr->op = eNewExprOp;
 	ExprSetProperty(pExpr, EP_Leaf);
  lookupname_end:
 	if (cnt == 1) {
