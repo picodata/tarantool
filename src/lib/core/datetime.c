@@ -307,7 +307,18 @@ parse_tz_suffix(const char *str, size_t len, time_t base,
 	return l;
 }
 
+/*
+ * A weak symbol, so that picodata can override it to parse datetimes the way
+ * PostgreSQL does, both in SQL casts and in Lua's datetime.parse().
+ *
+ * NOINLINE is a workaround for a GCC LTO BUG [1]. When compiled with affected
+ * GCC version and with LTO enabled, the function will get inlined, and the
+ * strongly-defined symbol in picodata will fail to override it.
+ *
+ * [1] https://gcc.gnu.org/bugzilla/show_bug.cgi?id=91299
+ */
 ssize_t
+__attribute__((weak)) NOINLINE
 datetime_parse_full(struct datetime *date, const char *str, size_t len)
 {
 	size_t n;
