@@ -508,6 +508,30 @@ exprProbability(Expr * p)
 }
 
 /*
+ * Get the table and column names of a "table.column" reference, and report
+ * it if such a reference is not allowed in the expression being resolved.
+ */
+static void
+resolveDotOperands(struct Parse *pParse, const struct NameContext *pNC,
+		   const struct Expr *pExpr, const char **pzTable,
+		   const char **pzColumn)
+{
+	if (pNC->ncFlags & NC_IdxExpr) {
+		diag_set(ClientError, ER_INDEX_DEF_UNSUPPORTED, "Expressions");
+		pParse->is_aborted = true;
+	}
+	const struct Expr *pRight = pExpr->pRight;
+	if (pRight->op == TK_ID) {
+		*pzTable = pExpr->pLeft->u.zToken;
+		*pzColumn = pRight->u.zToken;
+	} else {
+		assert(pRight->op == TK_DOT);
+		*pzTable = pRight->pLeft->u.zToken;
+		*pzColumn = pRight->pRight->u.zToken;
+	}
+}
+
+/*
  * This routine is callback for sqlWalkExpr().
  *
  * Resolve symbolic names into TK_COLUMN_REF operators for the current
@@ -543,37 +567,29 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 	}
 #endif
 	switch (pExpr->op) {
-		/* A lone identifier is the name of a column.
-		 */
-	case TK_ID:{
-			if ((pNC->ncFlags & NC_AllowAgg) != 0)
-				pNC->ncFlags |= NC_HasUnaggregatedId;
-			return lookupName(pParse, 0, pExpr->u.zToken, pNC,
-					  pExpr);
-		}
-
-		/* A table name and column name:     ID.ID
-		 * Or a database, table and column:  ID.ID.ID
-		 */
+	/*
+	 * A column name:                    ID
+	 * Or table name and column name:    ID.ID
+	 * Or a database, table and column:  ID.ID.ID
+	 *
+	 * The TK_ID and TK_DOT cases are combined so that there will
+	 * only be one call to lookupName(). Then the compiler will
+	 * in-line lookupName() for a size reduction and performance
+	 * increase.
+	 */
+	case TK_ID:
 	case TK_DOT:{
 			const char *zColumn;
 			const char *zTable;
-			Expr *pRight;
 
-			/* if( pSrcList==0 ) break; */
-			if (pNC->ncFlags & NC_IdxExpr) {
-				diag_set(ClientError, ER_INDEX_DEF_UNSUPPORTED,
-					 "Expressions");
-				pParse->is_aborted = true;
-			}
-			pRight = pExpr->pRight;
-			if (pRight->op == TK_ID) {
-				zTable = pExpr->pLeft->u.zToken;
-				zColumn = pRight->u.zToken;
+			if (pExpr->op == TK_ID) {
+				if ((pNC->ncFlags & NC_AllowAgg) != 0)
+					pNC->ncFlags |= NC_HasUnaggregatedId;
+				zTable = NULL;
+				zColumn = pExpr->u.zToken;
 			} else {
-				assert(pRight->op == TK_DOT);
-				zTable = pRight->pLeft->u.zToken;
-				zColumn = pRight->pRight->u.zToken;
+				resolveDotOperands(pParse, pNC, pExpr, &zTable,
+						   &zColumn);
 			}
 			return lookupName(pParse, zTable, zColumn, pNC,
 					  pExpr);
