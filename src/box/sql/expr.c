@@ -5261,7 +5261,9 @@ analyzeAggregate(Walker * pWalker, Expr * pExpr)
 	NameContext *pNC = pWalker->u.pNC;
 	Parse *pParse = pNC->pParse;
 	SrcList *pSrcList = pNC->pSrcList;
-	AggInfo *pAggInfo = pNC->pAggInfo;
+	AggInfo *pAggInfo = pNC->uNC.pAggInfo;
+
+	assert(pNC->ncFlags & NC_UAggInfo);
 
 	switch (pExpr->op) {
 	case TK_AGG_COLUMN:
