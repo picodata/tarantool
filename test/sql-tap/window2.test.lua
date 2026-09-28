@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(52)
+test:plan(55)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -4154,6 +4154,45 @@ test:do_execsql_test(
         99, 1147,
         99, 9094,
         99, 9929
+    })
+
+test:do_execsql_test(
+    "window2-5.0",
+    [[
+        DROP TABLE IF EXISTS t1;
+        CREATE TABLE t1(id INT PRIMARY KEY AUTOINCREMENT, x INTEGER,
+                        y INTEGER);
+        INSERT INTO t1(x, y) VALUES(10, 1);
+        INSERT INTO t1(x, y) VALUES(20, 2);
+        INSERT INTO t1(x, y) VALUES(3, 3);
+        INSERT INTO t1(x, y) VALUES(2, 4);
+        INSERT INTO t1(x, y) VALUES(1, 5);
+    ]], {
+        -- <window2-5.0>
+        -- </window2-5.0>
+    })
+
+-- An ORDER BY term that is the alias of a window function. The average of
+-- integers is an integer in Tarantool.
+test:do_execsql_test(
+    "window2-5.1",
+    [[
+        SELECT avg(x) OVER (ORDER BY y) AS z FROM t1 ORDER BY z;
+    ]], {
+        -- <window2-5.1>
+        7, 8, 10, 11, 15
+        -- </window2-5.1>
+    })
+
+-- The same alias inside a larger expression, from upstream window9-7.4.
+test:do_execsql_test(
+    "window2-5.2",
+    [[
+        SELECT avg(x) OVER (ORDER BY y) z FROM t1 ORDER BY z + 0.0;
+    ]], {
+        -- <window2-5.2>
+        7, 8, 10, 11, 15
+        -- </window2-5.2>
     })
 
 test:finish_test()

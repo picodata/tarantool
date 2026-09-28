@@ -128,6 +128,8 @@ resolveAlias(struct ExprList *pEList, int iCol, struct Expr *pExpr,
 		pExpr->u.zToken = sql_xstrdup(pExpr->u.zToken);
 		pExpr->flags |= EP_MemToken;
 	}
+	if (ExprHasProperty(pExpr, EP_WinFunc))
+		pExpr->y.pWin->pOwner = pExpr;
 	sql_xfree(pDup);
 }
 
