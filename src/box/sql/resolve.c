@@ -410,7 +410,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 		 * clause is not standard SQL.  This is a (goofy) sql extension, that
 		 * is supported for backwards compatibility only.
 		 */
-		if ((pNC->ncFlags & NC_UEList) != 0 && cnt == 0 &&
+		if (cnt == 0 && (pNC->ncFlags & NC_UEList) != 0 &&
 		    zTab == NULL) {
 			pEList = pNC->uNC.pEList;
 			assert(pEList != NULL);
@@ -1230,8 +1230,7 @@ resolveOrderGroupBy(NameContext * pNC,	/* The name context of the SELECT stateme
 	Parse *pParse;		/* Parsing context */
 	int nResult;		/* Number of terms in the result set */
 
-	if (pOrderBy == 0)
-		return 0;
+	assert(pOrderBy != NULL);
 	nResult = pSelect->pEList->nExpr;
 	pParse = pNC->pParse;
 	for (i = 0, pItem = pOrderBy->a; i < pOrderBy->nExpr; i++, pItem++) {
@@ -1530,9 +1529,9 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 * is not detected until much later, and so we need to go ahead and
 		 * resolve those symbols on the incorrect ORDER BY for consistency.
 		 */
-		if (isCompound <= nCompound	/* Defer right-most ORDER BY of a compound */
-		    && resolveOrderGroupBy(&sNC, p, p->pOrderBy, "ORDER")
-		    ) {
+		/* Defer right-most ORDER BY of a compound */
+		if (p->pOrderBy != NULL && isCompound <= nCompound &&
+		    resolveOrderGroupBy(&sNC, p, p->pOrderBy, "ORDER") != 0) {
 			return WRC_Abort;
 		}
 		sNC.ncFlags &= ~NC_AllowWin;
