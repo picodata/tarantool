@@ -181,6 +181,20 @@ sqlMatchEName(const struct ExprList_item *item, const char *zCol,
 }
 
 /*
+ * Return the index of the column zCol of a space, or -1 if it has no such
+ * column.
+ */
+static int
+spaceDefColumnIndex(const struct space_def *def, const char *zCol)
+{
+	for (uint32_t i = 0; i < def->field_count; i++) {
+		if (strcmp(def->fields[i].name, zCol) == 0)
+			return (int)i;
+	}
+	return -1;
+}
+
+/*
  * Look a column up in the result set pEList of a parenthesized join, whose
  * columns are matched by their "TABLE.COLUMN" names. Return the number of
  * matching columns, and write the index of the last one to pExpr->iColumn.
@@ -316,29 +330,21 @@ lookupName(Parse * pParse,	/* The parsing context */
 				if (0 == (cntTab++)) {
 					pMatch = pItem;
 				}
-				for (j = 0; j < (int)space_def->field_count;
-				     j++) {
-					if (strcmp(space_def->fields[j].name,
-						   zCol) == 0) {
-						/* If there has been exactly one prior match and this match
-						 * is for the right-hand table of a NATURAL JOIN or is in a
-						 * USING clause, then skip this match.
-						 */
-						if (cnt == 1) {
-							if (pItem->fg.
-							    jointype &
-							    JT_NATURAL)
-								continue;
-							if (nameInUsingClause
-							    (pItem->pUsing,
-							     zCol))
-								continue;
-						}
-						cnt++;
-						pMatch = pItem;
-						pExpr->iColumn = (i16) j;
-						break;
-					}
+				j = spaceDefColumnIndex(space_def, zCol);
+				/*
+				 * If there has been exactly one prior
+				 * match and this match is in a USING
+				 * clause, then skip this match. A NATURAL
+				 * join has a USING clause of its common
+				 * columns by now.
+				 */
+				if (j >= 0 && cnt == 1 &&
+				    nameInUsingClause(pItem->pUsing, zCol))
+					j = -1;
+				if (j >= 0) {
+					cnt++;
+					pMatch = pItem;
+					pExpr->iColumn = (i16) j;
 				}
 			}
 			if (pMatch) {

@@ -801,6 +801,30 @@ setJoinExpr(Expr * p, int iTable)
 }
 
 /*
+ * Return the USING clause of a NATURAL join of the item N of a FROM clause:
+ * the names of its columns that some item to its left has as well, or NULL
+ * if there are none.
+ */
+static struct IdList *
+naturalJoinUsing(struct SrcList *pSrc, int N)
+{
+	struct IdList *pUsing = NULL;
+	struct space_def *def = pSrc->a[N].space->def;
+	for (uint32_t j = 0; j < def->field_count; j++) {
+		const char *zName = def->fields[j].name;
+		if (!tableAndColumnIndex(pSrc, N, zName, NULL, NULL))
+			continue;
+		if (pUsing == NULL)
+			pUsing = sql_xmalloc0(sizeof(*pUsing));
+		int i;
+		pUsing->a = sqlArrayAllocate(pUsing->a, sizeof(pUsing->a[0]),
+					     &pUsing->nId, &i);
+		pUsing->a[i].zName = sql_xstrdup(zName);
+	}
+	return pUsing;
+}
+
+/*
  * This routine processes the join information for a SELECT statement.
  * ON and USING clauses are converted into extra terms of the WHERE clause.
  * NATURAL joins also create extra WHERE clause terms.
@@ -834,8 +858,9 @@ sqlProcessJoin(Parse * pParse, Select * p)
 			continue;
 		isOuter = (pRight->fg.jointype & JT_OUTER) != 0;
 
-		/* When the NATURAL keyword is present, add WHERE clause terms for
-		 * every column that the two tables have in common.
+		/*
+		 * If this is a NATURAL join, synthesize an appropriate USING
+		 * clause to specify which columns should be joined.
 		 */
 		if (pRight->fg.jointype & JT_NATURAL) {
 			if (pRight->pOn || pRight->pUsing) {
@@ -845,19 +870,7 @@ sqlProcessJoin(Parse * pParse, Select * p)
 				pParse->is_aborted = true;
 				return 1;
 			}
-			for (j = 0; j < (int)right_space->def->field_count; j++) {
-				char *zName;	/* Name of column in the right table */
-				int iLeft;	/* Matching left table */
-				int iLeftCol;	/* Matching column in the left table */
-
-				zName = right_space->def->fields[j].name;
-				if (tableAndColumnIndex
-				    (pSrc, i + 1, zName, &iLeft, &iLeftCol)) {
-					addWhereTerm(pParse, pSrc, iLeft,
-						     iLeftCol, i + 1, j,
-						     isOuter, &p->pWhere);
-				}
-			}
+			pRight->pUsing = naturalJoinUsing(pSrc, i + 1);
 		}
 
 		/* Disallow both ON and USING clauses in the same join
@@ -5128,15 +5141,6 @@ selectExpander(Walker * pWalker, Select * p)
 					continue;
 				tableSeen = 1;
 
-				/*
-				 * In a NATURAL join, omit the join columns from
-				 * the table to the right of the join
-				 */
-				if (i > 0 && zTName == NULL &&
-				    (pFrom->fg.jointype & JT_NATURAL) != 0 &&
-				    tableAndColumnIndex(pTabList, i, zName, 0,
-							0) != 0)
-					continue;
 				/*
 				 * In a join with a USING clause, omit columns
 				 * in the using clause from the table on the
