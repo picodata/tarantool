@@ -1284,6 +1284,7 @@ sqlWindowDup(Expr *pOwner, Window *p)
 	if (ALWAYS(p)) {
 		pNew = sql_xmalloc0(sizeof(Window));
 		pNew->zName = sql_xstrdup(p->zName);
+		pNew->zBase = sql_xstrdup(p->zBase);
 		pNew->pFilter = sqlExprDup(p->pFilter, 0);
 		pNew->pFunc = p->pFunc;
 		pNew->pPartition = sql_expr_list_dup(p->pPartition, 0);
@@ -1294,6 +1295,7 @@ sqlWindowDup(Expr *pOwner, Window *p)
 		pNew->pStart = sqlExprDup(p->pStart, 0);
 		pNew->pEnd = sqlExprDup(p->pEnd, 0);
 		pNew->pOwner = pOwner;
+		pNew->bImplicitFrame = p->bImplicitFrame;
 	}
 	return pNew;
 }
