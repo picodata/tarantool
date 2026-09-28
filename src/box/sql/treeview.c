@@ -143,9 +143,10 @@ sqlTreeViewWith(TreeView * pView, const With * pWith)
 			if (pCte->pCols && pCte->pCols->nExpr > 0) {
 				char cSep = '(';
 				int j;
-				for (j = 0; j < pCte->pCols->nExpr; j++) {
+				struct ExprList *cols = pCte->pCols;
+				for (j = 0; j < cols->nExpr; j++) {
 					sqlXPrintf(&x, "%c%s", cSep,
-						       pCte->pCols->a[j].zName);
+						   cols->a[j].zEName);
 					cSep = ',';
 				}
 				sqlXPrintf(&x, ")");

@@ -443,7 +443,7 @@ checkColumnOverlap(IdList * pIdList, ExprList * pEList)
 	if (pIdList == 0 || NEVER(pEList == 0))
 		return 1;
 	for (e = 0; e < pEList->nExpr; e++) {
-		if (sqlIdListIndex(pIdList, pEList->a[e].zName) >= 0)
+		if (sqlIdListIndex(pIdList, pEList->a[e].zEName) >= 0)
 			return 1;
 	}
 	return 0;

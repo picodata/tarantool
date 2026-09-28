@@ -1309,7 +1309,7 @@ vdbe_emit_create_constraints(struct Parse *parse, int reg_space_id)
 			struct ExprList *cols = fk_parse->selfref_cols;
 			for (uint32_t i = 0; i < fk_def->field_count; ++i) {
 				if (resolve_link(parse, space->def,
-						 cols->a[i].zName,
+						 cols->a[i].zEName,
 						 &fk_def->links[i].parent_field,
 						 fk_def->name) != 0)
 					return;
@@ -2007,7 +2007,7 @@ sql_create_foreign_key(struct Parse *parse_context)
 			fk_def->links[i].parent_field = pk_def->parts[i].fieldno;
 		} else if (!is_self_referenced &&
 			   columnno_by_name(parse_context, parent_space,
-					    parent_cols->a[i].zName,
+					    parent_cols->a[i].zEName,
 					    &fk_def->links[i].parent_field,
 					    constraint_name) != 0) {
 			goto exit_create_fk;
@@ -2026,13 +2026,13 @@ sql_create_foreign_key(struct Parse *parse_context)
 				break;
 			}
 			if (resolve_link(parse_context, space->def,
-					 child_cols->a[i].zName,
+					 child_cols->a[i].zEName,
 					 &fk_def->links[i].child_field,
 					 constraint_name) != 0)
 				goto exit_create_fk;
 		/* In case of ALTER parent table must exist. */
 		} else if (columnno_by_name(parse_context, child_space,
-					    child_cols->a[i].zName,
+					    child_cols->a[i].zEName,
 					    &fk_def->links[i].child_field,
 					    constraint_name) != 0) {
 			goto exit_create_fk;

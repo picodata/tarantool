@@ -1437,7 +1437,7 @@ uniqueflag(A) ::= .        {A = SQL_INDEX_TYPE_NON_UNIQUE;}
 
 
 // The eidlist non-terminal (Expression Id List) generates an ExprList
-// from a list of identifiers.  The identifier names are in ExprList.a[].zName.
+// from a list of identifiers.  The identifier names are in ExprList.a[].zEName.
 // This list is stored in an ExprList rather than an IdList so that it
 // can be easily sent to sqlColumnsExprList().
 //

@@ -1191,7 +1191,7 @@ selectInnerLoop(Parse * pParse,		/* The parser context */
 		for (i = 0; i < nResultCol; i++) {
 			sqlVdbeAddOp3(v, OP_Column, srcTab, i,
 					  regResult + i);
-			VdbeComment((v, "%s", pEList->a[i].zName));
+			VdbeComment((v, "%s", pEList->a[i].zEName));
 		}
 	} else if (eDest != SRT_Exists) {
 		/* If the destination is an EXISTS(...) expression, the actual
@@ -1824,7 +1824,7 @@ generateSortTail(Parse * pParse,	/* Parsing context */
 		}
 		sqlVdbeAddOp3(v, OP_Column, iSortTab, iRead, regRow + i);
 		VdbeComment((v, "%s",
-			     aOutEx[i].zName ? aOutEx[i].zName : aOutEx[i].
+			     aOutEx[i].zEName ? aOutEx[i].zEName : aOutEx[i].
 			     zSpan));
 	}
 	switch (eDest) {
@@ -1987,7 +1987,7 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 		enum field_type type = sql_expr_type(p);
 		vdbe_metadata_set_col_type(v, i, field_type_strs[type]);
 		vdbe_metadata_set_col_nullability(v, i, -1);
-		const char *colname = pEList->a[i].zName;
+		const char *colname = pEList->a[i].zEName;
 		if (p->op == TK_COLUMN_REF || p->op == TK_AGG_COLUMN) {
 			char *zCol;
 			int iCol = p->iColumn;
@@ -2084,7 +2084,7 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 		 * Check if the column contains an "AS <name>"
 		 * phrase.
 		 */
-		char *name = expr_list->a[i].zName;
+		char *name = expr_list->a[i].zEName;
 		if (name == NULL) {
 			struct Expr *pColExpr = expr_list->a[i].pExpr;
 			struct space_def *space_def = NULL;
@@ -5022,10 +5022,10 @@ selectExpander(Walker * pWalker, Select * p)
 		if (pE->op == TK_DOT && pE->pRight->op == TK_ASTERISK)
 			has_asterisk = true;
 		elistFlags |= pE->flags;
-		if (pEList->a[k].zName == NULL &&
+		if (pEList->a[k].zEName == NULL &&
 		    expr_autoname_is_required(pE)) {
 			uint32_t idx = ++pParse->autoname_i;
-			pEList->a[k].zName =
+			pEList->a[k].zEName =
 				sql_xstrdup(sql_generate_column_name(idx));
 		}
 	}
@@ -5053,9 +5053,9 @@ selectExpander(Walker * pWalker, Select * p)
 			 * expanded.
 			 */
 			pNew = sql_expr_list_append(pNew, a[k].pExpr);
-			pNew->a[pNew->nExpr - 1].zName = a[k].zName;
+			pNew->a[pNew->nExpr - 1].zEName = a[k].zEName;
 			pNew->a[pNew->nExpr - 1].zSpan = a[k].zSpan;
-			a[k].zName = 0;
+			a[k].zEName = 0;
 			a[k].zSpan = 0;
 			a[k].pExpr = 0;
 			continue;

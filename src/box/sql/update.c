@@ -136,7 +136,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 		}
 		for (j = 0; j < (int)def->field_count; j++) {
 			if (strcmp(def->fields[j].name,
-				   pChanges->a[i].zName) == 0) {
+				   pChanges->a[i].zEName) == 0) {
 				if (pPk &&
 				    sql_space_column_is_in_pk(space, j))
 					is_pk_modified = true;
@@ -145,7 +145,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 						"set id list: duplicate "\
 						"column name %s";
 					err = tt_sprintf(err,
-							 pChanges->a[i].zName);
+							 pChanges->a[i].zEName);
 					diag_set(ClientError,
 						 ER_SQL_PARSER_GENERIC,
 						 err);
@@ -159,7 +159,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 		}
 		if (j >= (int)def->field_count) {
 			diag_set(ClientError, ER_NO_SUCH_FIELD_NAME_IN_SPACE,
-				 pChanges->a[i].zName, def->name);
+				 pChanges->a[i].zEName, def->name);
 			pParse->is_aborted = true;
 			goto update_cleanup;
 		}

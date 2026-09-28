@@ -1556,7 +1556,7 @@ struct Expr {
  * name.  An expr/name combination can be used in several ways, such
  * as the list of "expr AS ID" fields following a "SELECT" or in the
  * list of "ID = expr" items in an UPDATE.  A list of expressions can
- * also be used as the argument to a function, in which case the a.zName
+ * also be used as the argument to a function, in which case the a.zEName
  * field is not used.
  *
  * By default the Expr.zSpan field holds a human-readable description of
@@ -1571,7 +1571,7 @@ struct ExprList {
 	int nExpr;		/* Number of expressions on the list */
 	struct ExprList_item {	/* For each expression in the list */
 		Expr *pExpr;	/* The list of expressions */
-		char *zName;	/* Token associated with this expression */
+		char *zEName;	/* Token associated with this expression */
 		char *zSpan;	/* Original text of the expression */
 		enum sort_order sort_order;
 		unsigned done:1;	/* A flag to indicate when processing is finished */
@@ -1580,7 +1580,8 @@ struct ExprList {
 		union {
 			struct {
 				u16 iOrderByCol;	/* For ORDER BY, column number in result set */
-				u16 iAlias;	/* Index into Parse.aAlias[] for zName */
+				/* Index into Parse.aAlias[] for zEName */
+				u16 iAlias;
 			} x;
 			int iConstExprReg;	/* Register in which Expr value is cached */
 		} u;

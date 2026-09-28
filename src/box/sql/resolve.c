@@ -396,7 +396,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 			pEList = pNC->uNC.pEList;
 			assert(pEList != NULL);
 			for (j = 0; j < pEList->nExpr; j++) {
-				char *zAs = pEList->a[j].zName;
+				char *zAs = pEList->a[j].zEName;
 				if (zAs != 0 && strcmp(zAs, zCol) == 0) {
 					Expr *pOrig;
 					assert(pExpr->pLeft == 0
@@ -869,7 +869,7 @@ resolveAsName(Parse * pParse,	/* Parsing context for error messages */
 	if (pE->op == TK_ID) {
 		char *zCol = pE->u.zToken;
 		for (i = 0; i < pEList->nExpr; i++) {
-			char *zAs = pEList->a[i].zName;
+			char *zAs = pEList->a[i].zEName;
 			if (zAs != 0 && strcmp(zAs, zCol) == 0) {
 				return i + 1;
 			}
