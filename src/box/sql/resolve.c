@@ -527,6 +527,34 @@ exprProbability(Expr * p)
 }
 
 /*
+ * Report that an expression, described by zMsg, is not valid in the
+ * current name context, and invalidate pExpr, if it is not NULL, so that it
+ * causes no problems later.
+ *
+ * As an optimization, since the check is almost always false (because
+ * errors are rare), it is made outside of the function call by the
+ * sqlResolveNotValid() macro.
+ */
+static void
+notValidImpl(struct Parse *pParse, const char *zMsg, struct Expr *pExpr)
+{
+	diag_set(ClientError, ER_INDEX_DEF_UNSUPPORTED, zMsg);
+	pParse->is_aborted = true;
+	if (pExpr != NULL)
+		pExpr->op = TK_NULL;
+}
+
+/*
+ * Report an error that an expression is not valid for some set of
+ * pNC->ncFlags values determined by validMask.
+ */
+#define sqlResolveNotValid(P, N, M, X, E) do {				\
+	assert(((X) & ~NC_IdxExpr) == 0);				\
+	if (((N)->ncFlags & (X)) != 0)					\
+		notValidImpl(P, M, E);					\
+} while (0)
+
+/*
  * Get the table and column names of a "table.column" reference, and report
  * it if such a reference is not allowed in the expression being resolved.
  */
@@ -535,10 +563,7 @@ resolveDotOperands(struct Parse *pParse, const struct NameContext *pNC,
 		   const struct Expr *pExpr, const char **pzTable,
 		   const char **pzColumn)
 {
-	if (pNC->ncFlags & NC_IdxExpr) {
-		diag_set(ClientError, ER_INDEX_DEF_UNSUPPORTED, "Expressions");
-		pParse->is_aborted = true;
-	}
+	sqlResolveNotValid(pParse, pNC, "Expressions", NC_IdxExpr, NULL);
 	const struct Expr *pRight = pExpr->pRight;
 	if (pRight->op == TK_ID) {
 		*pzTable = pExpr->pLeft->u.zToken;
@@ -780,11 +805,8 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 			break;
 		}
 	case TK_VARIABLE:{
-			if (pNC->ncFlags & NC_IdxExpr) {
-				diag_set(ClientError, ER_INDEX_DEF_UNSUPPORTED,
-					 "Parameter markers");
-				pParse->is_aborted = true;
-			}
+			sqlResolveNotValid(pParse, pNC, "Parameter markers",
+					   NC_IdxExpr, pExpr);
 			break;
 		}
 	case TK_BETWEEN:
