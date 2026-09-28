@@ -2426,7 +2426,8 @@ struct Walker {
 		int n;		/* A counter */
 		int iCur;	/* A cursor number */
 		SrcList *pSrcList;	/* FROM clause */
-		struct SrcCount *pSrcCount;	/* Counting column references */
+		/* sqlReferencesSrcList() */
+		struct RefSrcList *pRefSrcList;
 		int *aiCol;	/* array of column indexes */
 		/** Space definition. */
 		struct space_def *space_def;
@@ -3351,7 +3352,15 @@ int sqlExprListCompare(ExprList *, ExprList *, int);
 int sqlExprImpliesExpr(Expr *, Expr *, int);
 void sqlExprAnalyzeAggregates(NameContext *, Expr *);
 void sqlExprAnalyzeAggList(NameContext *, ExprList *);
-int sqlFunctionUsesThisSrc(Expr *, SrcList *);
+/**
+ * Check to see if pExpr, an aggregate function call, references any
+ * tables in pSrcList. Return 1 if it does, 0 if it references some
+ * table that is defined neither in pSrcList nor in subqueries of pExpr
+ * itself, and -1 if it references no tables at all, or only tables
+ * defined in subqueries of pExpr itself.
+ */
+int
+sqlReferencesSrcList(struct Expr *pExpr, struct SrcList *pSrcList);
 
 /**
  * Return the VDBE associated with the parser. If there was no VDBE associated

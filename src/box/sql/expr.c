@@ -5162,73 +5162,106 @@ sqlExprImpliesExpr(Expr * pE1, Expr * pE2, int iTab)
 }
 
 /*
- * An instance of the following structure is used by the tree walker
- * to count references to table columns in the arguments of an
- * aggregate function, in order to implement the
- * sqlFunctionThisSrc() routine.
+ * Structure used to pass information through the Walker in order to
+ * implement sqlReferencesSrcList().
  */
-struct SrcCount {
-	SrcList *pSrc;		/* One particular FROM clause in a nested query */
-	int nThis;		/* Number of references to columns in pSrcList */
-	int nOther;		/* Number of references to columns in other FROM clauses */
+struct RefSrcList {
+	/* Looking for references to these tables */
+	struct SrcList *pRef;
+	/* Number of tables to exclude from the search */
+	int nExclude;
+	/* Cursor IDs for tables to exclude from the search */
+	int *aiExclude;
 };
 
 /*
- * Count the number of references to columns.
+ * Walker SELECT callback for sqlReferencesSrcList(). When entering a new
+ * subquery on the pExpr argument, add all FROM clause entries for that
+ * subquery to the exclude list.
  */
 static int
-exprSrcCount(Walker * pWalker, Expr * pExpr)
+selectRefEnter(struct Walker *pWalker, struct Select *pSelect)
 {
-	/* The NEVER() on the second term is because sqlFunctionUsesThisSrc()
-	 * is always called before sqlExprAnalyzeAggregates() and so the
-	 * TK_COLUMN_REFs have not yet been converted into TK_AGG_COLUMN. If
-	 * sqlFunctionUsesThisSrc() is used differently in the future, the
-	 * NEVER() will need to be removed.
-	 */
-	if (pExpr->op == TK_COLUMN_REF || NEVER(pExpr->op == TK_AGG_COLUMN)) {
-		int i;
-		struct SrcCount *p = pWalker->u.pSrcCount;
-		SrcList *pSrc = p->pSrc;
-		int nSrc = pSrc ? pSrc->nSrc : 0;
-		for (i = 0; i < nSrc; i++) {
-			if (pExpr->iTable == pSrc->a[i].iCursor)
-				break;
-		}
-		if (i < nSrc) {
-			p->nThis++;
-		} else if (nSrc == 0 || pExpr->iTable < pSrc->a[0].iCursor) {
-			/*
-			 * In a well-formed parse tree, the column
-			 * references with smaller cursor numbers are in
-			 * an outer context. Only those count as "other".
-			 */
-			p->nOther++;
-		}
-	}
+	struct RefSrcList *p = pWalker->u.pRefSrcList;
+	struct SrcList *pSrc = pSelect->pSrc;
+	if (pSrc->nSrc == 0)
+		return WRC_Continue;
+	int j = p->nExclude;
+	p->nExclude += pSrc->nSrc;
+	p->aiExclude = sql_xrealloc(p->aiExclude,
+				    p->nExclude * sizeof(p->aiExclude[0]));
+	for (int i = 0; i < pSrc->nSrc; i++, j++)
+		p->aiExclude[j] = pSrc->a[i].iCursor;
 	return WRC_Continue;
 }
 
 /*
- * Determine if any of the arguments to the pExpr Function reference
- * pSrcList.  Return true if they do.  Also return true if the function
- * has no arguments or has only constant arguments.  Return false if pExpr
- * references columns but not columns of tables found in pSrcList.
+ * Walker SELECT callback for sqlReferencesSrcList(). When leaving the
+ * subquery, remove its FROM clause entries from the exclude list.
  */
-int
-sqlFunctionUsesThisSrc(Expr * pExpr, SrcList * pSrcList)
+static void
+selectRefLeave(struct Walker *pWalker, struct Select *pSelect)
 {
-	Walker w;
-	struct SrcCount cnt;
-	assert(pExpr->op == TK_AGG_FUNCTION);
+	struct RefSrcList *p = pWalker->u.pRefSrcList;
+	struct SrcList *pSrc = pSelect->pSrc;
+	if (p->nExclude != 0) {
+		assert(p->nExclude >= pSrc->nSrc);
+		p->nExclude -= pSrc->nSrc;
+	}
+}
+
+/*
+ * This is the Walker EXPR callback for sqlReferencesSrcList().
+ *
+ * Set the 0x01 bit of pWalker->eCode if there is a reference to any
+ * of the tables shown in RefSrcList.pRef.
+ *
+ * Set the 0x02 bit of pWalker->eCode if there is a reference to a
+ * table is in neither RefSrcList.pRef nor RefSrcList.aiExclude.
+ */
+static int
+exprRefToSrcList(struct Walker *pWalker, struct Expr *pExpr)
+{
+	if (pExpr->op != TK_COLUMN_REF && pExpr->op != TK_AGG_COLUMN)
+		return WRC_Continue;
+	struct RefSrcList *p = pWalker->u.pRefSrcList;
+	struct SrcList *pSrc = p->pRef;
+	int nSrc = pSrc != NULL ? pSrc->nSrc : 0;
+	for (int i = 0; i < nSrc; i++) {
+		if (pExpr->iTable == pSrc->a[i].iCursor) {
+			pWalker->eCode |= 1;
+			return WRC_Continue;
+		}
+	}
+	int i;
+	for (i = 0; i < p->nExclude && p->aiExclude[i] != pExpr->iTable; i++)
+		;
+	if (i >= p->nExclude)
+		pWalker->eCode |= 2;
+	return WRC_Continue;
+}
+
+int
+sqlReferencesSrcList(struct Expr *pExpr, struct SrcList *pSrcList)
+{
+	struct Walker w;
+	struct RefSrcList x;
 	memset(&w, 0, sizeof(w));
-	w.xExprCallback = exprSrcCount;
-	w.xSelectCallback = sqlSelectWalkNoop;
-	w.u.pSrcCount = &cnt;
-	cnt.pSrc = pSrcList;
-	cnt.nThis = 0;
-	cnt.nOther = 0;
+	memset(&x, 0, sizeof(x));
+	w.xExprCallback = exprRefToSrcList;
+	w.xSelectCallback = selectRefEnter;
+	w.xSelectCallback2 = selectRefLeave;
+	w.u.pRefSrcList = &x;
+	x.pRef = pSrcList;
+	assert(pExpr->op == TK_AGG_FUNCTION);
 	sqlWalkExprList(&w, pExpr->x.pList);
-	return cnt.nThis > 0 || cnt.nOther == 0;
+	sql_xfree(x.aiExclude);
+	if ((w.eCode & 0x01) != 0)
+		return 1;
+	else if (w.eCode != 0)
+		return 0;
+	else
+		return -1;
 }
 
 /*

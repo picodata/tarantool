@@ -598,6 +598,23 @@ resolveDotOperands(struct Parse *pParse, const struct NameContext *pNC,
 }
 
 /*
+ * Find the name context of the query that the aggregate function pExpr
+ * belongs to, looking up through the outer contexts from pNC, and count
+ * the contexts skipped in pExpr->op2. Return NULL if there is none.
+ */
+static struct NameContext *
+resolveAggOwner(struct Expr *pExpr, struct NameContext *pNC)
+{
+	pExpr->op2 = 0;
+	while (pNC != NULL &&
+	       sqlReferencesSrcList(pExpr, pNC->pSrcList) == 0) {
+		pExpr->op2++;
+		pNC = pNC->pNext;
+	}
+	return pNC;
+}
+
+/*
  * This routine is callback for sqlWalkExpr().
  *
  * Resolve symbolic names into TK_COLUMN_REF operators for the current
@@ -789,15 +806,9 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 					}
 					pNC->ncFlags |= NC_HasWin;
 				} else {
-					NameContext *pNC2 = pNC;
 					pExpr->op = TK_AGG_FUNCTION;
-					pExpr->op2 = 0;
-					while (pNC2 &&
-					       !sqlFunctionUsesThisSrc(
-						pExpr, pNC2->pSrcList)) {
-						pExpr->op2++;
-						pNC2 = pNC2->pNext;
-					}
+					NameContext *pNC2 =
+						resolveAggOwner(pExpr, pNC);
 					if (pNC2) {
 						pNC2->ncFlags |= NC_HasAgg;
 						bool is_minmax = (flags &
