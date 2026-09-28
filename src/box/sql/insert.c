@@ -356,16 +356,8 @@ sqlInsert(Parse * pParse,	/* Parser context */
 			pColumn->a[i].idx = -1;
 		}
 		for (i = 0; i < pColumn->nId; i++) {
-			for (j = 0; j < (int) space_def->field_count; j++) {
-				if (strcmp(pColumn->a[i].zName,
-					   space_def->fields[j].name) == 0) {
-					pColumn->a[i].idx = j;
-					if (i != j)
-						bIdListInOrder = 0;
-					break;
-				}
-			}
-			if (j >= (int) space_def->field_count) {
+			j = sqlColumnIndex(space_def, pColumn->a[i].zName);
+			if (j < 0) {
 				diag_set(ClientError,
 					 ER_NO_SUCH_FIELD_NAME_IN_SPACE,
 					 pColumn->a[i].zName,
@@ -373,6 +365,9 @@ sqlInsert(Parse * pParse,	/* Parser context */
 				pParse->is_aborted = true;
 				goto insert_cleanup;
 			}
+			pColumn->a[i].idx = j;
+			if (i != j)
+				bIdListInOrder = 0;
 			if (bit_test(used_columns, j)) {
 				const char *err = "table id list: duplicate "\
 						  "column name %s";

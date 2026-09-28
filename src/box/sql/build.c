@@ -551,12 +551,7 @@ sqlAddPrimaryKey(struct Parse *pParse)
 			}
 			const char *name = pCExpr->u.zToken;
 			struct space_def *def = space->def;
-			for (uint32_t idx = 0; idx < def->field_count; idx++) {
-				if (strcmp(name, def->fields[idx].name) == 0) {
-					iCol = idx;
-					break;
-				}
-			}
+			iCol = sqlColumnIndex(def, name);
 		}
 	}
 	if (nTerm == 1 && iCol != -1 &&
@@ -1223,11 +1218,10 @@ resolve_link(struct Parse *parse_context, const struct space_def *def,
 	     const char *field_name, uint32_t *link, const char *fk_name)
 {
 	assert(link != NULL);
-	for (uint32_t j = 0; j < def->field_count; ++j) {
-		if (strcmp(field_name, def->fields[j].name) == 0) {
-			*link = j;
-			return 0;
-		}
+	int fieldno = sqlColumnIndex(def, field_name);
+	if (fieldno >= 0) {
+		*link = fieldno;
+		return 0;
 	}
 	diag_set(ClientError, ER_CREATE_FK_CONSTRAINT, fk_name,
 		 tt_sprintf("unknown column %s in foreign key definition",
@@ -3194,12 +3188,8 @@ sql_fieldno_by_name(struct Parse *parse_context, struct Expr *field_name,
 		parse_context->is_aborted = true;
 		return -1;
 	}
-	uint32_t i;
-	for (i = 0; i < def->field_count; ++i) {
-		if (strcmp(def->fields[i].name, name->u.zToken) == 0)
-			break;
-	}
-	if (i == def->field_count) {
+	int i = sqlColumnIndex(def, name->u.zToken);
+	if (i < 0) {
 		diag_set(ClientError, ER_SQL_CANT_RESOLVE_FIELD, name->u.zToken);
 		parse_context->is_aborted = true;
 		return -1;

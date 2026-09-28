@@ -685,6 +685,16 @@ srcItemColumnIsHidden(const struct SrcItem *item, int iCol)
 }
 
 int
+sqlColumnIndex(const struct space_def *def, const char *zCol)
+{
+	for (uint32_t i = 0; i < def->field_count; i++) {
+		if (strcmp(def->fields[i].name, zCol) == 0)
+			return i;
+	}
+	return -1;
+}
+
+int
 sqlSrcItemColumnIndex(const struct SrcItem *item, const char *zCol,
 		      bool withHidden)
 {

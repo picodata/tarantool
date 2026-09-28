@@ -2601,6 +2601,10 @@ sqlWindowCodeStep(Parse *pParse, Select *p, WhereInfo *pWInfo,
 int
 sqlWindowRewrite(Parse *pParse, Select *p);
 
+/** Return the index of the column zCol of a space, or -1 if it has none. */
+int
+sqlColumnIndex(const struct space_def *def, const char *zCol);
+
 /**
  * Return the index of the column zCol of the FROM clause item, or -1 if it
  * has no such column. The hidden columns of a parenthesized join, which are

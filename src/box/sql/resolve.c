@@ -384,16 +384,9 @@ lookupName(Parse * pParse,	/* The parsing context */
 			}
 
 			if (space_def != NULL) {
-				int iCol;
 				cntTab++;
-				for (iCol = 0; iCol <
-				     (int)space_def->field_count; iCol++) {
-					if (strcmp(space_def->fields[iCol].name,
-						   zCol) == 0) {
-						break;
-					}
-				}
-				if (iCol < (int)space_def->field_count) {
+				int iCol = sqlColumnIndex(space_def, zCol);
+				if (iCol >= 0) {
 					cnt++;
 					uint64_t *mask = pExpr->iTable == 0 ?
 							 &pParse->oldmask :
