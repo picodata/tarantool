@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(7)
+test:plan(11)
 
 --!./tcltestrunner.lua
 -- 2012 August 23
@@ -289,5 +289,47 @@ test:do_execsql_test("aggnested-3.3",
 --      GROUP BY id1;
 --   }
 -- } {12 2 34 4}
-test:finish_test()
+-- 2019-08-31
+-- Problem found by dbsqlfuzz
+--
+test:do_execsql_test("aggnested-4.1",
+    [[
+        DROP TABLE IF EXISTS aa;
+        DROP TABLE IF EXISTS bb;
+        CREATE TABLE aa(id INT PRIMARY KEY AUTOINCREMENT, x INT);
+        INSERT INTO aa(x) VALUES(123);
+        CREATE TABLE bb(id INT PRIMARY KEY AUTOINCREMENT, y INT);
+        INSERT INTO bb(y) VALUES(456);
+        SELECT (SELECT sum(x+(SELECT y)) FROM bb) FROM aa;
+    ]], {
+        579
+    })
 
+test:do_execsql_test("aggnested-4.2",
+    [[
+        SELECT (SELECT sum(x+y) FROM bb) FROM aa;
+    ]], {
+        579
+    })
+
+test:do_execsql_test("aggnested-4.3",
+    [[
+        DROP TABLE IF EXISTS tx;
+        DROP TABLE IF EXISTS ty;
+        CREATE TABLE tx(x INT PRIMARY KEY);
+        INSERT INTO tx VALUES(1),(2),(3),(4),(5);
+        CREATE TABLE ty(y INT PRIMARY KEY);
+        INSERT INTO ty VALUES(91),(92),(93);
+        SELECT min((SELECT count(y) FROM ty)) FROM tx;
+    ]], {
+        3
+    })
+
+test:do_execsql_test("aggnested-4.4",
+    [[
+        SELECT max((SELECT a FROM (SELECT count(*) AS a FROM ty) AS s)) FROM tx;
+    ]], {
+        3
+    })
+
+test:finish_test()
