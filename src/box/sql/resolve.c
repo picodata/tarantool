@@ -104,6 +104,13 @@ resolveAlias(struct ExprList *pEList, int iCol, struct Expr *pExpr,
 	assert(iCol >= 0 && iCol < pEList->nExpr);
 	pOrig = pEList->a[iCol].pExpr;
 	assert(pOrig != 0);
+	assert(!ExprHasProperty(pExpr, EP_Reduced | EP_TokenOnly));
+	/*
+	 * An expression that the aggregate analysis has seen already is
+	 * no alias to resolve.
+	 */
+	if (pExpr->pAggInfo != NULL)
+		return;
 	pDup = sqlExprDup(pOrig, 0);
 	if (pDup == 0)
 		return;
