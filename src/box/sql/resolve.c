@@ -1559,16 +1559,6 @@ sqlResolveExprNames(NameContext * pNC,	/* Namespace to resolve expressions in. *
 
 	if (pExpr == 0)
 		return 0;
-#if SQL_MAX_EXPR_DEPTH>0
-	{
-		Parse *pParse = pNC->pParse;
-		if (sqlExprCheckHeight
-		    (pParse, pExpr->nHeight + pNC->pParse->nHeight)) {
-			return 1;
-		}
-		pParse->nHeight += pExpr->nHeight;
-	}
-#endif
 	savedHasAgg = pNC->ncFlags & (NC_HasAgg | NC_MinMaxAgg);
 	pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg);
 	w.pParse = pNC->pParse;
@@ -1576,18 +1566,20 @@ sqlResolveExprNames(NameContext * pNC,	/* Namespace to resolve expressions in. *
 	w.xSelectCallback = resolveSelectStep;
 	w.xSelectCallback2 = 0;
 	w.u.pNC = pNC;
-	sqlWalkExpr(&w, pExpr);
-#if SQL_MAX_EXPR_DEPTH>0
-	pNC->pParse->nHeight -= pExpr->nHeight;
+#if SQL_MAX_EXPR_DEPTH > 0
+	w.pParse->nHeight += pExpr->nHeight;
+	if (sqlExprCheckHeight(w.pParse, w.pParse->nHeight))
+		return 1;
 #endif
-	if (pNC->nErr > 0 || w.pParse->is_aborted) {
-		ExprSetProperty(pExpr, EP_Error);
-	}
+	sqlWalkExpr(&w, pExpr);
+#if SQL_MAX_EXPR_DEPTH > 0
+	w.pParse->nHeight -= pExpr->nHeight;
+#endif
 	if (pNC->ncFlags & NC_HasAgg) {
 		ExprSetProperty(pExpr, EP_Agg);
 	}
 	pNC->ncFlags |= savedHasAgg;
-	return ExprHasProperty(pExpr, EP_Error);
+	return pNC->nErr > 0 || w.pParse->is_aborted;
 }
 
 /*
