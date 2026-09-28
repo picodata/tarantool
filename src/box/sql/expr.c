@@ -1735,8 +1735,8 @@ sqlSrcListDup(struct SrcList *p, int flags)
 	pNew = sql_xmalloc(nByte);
 	pNew->nSrc = pNew->nAlloc = p->nSrc;
 	for (i = 0; i < p->nSrc; i++) {
-		struct SrcList_item *pNewItem = &pNew->a[i];
-		struct SrcList_item *pOldItem = &p->a[i];
+		struct SrcItem *pNewItem = &pNew->a[i];
+		struct SrcItem *pOldItem = &p->a[i];
 		pNewItem->zName = sql_xstrdup(pOldItem->zName);
 		pNewItem->zAlias = sql_xstrdup(pOldItem->zAlias);
 		pNewItem->fg = pOldItem->fg;
@@ -5280,7 +5280,7 @@ analyzeAggregate(Walker * pWalker, Expr * pExpr)
 			 * clause of the aggregate query
 			 */
 			if (ALWAYS(pSrcList != 0)) {
-				struct SrcList_item *pItem = pSrcList->a;
+				struct SrcItem *pItem = pSrcList->a;
 				for (i = 0; i < pSrcList->nSrc; i++, pItem++) {
 					struct AggInfo_col *pCol;
 					assert(!ExprHasProperty

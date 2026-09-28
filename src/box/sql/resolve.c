@@ -263,8 +263,8 @@ lookupName(Parse * pParse,	/* The parsing context */
 	int cnt = 0;		/* Number of matching column names */
 	int cntTab = 0;		/* Number of matching table names */
 	int nSubquery = 0;	/* How many levels of subquery */
-	struct SrcList_item *pItem;	/* Use for looping over pSrcList items */
-	struct SrcList_item *pMatch = 0;	/* The matching pSrcList item */
+	struct SrcItem *pItem;	/* Use for looping over pSrcList items */
+	struct SrcItem *pMatch = 0;	/* The matching pSrcList item */
 	NameContext *pTopNC = pNC;	/* First namecontext in the list */
 	int isTrigger = 0;	/* True if resolved to a trigger column */
 
@@ -521,7 +521,7 @@ struct Expr *
 sql_expr_new_column(struct SrcList *src_list, int src_idx, int column)
 {
 	struct Expr *expr = sql_expr_new_anon(TK_COLUMN_REF);
-	struct SrcList_item *item = &src_list->a[src_idx];
+	struct SrcItem *item = &src_list->a[src_idx];
 	expr->y.space_def = item->space->def;
 	expr->iTable = item->iCursor;
 	expr->iColumn = column;
@@ -1363,7 +1363,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		/* Recursively resolve names in all subqueries
 		 */
 		for (i = 0; i < p->pSrc->nSrc; i++) {
-			struct SrcList_item *pItem = &p->pSrc->a[i];
+			struct SrcItem *pItem = &p->pSrc->a[i];
 			if (pItem->pSelect != NULL &&
 			    (pItem->pSelect->selFlags & SF_Resolved) == 0) {
 				NameContext *pNC;	/* Used to iterate name contexts */
@@ -1493,7 +1493,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 
 		/* Resolve names in table-valued-function arguments */
 		for (i = 0; i < p->pSrc->nSrc; i++) {
-			struct SrcList_item *pItem = &p->pSrc->a[i];
+			struct SrcItem *pItem = &p->pSrc->a[i];
 			if (pItem->fg.isTabFunc
 			    && sqlResolveExprListNames(&sNC,
 							   pItem->u1.pFuncArg)

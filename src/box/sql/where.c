@@ -696,7 +696,8 @@ translateColumnToCopy(Vdbe * v,		/* The VDBE containing code to translate */
  */
 static int
 termCanDriveIndex(WhereTerm * pTerm,	/* WHERE clause term to check */
-		  struct SrcList_item *pSrc,	/* Table we are trying to access */
+		  /* Table we are trying to access */
+		  struct SrcItem *pSrc,
 		  Bitmask notReady	/* Tables in outer loops of the join */
     )
 {
@@ -757,7 +758,8 @@ vdbe_emit_ephemeral_index_tuple(struct Parse *parse,
 static void
 constructAutomaticIndex(Parse * pParse,			/* The parsing context */
 			WhereClause * pWC,		/* The WHERE clause */
-			struct SrcList_item *pSrc,	/* The FROM clause term to get the next index */
+			/* The FROM clause term to get the next index */
+			struct SrcItem *pSrc,
 			Bitmask notReady,		/* Mask of cursors that are not available */
 			WhereLevel * pLevel)		/* Write new index here */
 {
@@ -1688,7 +1690,7 @@ whereLoopPrint(WhereLoop * p, WhereClause * pWC)
 {
 	WhereInfo *pWInfo = pWC->pWInfo;
 	int nb = 1 + (pWInfo->pTabList->nSrc + 3) / 4;
-	struct SrcList_item *pItem = pWInfo->pTabList->a + p->iTab;
+	struct SrcItem *pItem = pWInfo->pTabList->a + p->iTab;
 	struct space_def *space_def = pItem->space->def;
 	Bitmask mAll = (((Bitmask) 1) << (nb * 4)) - 1;
 	sqlDebugPrintf("%c%2d.%0*llx.%0*llx", p->cId,
@@ -2293,7 +2295,8 @@ whereRangeVectorLen(Parse * pParse,	/* Parsing context */
  */
 static int
 whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
-		       struct SrcList_item *pSrc,	/* FROM clause term being analyzed */
+		       /* FROM clause term being analyzed */
+		       struct SrcItem *pSrc,
 		       struct index_def *probe,
 		       LogEst nInMul)			/* log(Number of iterations due to IN) */
 {
@@ -2737,7 +2740,7 @@ whereLoopAddBtree(WhereLoopBuilder * pBuilder,	/* WHERE clause information */
 	/* A fake index object for the primary key. */
 	struct index_def *fake_index = NULL;
 	SrcList *pTabList;	/* The FROM clause */
-	struct SrcList_item *pSrc;	/* The FROM clause btree term to add */
+	struct SrcItem *pSrc;	/* The FROM clause btree term to add */
 	WhereLoop *pNew;	/* Template WhereLoop object */
 	int rc = 0;	/* Return code */
 	int iSortIdx = 1;	/* Index number */
@@ -2943,7 +2946,7 @@ whereLoopAddOr(WhereLoopBuilder * pBuilder, Bitmask mPrereq, Bitmask mUnusable)
 	WhereClause tempWC;
 	WhereLoopBuilder sSubBuild;
 	WhereOrSet sSum, sCur;
-	struct SrcList_item *pItem;
+	struct SrcItem *pItem;
 
 	pWC = pBuilder->pWC;
 	pWCEnd = pWC->a + pWC->nTerm;
@@ -3069,8 +3072,8 @@ whereLoopAddAll(WhereLoopBuilder * pBuilder)
 	Bitmask mPrior = 0;
 	int iTab;
 	SrcList *pTabList = pWInfo->pTabList;
-	struct SrcList_item *pItem;
-	struct SrcList_item *pEnd = &pTabList->a[pWInfo->nLevel];
+	struct SrcItem *pItem;
+	struct SrcItem *pEnd = &pTabList->a[pWInfo->nLevel];
 	int rc = 0;
 	WhereLoop *pNew;
 	u8 priorJointype = 0;
@@ -4028,7 +4031,7 @@ where_loop_builder_shortcut(struct WhereLoopBuilder *builder)
 	if (where_info->wctrlFlags & WHERE_OR_SUBCLAUSE)
 		return 0;
 	assert(where_info->pTabList->nSrc >= 1);
-	struct SrcList_item *item = where_info->pTabList->a;
+	struct SrcItem *item = where_info->pTabList->a;
 	struct space_def *space_def = item->space->def;
 	assert(space_def != NULL);
 	if (item->fg.isIndexedBy)
@@ -4487,7 +4490,7 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 	 * searching those tables.
 	 */
 	for (ii = 0, pLevel = pWInfo->a; ii < nTabList; ii++, pLevel++) {
-		struct SrcList_item *pTabItem = &pTabList->a[pLevel->iFrom];
+		struct SrcItem *pTabItem = &pTabList->a[pLevel->iFrom];
 		struct space_def *space_def = pTabItem->space->def;
 		pLoop = pLevel->pWLoop;
 		struct space *space = pTabItem->space;
@@ -4698,7 +4701,7 @@ sqlWhereEnd(WhereInfo * pWInfo)
 	for (i = 0, pLevel = pWInfo->a; i < pWInfo->nLevel; i++, pLevel++) {
 		int k, last;
 		VdbeOp *pOp;
-		struct SrcList_item *pTabItem = &pTabList->a[pLevel->iFrom];
+		struct SrcItem *pTabItem = &pTabList->a[pLevel->iFrom];
 		assert(pTabItem->space != NULL);
 		pLoop = pLevel->pWLoop;
 

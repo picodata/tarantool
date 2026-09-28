@@ -349,7 +349,7 @@ struct WhereAndInfo {
  * between VDBE cursor numbers and bits of the bitmasks in WhereTerm.
  *
  * The VDBE cursor numbers are small integers contained in
- * SrcList_item.iCursor and Expr.iTable fields.  For any given WHERE
+ * SrcItem.iCursor and Expr.iTable fields.  For any given WHERE
  * clause, the cursor numbers might not begin with 0 and they might
  * contain gaps in the numbering sequence.  But we want to make maximum
  * use of the bits in our bitmasks.  This structure provides a mapping
@@ -467,7 +467,13 @@ void sqlWhereSplit(WhereClause *, Expr *, u8);
 Bitmask sqlWhereExprUsage(WhereMaskSet *, Expr *);
 Bitmask sqlWhereExprListUsage(WhereMaskSet *, ExprList *);
 void sqlWhereExprAnalyze(SrcList *, WhereClause *);
-void sqlWhereTabFuncArgs(Parse *, struct SrcList_item *, WhereClause *);
+/**
+ * For table-valued-functions, transform the function arguments into
+ * new WHERE clause terms.
+ */
+void
+sqlWhereTabFuncArgs(struct Parse *pParse, struct SrcItem *pItem,
+		    struct WhereClause *pWC);
 
 /*
  * Bitmasks for the operators on WhereTerm objects.  These are all

@@ -304,7 +304,7 @@ sqlTreeViewSelect(TreeView * pView, const Select * p, u8 moreToFollow)
 			pView = sqlTreeViewPush(pView, (n--) > 0);
 			sqlTreeViewLine(pView, "FROM");
 			for (i = 0; i < p->pSrc->nSrc; i++) {
-				struct SrcList_item *pItem = &p->pSrc->a[i];
+				struct SrcItem *pItem = &p->pSrc->a[i];
 				StrAccum x;
 				char zLine[100];
 				sqlStrAccumInit(&x, zLine, sizeof(zLine), 0);

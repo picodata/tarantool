@@ -1678,7 +1678,7 @@ typedef u64 Bitmask;
 struct SrcList {
 	int nSrc;		/* Number of tables or subqueries in the FROM clause */
 	u32 nAlloc;		/* Number of entries allocated in a[] below */
-	struct SrcList_item {
+	struct SrcItem {
 		char *zName;	/* Name of the table */
 		char *zAlias;	/* The "B" part of a "A AS B" phrase.  zName is the "A" */
 		/** A space corresponding to zName */
@@ -2563,8 +2563,12 @@ sqlWindowCodeStep(Parse *pParse, Select *p, WhereInfo *pWInfo,
 int
 sqlWindowRewrite(Parse *pParse, Select *p);
 
+/**
+ * Create the space definition of the subquery in the FROM clause item
+ * pFrom from its result set.
+ */
 void
-sqlExpandSubquery(Parse *pParse, struct SrcList_item *pFrom);
+sqlExpandSubquery(Parse *pParse, struct SrcItem *pFrom);
 
 void
 sqlWindowUpdate(Parse *pParse, Window *pList, Window *pWin,
@@ -3152,7 +3156,12 @@ sqlSrcListIndexedBy(struct SrcList *p, struct Token *pIndexedBy);
 void
 sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList);
 
-int sqlIndexedByLookup(Parse *, struct SrcList_item *);
+/**
+ * Find the index named by the INDEXED BY clause of the FROM clause item
+ * pFrom, if it has one. Report an error and return -1 if there is none.
+ */
+int
+sqlIndexedByLookup(struct Parse *pParse, struct SrcItem *pFrom);
 void sqlSrcListShiftJoinType(SrcList *);
 void sqlSrcListAssignCursors(Parse *, SrcList *);
 
@@ -3207,7 +3216,7 @@ Select *sqlSelectNew(Parse *, ExprList *, SrcList *, Expr *, ExprList *,
  * @retval Space object if found, NULL otherwise.
  */
 struct space *
-sql_lookup_space(struct Parse *parse, struct SrcList_item *space_name);
+sql_lookup_space(struct Parse *parse, struct SrcItem *space_name);
 
 /**
  * Generate code for a DELETE FROM statement.

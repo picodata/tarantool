@@ -2829,7 +2829,7 @@ sql_src_list_append(struct SrcList *list, struct Token *name_token)
 			sql_src_list_enlarge(list, 1, list->nSrc);
 		list = new_list;
 	}
-	struct SrcList_item *item = &list->a[list->nSrc - 1];
+	struct SrcItem *item = &list->a[list->nSrc - 1];
 	if (name_token != NULL)
 		item->zName = sql_name_from_token(name_token);
 	return list;
@@ -2842,7 +2842,7 @@ void
 sqlSrcListAssignCursors(Parse * pParse, SrcList * pList)
 {
 	int i;
-	struct SrcList_item *pItem;
+	struct SrcItem *pItem;
 	assert(pList != NULL);
 	for (i = 0, pItem = pList->a; i < pList->nSrc; i++, pItem++) {
 		if (pItem->iCursor >= 0)
@@ -2857,7 +2857,7 @@ void
 sqlSrcListDelete(struct SrcList *pList)
 {
 	int i;
-	struct SrcList_item *pItem;
+	struct SrcItem *pItem;
 	if (pList == 0)
 		return;
 	for (pItem = pList->a, i = 0; i < pList->nSrc; i++, pItem++) {
@@ -2890,7 +2890,7 @@ sqlSrcListAppendFromTerm(struct Parse *pParse, struct SrcList *p,
 			 struct Select *pSubquery, struct Expr *pOn,
 			 struct IdList *pUsing, int disallow_scan)
 {
-	struct SrcList_item *pItem;
+	struct SrcItem *pItem;
 	if (!p && (pOn || pUsing)) {
 		diag_set(ClientError, ER_SQL_SYNTAX_WITH_POS,
 			 pParse->line_count, pParse->line_pos, "a JOIN clause "\
@@ -2928,7 +2928,7 @@ sqlSrcListIndexedBy(struct SrcList *p, struct Token *pIndexedBy)
 {
 	assert(pIndexedBy != 0);
 	if (p && ALWAYS(p->nSrc > 0)) {
-		struct SrcList_item *pItem = &p->a[p->nSrc - 1];
+		struct SrcItem *pItem = &p->a[p->nSrc - 1];
 		assert(pItem->fg.notIndexed == 0);
 		assert(pItem->fg.isIndexedBy == 0);
 		assert(pItem->fg.isTabFunc == 0);
@@ -2952,7 +2952,7 @@ void
 sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList)
 {
 	if (p) {
-		struct SrcList_item *pItem = &p->a[p->nSrc - 1];
+		struct SrcItem *pItem = &p->a[p->nSrc - 1];
 		assert(pItem->fg.notIndexed == 0);
 		assert(pItem->fg.isIndexedBy == 0);
 		assert(pItem->fg.isTabFunc == 0);

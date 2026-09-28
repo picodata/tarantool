@@ -1032,7 +1032,7 @@ xferOptimization(Parse * pParse,	/* Parser context */
 {
 	ExprList *pEList;	/* The result set of the SELECT */
 	struct index *pSrcIdx, *pDestIdx;
-	struct SrcList_item *pItem;	/* An element of pSelect->pSrc */
+	struct SrcItem *pItem;	/* An element of pSelect->pSrc */
 	int i;			/* Loop counter */
 	int iSrc, iDest;	/* Cursors from source and destination */
 	int addr1;		/* Loop addresses */

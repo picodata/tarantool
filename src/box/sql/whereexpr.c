@@ -1397,7 +1397,8 @@ sqlWhereExprAnalyze(SrcList * pTabList,	/* the FROM clause */
  */
 void
 sqlWhereTabFuncArgs(Parse * pParse,	/* Parsing context */
-			struct SrcList_item *pItem,	/* The FROM clause term to process */
+			/* The FROM clause term to process */
+			struct SrcItem *pItem,
 			WhereClause * pWC	/* Xfer function arguments to here */
     )
 {

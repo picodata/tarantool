@@ -642,8 +642,8 @@ seltablist(A) ::= stl_prefix(A) LP seltablist(F) RP
   }else if( F->nSrc==1 ){
     A = sqlSrcListAppendFromTerm(pParse,A,0,&Z,0,N,U,false);
     if( A ){
-      struct SrcList_item *pNew = &A->a[A->nSrc-1];
-      struct SrcList_item *pOld = F->a;
+      struct SrcItem *pNew = &A->a[A->nSrc-1];
+      struct SrcItem *pOld = F->a;
       pNew->zName = pOld->zName;
       pNew->pSelect = pOld->pSelect;
       pOld->zName =  0;

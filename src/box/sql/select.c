@@ -504,7 +504,7 @@ src_list_append_unique(struct SrcList *list, const char *new_name)
 			return list;
 	}
 	list = sql_src_list_enlarge(list, 1, list->nSrc);
-	struct SrcList_item *pItem = &list->a[list->nSrc - 1];
+	struct SrcItem *pItem = &list->a[list->nSrc - 1];
 	pItem->zName = sql_xstrdup(new_name);
 	return list;
 }
@@ -819,8 +819,8 @@ sqlProcessJoin(Parse * pParse, Select * p)
 {
 	SrcList *pSrc;		/* All tables in the FROM clause */
 	int i, j;		/* Loop counters */
-	struct SrcList_item *pLeft;	/* Left table being joined */
-	struct SrcList_item *pRight;	/* Right table being joined */
+	struct SrcItem *pLeft;	/* Left table being joined */
+	struct SrcItem *pRight;	/* Right table being joined */
 
 	pSrc = p->pSrc;
 	pLeft = &pSrc->a[0];
@@ -3799,7 +3799,7 @@ substSelect(Parse * pParse,	/* Report errors here */
 	    int doPrior)	/* Do substitutes on p->pPrior too */
 {
 	SrcList *pSrc;
-	struct SrcList_item *pItem;
+	struct SrcItem *pItem;
 	int i;
 	if (!p)
 		return;
@@ -3981,7 +3981,7 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	int iParent;		/* VDBE cursor number of the pSub result set temp table */
 	int i;			/* Loop counter */
 	Expr *pWhere;		/* The WHERE clause */
-	struct SrcList_item *pSubitem;	/* The subquery */
+	struct SrcItem *pSubitem;	/* The subquery */
 
 	/* Check to see if flattening is permitted.  Return 0 if not.
 	 */
@@ -4530,7 +4530,7 @@ is_simple_count(struct Select *select, struct AggInfo *agg_info)
  * pFrom->pIndex and return 0.
  */
 int
-sqlIndexedByLookup(Parse * pParse, struct SrcList_item *pFrom)
+sqlIndexedByLookup(struct Parse *pParse, struct SrcItem *pFrom)
 {
 	if (pFrom->space != NULL && pFrom->fg.isIndexedBy) {
 		struct space *space = pFrom->space;
@@ -4645,7 +4645,7 @@ convertCompoundSelectToSubquery(Walker * pWalker, Select * p)
  */
 static struct Cte *
 searchWith(With * pWith,		/* Current innermost WITH clause */
-	   struct SrcList_item *pItem,	/* FROM clause element to resolve */
+	   struct SrcItem *pItem,	/* FROM clause element to resolve */
 	   With ** ppContext)		/* OUT: WITH clause return value belongs to */
 {
 	const char *zName;
@@ -4703,7 +4703,7 @@ sqlWithPush(Parse * pParse, With * pWith, u8 bFree)
  * parser and some error code other than 0 returned.
  */
 static int
-withExpand(Walker * pWalker, struct SrcList_item *pFrom)
+withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
 {
 	Parse *pParse = pWalker->pParse;
 	struct Cte *pCte;	/* Matched CTE (or NULL if no match) */
@@ -4751,7 +4751,7 @@ withExpand(Walker * pWalker, struct SrcList_item *pFrom)
 			int i;
 			SrcList *pSrc = pFrom->pSelect->pSrc;
 			for (i = 0; i < pSrc->nSrc; i++) {
-				struct SrcList_item *pItem = &pSrc->a[i];
+				struct SrcItem *pItem = &pSrc->a[i];
 				if (pItem->zName != 0
 				    && 0 == sqlStrICmp(pItem->zName,
 							   pCte->zName)
@@ -4836,12 +4836,12 @@ selectPopWith(Walker * pWalker, Select * p)
 }
 
 /*
- * The SrcList_item structure passed as the second argument represents a
+ * The SrcItem structure passed as the second argument represents a
  * sub-query in the FROM clause of a SELECT statement. This function
- * allocates and populates the SrcList_item.space object.
+ * allocates and populates the SrcItem.space object.
  */
 void
-sqlExpandSubquery(Parse *pParse, struct SrcList_item *pFrom)
+sqlExpandSubquery(Parse *pParse, struct SrcItem *pFrom)
 {
 	Select *pSelect = pFrom->pSelect;
 
@@ -4909,7 +4909,7 @@ selectExpander(Walker * pWalker, Select * p)
 	int i, j, k;
 	SrcList *pTabList;
 	ExprList *pEList;
-	struct SrcList_item *pFrom;
+	struct SrcItem *pFrom;
 	Expr *pE, *pRight, *pExpr;
 	u32 selFlags = p->selFlags;
 	u32 elistFlags = 0;
@@ -5279,7 +5279,7 @@ selectAddSubqueryTypeInfo(Walker * pWalker, Select * p)
 	Parse *pParse;
 	int i;
 	SrcList *pTabList;
-	struct SrcList_item *pFrom;
+	struct SrcItem *pFrom;
 
 	assert(p->selFlags & SF_Resolved);
 	if (p->selFlags & SF_HasTypeInfo)
@@ -5703,7 +5703,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	 */
 	pTabList = p->pSrc;
 	for (i = 0; !p->pPrior && i < pTabList->nSrc; i++) {
-		struct SrcList_item *pItem = &pTabList->a[i];
+		struct SrcItem *pItem = &pTabList->a[i];
 		Select *pSub = pItem->pSelect;
 		int isAggSub;
 		struct space *space = pItem->space;
@@ -5794,7 +5794,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	/* Generate code for all sub-queries in the FROM clause
 	 */
 	for (i = 0; i < pTabList->nSrc; i++) {
-		struct SrcList_item *pItem = &pTabList->a[i];
+		struct SrcItem *pItem = &pTabList->a[i];
 		SelectDest dest;
 		Select *pSub = pItem->pSelect;
 		if (pSub == 0)
@@ -6510,7 +6510,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 				 * otherwise.
 				 */
 				int index_id = 0;
-				struct SrcList_item *src = &p->pSrc->a[0];
+				struct SrcItem *src = &p->pSrc->a[0];
 				assert(src);
 				assert(pParse);
 				sqlIndexedByLookup(pParse, src);

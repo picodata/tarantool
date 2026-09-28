@@ -35,7 +35,7 @@
 #include "tarantoolInt.h"
 
 struct space *
-sql_lookup_space(struct Parse *parse, struct SrcList_item *space_name)
+sql_lookup_space(struct Parse *parse, struct SrcItem *space_name)
 {
 	assert(space_name != NULL);
 	assert(space_name->space == NULL);

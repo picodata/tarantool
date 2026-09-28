@@ -163,7 +163,7 @@ sqlWalkSelectFrom(Walker * pWalker, Select * p)
 {
 	SrcList *pSrc;
 	int i;
-	struct SrcList_item *pItem;
+	struct SrcItem *pItem;
 
 	pSrc = p->pSrc;
 	if (ALWAYS(pSrc)) {

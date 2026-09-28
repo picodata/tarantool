@@ -783,7 +783,7 @@ sqlVXPrintf(StrAccum * pAccum,	/* Accumulate results here */
 		case etSRCLIST:{
 				SrcList *pSrc = va_arg(ap, SrcList *);
 				int k = va_arg(ap, int);
-				struct SrcList_item *pItem = &pSrc->a[k];
+				struct SrcItem *pItem = &pSrc->a[k];
 				assert(bArgList == 0);
 				assert(k >= 0 && k < pSrc->nSrc);
 				sqlStrAccumAppendAll(pAccum, pItem->zName);

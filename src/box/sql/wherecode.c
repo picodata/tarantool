@@ -184,7 +184,7 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 			 (pLoop->nEq > 0) ||
 			 ((wctrlFlags &
 			   (WHERE_ORDERBY_MIN | WHERE_ORDERBY_MAX)) != 0);
-	struct SrcList_item *pItem = &pTabList->a[pLevel->iFrom];
+	struct SrcItem *pItem = &pTabList->a[pLevel->iFrom];
 	assert(pItem->zName != NULL || pItem->pSelect != NULL);
 	if (pParse->explain == 0 && !is_search && pItem->fg.disallow_scan &&
 	    (pParse->sql_flags & SQL_SeqScan) == 0) {
@@ -686,7 +686,7 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 	WhereTerm *pTerm;	/* A WHERE clause term */
 	Parse *pParse;		/* Parsing context */
 	Vdbe *v;		/* The prepared stmt under constructions */
-	struct SrcList_item *pTabItem;	/* FROM clause term being coded */
+	struct SrcItem *pTabItem;	/* FROM clause term being coded */
 	int addrBrk;		/* Jump here to break out of the loop */
 	int addrCont;		/* Jump here to continue with next cycle */
 
@@ -1044,7 +1044,8 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		 */
 		if (pWInfo->nLevel > 1) {
 			int nNotReady;	/* The number of notReady tables */
-			struct SrcList_item *origSrc;	/* Original list of tables */
+			/* Original list of tables */
+			struct SrcItem *origSrc;
 			nNotReady = pWInfo->nLevel - iLevel - 1;
 			pOrTab = sqlStackAllocRaw(sizeof(*pOrTab) + nNotReady *
 							 sizeof(pOrTab->a[0]));
