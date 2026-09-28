@@ -1810,6 +1810,8 @@ struct NameContext {
 	int nRef;		/* Number of names resolved by this context */
 	int nErr;		/* Number of errors encountered while resolving names */
 	u16 ncFlags;		/* Zero or more NC_* flags defined below */
+	/** Number of nested selects using this NC */
+	int nNestedSelect;
 	Select *pWinSelect;	/* SELECT statement for any window functions */
 };
 

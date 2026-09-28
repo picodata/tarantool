@@ -605,7 +605,9 @@ resolveDotOperands(struct Parse *pParse, const struct NameContext *pNC,
 /*
  * Find the name context of the query that the aggregate function pExpr
  * belongs to, looking up through the outer contexts from pNC, and count
- * the contexts skipped in pExpr->op2. Return NULL if there is none.
+ * the contexts skipped in pExpr->op2, along with the subqueries in the FROM
+ * clauses being resolved within them, which have no name context of their
+ * own there. Return NULL if there is none.
  */
 static struct NameContext *
 resolveAggOwner(struct Expr *pExpr, struct NameContext *pNC)
@@ -613,9 +615,11 @@ resolveAggOwner(struct Expr *pExpr, struct NameContext *pNC)
 	pExpr->op2 = 0;
 	while (pNC != NULL &&
 	       sqlReferencesSrcList(pExpr, pNC->pSrcList) == 0) {
-		pExpr->op2++;
+		pExpr->op2 += 1 + pNC->nNestedSelect;
 		pNC = pNC->pNext;
 	}
+	if (pNC != NULL)
+		pExpr->op2 += pNC->nNestedSelect;
 	return pNC;
 }
 
@@ -1377,6 +1381,8 @@ resolveSelectStep(Walker * pWalker, Select * p)
 
 		/* Recursively resolve names in all subqueries
 		 */
+		if (pOuterNC != NULL)
+			pOuterNC->nNestedSelect++;
 		for (i = 0; i < p->pSrc->nSrc; i++) {
 			struct SrcItem *pItem = &p->pSrc->a[i];
 			if (pItem->pSelect != NULL &&
@@ -1406,6 +1412,8 @@ resolveSelectStep(Walker * pWalker, Select * p)
 				pItem->fg.isCorrelated = (nRef != 0);
 			}
 		}
+		if (pOuterNC != NULL)
+			pOuterNC->nNestedSelect--;
 
 		/* Set up the local name-context to pass to sqlResolveExprNames() to
 		 * resolve the result-set expression list.

@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(15)
+test:plan(21)
 
 --!./tcltestrunner.lua
 -- 2012 August 23
@@ -391,6 +391,92 @@ test:do_execsql_test("aggnested-6.2.2",
         FROM t2 GROUP BY 'constant_string';
     ]], {
         ""
+    })
+
+-- An aggregate in the FROM clause of a subquery of the SELECT that owns it.
+test:do_execsql_test("aggnested-7.0",
+    [[
+        CREATE TABLE invoice (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount DOUBLE DEFAULT NULL,
+            name VARCHAR(100) DEFAULT NULL
+        );
+
+        INSERT INTO invoice (amount, name) VALUES
+            (4.0, 'Michael'), (15.0, 'Bara'), (4.0, 'Michael'), (6.0, 'John');
+    ]],
+    {
+        -- <aggnested-7.0>
+        -- </aggnested-7.0>
+    })
+
+test:do_execsql_test("aggnested-7.1",
+    [[
+        SELECT sum(amount), name
+          from invoice
+        group by name
+        having (select v > 6 from (select sum(amount) v) t)
+    ]],
+    {
+        -- <aggnested-7.1>
+        15, "Bara",
+        8, "Michael"
+        -- </aggnested-7.1>
+    })
+
+test:do_execsql_test("aggnested-7.2",
+    [[
+        SELECT (select 1 from (select sum(amount))) FROM invoice
+    ]],
+    {
+        -- <aggnested-7.2>
+        1
+        -- </aggnested-7.2>
+    })
+
+test:do_execsql_test("aggnested-8.0",
+    [[
+        DROP TABLE IF EXISTS t1;
+        CREATE TABLE t1(id INT PRIMARY KEY AUTOINCREMENT, x INT);
+        INSERT INTO t1(x) VALUES(100);
+        INSERT INTO t1(x) VALUES(20);
+        INSERT INTO t1(x) VALUES(3);
+        SELECT (SELECT y FROM (SELECT sum(x) AS y) AS t2 ) FROM t1;
+    ]],
+    {
+        -- <aggnested-8.0>
+        123
+        -- </aggnested-8.0>
+    })
+
+test:do_execsql_test("aggnested-8.1",
+    [[
+        SELECT (
+          SELECT y FROM (
+            SELECT z AS y FROM (SELECT sum(x) AS z) AS t2
+          )
+        ) FROM t1;
+    ]],
+    {
+        -- <aggnested-8.1>
+        123
+        -- </aggnested-8.1>
+    })
+
+test:do_execsql_test("aggnested-8.2",
+    [[
+        SELECT (
+          SELECT a FROM (
+            SELECT y AS a FROM (
+              SELECT z AS y FROM (SELECT sum(x) AS z) AS t2
+            )
+          )
+        ) FROM t1;
+    ]],
+    {
+        -- <aggnested-8.2>
+        123
+        -- </aggnested-8.2>
     })
 
 test:finish_test()
