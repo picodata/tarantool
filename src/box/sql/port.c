@@ -14,7 +14,7 @@
 /** The size of the metadata encoded in msgpack format. */
 static inline size_t
 metadata_map_sizeof(const char *name, const char *type, const char *coll,
-		    const char *span, int nullable, bool is_autoincrement)
+		    int nullable, bool is_autoincrement)
 {
 	uint32_t members_count = 2;
 	size_t map_size = 0;
@@ -36,8 +36,7 @@ metadata_map_sizeof(const char *name, const char *type, const char *coll,
 	if (sql_metadata_is_full()) {
 		members_count++;
 		map_size += mp_sizeof_uint(IPROTO_FIELD_SPAN);
-		map_size += span != NULL ? mp_sizeof_str(strlen(span)) :
-			    mp_sizeof_nil();
+		map_size += mp_sizeof_nil();
 	}
 	map_size += mp_sizeof_uint(IPROTO_FIELD_NAME);
 	map_size += mp_sizeof_uint(IPROTO_FIELD_TYPE);
@@ -50,8 +49,7 @@ metadata_map_sizeof(const char *name, const char *type, const char *coll,
 /** Encode metadata in msgpack format. */
 static inline void
 metadata_map_encode(char *buf, const char *name, const char *type,
-		    const char *coll, const char *span, int nullable,
-		    bool is_autoincrement)
+		    const char *coll, int nullable, bool is_autoincrement)
 {
 	bool is_full = sql_metadata_is_full();
 	uint32_t map_sz = 2 + (coll != NULL) + (nullable != -1) +
@@ -76,18 +74,14 @@ metadata_map_encode(char *buf, const char *name, const char *type,
 	if (!is_full)
 		return;
 	/*
-	 * Span is an original expression that forms
-	 * result set column. In most cases it is the
-	 * same as column name. So to avoid sending
-	 * the same string twice simply encode it as
-	 * a nil and account this behaviour on client
-	 * side (see decode_metadata_optional()).
+	 * The span used to be the original expression that forms
+	 * the result set column. It is no longer known, as it is
+	 * not kept apart from the name, so it is always encoded
+	 * as a nil, which means that it is the same as the column
+	 * name (see decode_metadata_optional()).
 	 */
 	buf = mp_encode_uint(buf, IPROTO_FIELD_SPAN);
-	if (span != NULL)
-		buf = mp_encode_str(buf, span, strlen(span));
-	else
-		buf = mp_encode_nil(buf);
+	buf = mp_encode_nil(buf);
 }
 
 /**
@@ -116,7 +110,6 @@ sql_get_metadata(struct sql_stmt *stmt, struct obuf *out, int column_count)
 		const char *coll = sql_column_coll(stmt, i);
 		const char *name = sql_column_name(stmt, i);
 		const char *type = sql_column_datatype(stmt, i);
-		const char *span = sql_column_span(stmt, i);
 		int nullable = sql_column_nullable(stmt, i);
 		bool is_autoincrement = sql_column_is_autoincrement(stmt, i);
 		/*
@@ -126,14 +119,14 @@ sql_get_metadata(struct sql_stmt *stmt, struct obuf *out, int column_count)
 		 */
 		assert(name != NULL);
 		assert(type != NULL);
-		size = metadata_map_sizeof(name, type, coll, span, nullable,
+		size = metadata_map_sizeof(name, type, coll, nullable,
 					   is_autoincrement);
 		char *pos = obuf_alloc(out, size);
 		if (pos == NULL) {
 			diag_set(OutOfMemory, size, "obuf_alloc", "pos");
 			return -1;
 		}
-		metadata_map_encode(pos, name, type, coll, span, nullable,
+		metadata_map_encode(pos, name, type, coll, nullable,
 				    is_autoincrement);
 	}
 	return 0;

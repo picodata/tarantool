@@ -254,13 +254,6 @@ sql_column_is_autoincrement(sql_stmt *stmt, int n)
 	return p->metadata[n].is_actoincrement;
 }
 
-const char *
-sql_column_span(sql_stmt *stmt, int n) {
-	struct Vdbe *p = (struct Vdbe *) stmt;
-	assert(n < sql_column_count(stmt) && n >= 0);
-	return p->metadata[n].span;
-}
-
 uint64_t
 sql_stmt_schema_version(const struct sql_stmt *stmt)
 {

@@ -1922,7 +1922,6 @@ generate_full_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 					v, i, coll_id->name, coll_id->name_len);
 			}
 		}
-		const char *span = pEList->a[i].zSpan;
 		if (p->op == TK_COLUMN_REF || p->op == TK_AGG_COLUMN) {
 			int iCol = p->iColumn;
 			for (j = 0; j < pTabList->nSrc; j++) {
@@ -1942,10 +1941,6 @@ generate_full_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 			if (space->sequence != NULL &&
 			    space->sequence_fieldno == (uint32_t)iCol)
 				vdbe_metadata_set_col_autoincrement(v, i);
-			if (span != NULL)
-				vdbe_metadata_set_col_span(v, i, span);
-		} else {
-			vdbe_metadata_set_col_span(v, i, span);
 		}
 	}
 }
