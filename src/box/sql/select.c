@@ -5677,6 +5677,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	while (pFirst->pPrior)
 		pFirst = pFirst->pPrior;
 	if (rc == 0 && pDest->eDest == SRT_Output) {
+		SELECTTRACE(1, pParse, pFirst, ("generating column names\n"));
 		generate_column_metadata(pParse, pFirst->pSrc, pFirst->pEList);
 	}
 
