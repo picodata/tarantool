@@ -1708,9 +1708,8 @@ sql_expr_list_dup(struct ExprList *p, int flags)
 			}
 		}
 		pItem->zEName = sql_xstrdup(pOldItem->zEName);
-		pItem->sort_order = pOldItem->sort_order;
-		pItem->eEName = pOldItem->eEName;
-		pItem->done = 0;
+		pItem->fg = pOldItem->fg;
+		pItem->fg.done = 0;
 		pItem->u = pOldItem->u;
 	}
 	return pNew;
@@ -1925,10 +1924,10 @@ sqlExprListSetSortOrder(struct ExprList *p, enum sort_order sort_order)
 		return;
 	assert(p->nExpr > 0);
 	if (sort_order == SORT_ORDER_UNDEF) {
-		assert(p->a[p->nExpr - 1].sort_order == SORT_ORDER_ASC);
+		assert(p->a[p->nExpr - 1].fg.sort_order == SORT_ORDER_ASC);
 		return;
 	}
-	p->a[p->nExpr - 1].sort_order = sort_order;
+	p->a[p->nExpr - 1].fg.sort_order = sort_order;
 }
 
 /*
@@ -1951,7 +1950,7 @@ sqlExprListSetName(Parse * pParse,	/* Parsing context */
 	assert(pList->nExpr > 0);
 	struct ExprList_item *item = &pList->a[pList->nExpr - 1];
 	assert(item->zEName == NULL);
-	assert(item->eEName == ENAME_NAME);
+	assert(item->fg.eEName == ENAME_NAME);
 	if (dequote) {
 		item->zEName = sql_normalized_name_new(pName->z, pName->n);
 	} else {
@@ -1970,7 +1969,7 @@ sqlExprListSetSpan(struct ExprList *pList, struct ExprSpan *pSpan)
 	if (pItem->zEName == NULL) {
 		pItem->zEName = sql_xstrndup(pSpan->zStart,
 					     pSpan->zEnd - pSpan->zStart);
-		pItem->eEName = ENAME_SPAN;
+		pItem->fg.eEName = ENAME_SPAN;
 	}
 }
 
@@ -4454,7 +4453,7 @@ sqlExprCodeAtInit(Parse * pParse,	/* Parsing context */
 	p = sql_expr_list_append(p, sqlExprDup(pExpr, 0));
 	struct ExprList_item *pItem = &p->a[p->nExpr - 1];
 	pItem->u.iConstExprReg = regDest;
-	pItem->reusable = reusable;
+	pItem->fg.reusable = reusable;
 	pParse->pConstExpr = p;
 }
 
@@ -4484,7 +4483,7 @@ sqlExprCodeTemp(Parse * pParse, Expr * pExpr, int *pReg)
 		if (p) {
 			struct ExprList_item *pItem;
 			for (pItem = p->a, i = p->nExpr; i > 0; pItem++, i--) {
-				if (pItem->reusable
+				if (pItem->fg.reusable
 				    && sqlExprCompare(pItem->pExpr, pExpr,
 							  -1) == 0) {
 					return pItem->u.iConstExprReg;
@@ -5113,7 +5112,7 @@ sqlExprListCompare(ExprList * pA, ExprList * pB, int iTab)
 	for (i = 0; i < pA->nExpr; i++) {
 		Expr *pExprA = pA->a[i].pExpr;
 		Expr *pExprB = pB->a[i].pExpr;
-		if (pA->a[i].sort_order != pB->a[i].sort_order)
+		if (pA->a[i].fg.sort_order != pB->a[i].fg.sort_order)
 			return 1;
 		if (sqlExprCompare(pExprA, pExprB, iTab))
 			return 1;

@@ -1575,10 +1575,16 @@ struct ExprList {
 	struct ExprList_item {	/* For each expression in the list */
 		Expr *pExpr;	/* The list of expressions */
 		char *zEName;	/* Token associated with this expression */
-		enum sort_order sort_order;
-		unsigned eEName:2;	/* Meaning of zEName */
-		unsigned done:1;	/* A flag to indicate when processing is finished */
-		unsigned reusable:1;	/* Constant expression is reusable */
+		struct {
+			/* Sort order of an ORDER BY term */
+			enum sort_order sort_order;
+			/* Meaning of zEName */
+			unsigned eEName:2;
+			/* Indicates when processing is finished */
+			unsigned done:1;
+			/* Constant expression is reusable */
+			unsigned reusable:1;
+		} fg;
 		union {
 			struct {
 				u16 iOrderByCol;	/* For ORDER BY, column number in result set */

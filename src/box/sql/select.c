@@ -134,7 +134,7 @@ sql_space_info_new_from_expr_list(struct Parse *parser, struct ExprList *list,
 		struct coll *coll;
 		struct Expr *expr = list->a[i].pExpr;
 		enum field_type type = sql_expr_type(expr);
-		enum sort_order sort = list->a[i].sort_order;
+		enum sort_order sort = list->a[i].fg.sort_order;
 		/*
 		 * Type ANY could mean that field was unresolved. We have no way
 		 * but to set it as SCALAR, however this could lead to
@@ -267,7 +267,7 @@ sql_space_info_new_for_sorting(struct Parse *parser, struct ExprList *order_by,
 		}
 		info->types[k] = type;
 		info->coll_ids[k] = coll_id;
-		info->sort_orders[k] = order_by->a[k + start].sort_order;
+		info->sort_orders[k] = order_by->a[k + start].fg.sort_order;
 	}
 	if (has_rowid)
 		info->types[k++] = FIELD_TYPE_INTEGER;
@@ -1677,7 +1677,7 @@ sql_expr_list_to_key_info(struct Parse *parse, struct ExprList *list, int start)
 			return NULL;
 		}
 		part->coll_id = id;
-		part->sort_order = item->sort_order;
+		part->sort_order = item->fg.sort_order;
 		part->type = sql_expr_type(item->pExpr);
 	}
 	return key_info;
@@ -1993,7 +1993,7 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 		enum field_type type = sql_expr_type(p);
 		vdbe_metadata_set_col_type(v, i, field_type_strs[type]);
 		vdbe_metadata_set_col_nullability(v, i, -1);
-		const char *colname = pEList->a[i].eEName == ENAME_NAME ?
+		const char *colname = pEList->a[i].fg.eEName == ENAME_NAME ?
 				      pEList->a[i].zEName : NULL;
 		if (p->op == TK_COLUMN_REF || p->op == TK_AGG_COLUMN) {
 			char *zCol;
@@ -2091,7 +2091,7 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 		 * Check if the column contains an "AS <name>"
 		 * phrase.
 		 */
-		char *name = expr_list->a[i].eEName == ENAME_NAME ?
+		char *name = expr_list->a[i].fg.eEName == ENAME_NAME ?
 			     expr_list->a[i].zEName : NULL;
 		if (name == NULL) {
 			struct Expr *pColExpr = expr_list->a[i].pExpr;
@@ -2472,7 +2472,7 @@ sql_multiselect_orderby_to_key_info(struct Parse *parse, struct Select *s,
 			}
 		}
 		part->coll_id = id;
-		part->sort_order = order_by->a[i].sort_order;
+		part->sort_order = order_by->a[i].fg.sort_order;
 	}
 
 	return key_info;
@@ -5055,7 +5055,7 @@ selectExpander(Walker * pWalker, Select * p)
 		if (pE->op == TK_DOT && pE->pRight->op == TK_ASTERISK)
 			has_asterisk = true;
 		elistFlags |= pE->flags;
-		if ((pEList->a[k].eEName != ENAME_NAME ||
+		if ((pEList->a[k].fg.eEName != ENAME_NAME ||
 		     pEList->a[k].zEName == NULL) &&
 		    expr_autoname_is_required(pE)) {
 			/*
@@ -5066,7 +5066,7 @@ selectExpander(Walker * pWalker, Select * p)
 			sql_xfree(pEList->a[k].zEName);
 			pEList->a[k].zEName =
 				sql_xstrdup(sql_generate_column_name(idx));
-			pEList->a[k].eEName = ENAME_NAME;
+			pEList->a[k].fg.eEName = ENAME_NAME;
 		}
 	}
 	if (!has_asterisk)
@@ -5094,7 +5094,7 @@ selectExpander(Walker * pWalker, Select * p)
 			 */
 			pNew = sql_expr_list_append(pNew, a[k].pExpr);
 			pNew->a[pNew->nExpr - 1].zEName = a[k].zEName;
-			pNew->a[pNew->nExpr - 1].eEName = a[k].eEName;
+			pNew->a[pNew->nExpr - 1].fg.eEName = a[k].fg.eEName;
 			a[k].zEName = 0;
 			a[k].pExpr = 0;
 			continue;
@@ -5186,7 +5186,7 @@ selectExpander(Walker * pWalker, Select * p)
 								zTabName,
 								zColname);
 				}
-				pX->eEName = ENAME_TAB;
+				pX->fg.eEName = ENAME_TAB;
 				sql_xfree(zToFree);
 			}
 		}
@@ -6602,7 +6602,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					pMinMax = sql_expr_list_dup(pMinMax, 0);
 					pDel = pMinMax;
 					assert(pMinMax != 0);
-					pMinMax->a[0].sort_order =
+					pMinMax->a[0].fg.sort_order =
 						flag != WHERE_ORDERBY_MIN ?
 						1 : 0;
 					pMinMax->a[0].pExpr->op =

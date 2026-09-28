@@ -165,7 +165,7 @@ sqlMatchEName(const struct ExprList_item *item, const char *zCol,
 {
 	int n;
 	const char *zSpan;
-	if (item->eEName != ENAME_TAB)
+	if (item->fg.eEName != ENAME_TAB)
 		return 0;
 	zSpan = item->zEName;
 	for (n = 0; ALWAYS(zSpan[n]) && zSpan[n] != '.'; n++) {
@@ -422,7 +422,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 			assert(pEList != NULL);
 			for (j = 0; j < pEList->nExpr; j++) {
 				char *zAs = pEList->a[j].zEName;
-				if (pEList->a[j].eEName == ENAME_NAME &&
+				if (pEList->a[j].fg.eEName == ENAME_NAME &&
 				    zAs != NULL && strcmp(zAs, zCol) == 0) {
 					Expr *pOrig;
 					assert(pExpr->pLeft == 0
@@ -909,7 +909,7 @@ resolveAsName(Parse * pParse,	/* Parsing context for error messages */
 		char *zCol = pE->u.zToken;
 		for (i = 0; i < pEList->nExpr; i++) {
 			char *zAs = pEList->a[i].zEName;
-			if (pEList->a[i].eEName == ENAME_NAME &&
+			if (pEList->a[i].fg.eEName == ENAME_NAME &&
 			    zAs != NULL && strcmp(zAs, zCol) == 0) {
 				return i + 1;
 			}
@@ -1014,7 +1014,7 @@ resolveCompoundOrderBy(Parse * pParse,	/* Parsing context.  Leave error messages
 	}
 #endif
 	for (i = 0; i < pOrderBy->nExpr; i++) {
-		pOrderBy->a[i].done = 0;
+		pOrderBy->a[i].fg.done = 0;
 	}
 	pSelect->pNext = 0;
 	while (pSelect->pPrior) {
@@ -1030,7 +1030,7 @@ resolveCompoundOrderBy(Parse * pParse,	/* Parsing context.  Leave error messages
 		     i++, pItem++) {
 			int iCol = -1;
 			Expr *pE, *pDup;
-			if (pItem->done)
+			if (pItem->fg.done)
 				continue;
 			pE = sqlExprSkipCollate(pItem->pExpr);
 			if (sqlExprIsInteger(pE, &iCol)) {
@@ -1077,7 +1077,7 @@ resolveCompoundOrderBy(Parse * pParse,	/* Parsing context.  Leave error messages
 				}
 				sql_expr_delete(pE);
 				pItem->u.x.iOrderByCol = (u16) iCol;
-				pItem->done = 1;
+				pItem->fg.done = 1;
 			} else {
 				moreToDo = 1;
 			}
@@ -1085,7 +1085,7 @@ resolveCompoundOrderBy(Parse * pParse,	/* Parsing context.  Leave error messages
 		pSelect = pSelect->pNext;
 	}
 	for (i = 0; i < pOrderBy->nExpr; i++) {
-		if (pOrderBy->a[i].done == 0) {
+		if (pOrderBy->a[i].fg.done == 0) {
 			const char *err = "Error at ORDER BY in place %d: "\
 					  "term does not match any column in "\
 					  "the result set";

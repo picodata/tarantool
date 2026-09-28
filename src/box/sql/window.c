@@ -406,8 +406,8 @@ exprListAppendList(
 			Expr *pDup = sqlExprDup(pAppend->a[i].pExpr, 0);
 			pList = sql_expr_list_append(pList, pDup);
 			if (pList)
-				pList->a[nInit + i].sort_order =
-				pAppend->a[i].sort_order;
+				pList->a[nInit + i].fg.sort_order =
+				pAppend->a[i].fg.sort_order;
 		}
 	}
 	return pList;

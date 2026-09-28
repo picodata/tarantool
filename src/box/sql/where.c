@@ -3384,14 +3384,13 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 					/* Make sure the sort order is compatible in an ORDER BY clause.
 					 * Sort order is irrelevant for a GROUP BY clause.
 					 */
+					enum sort_order order =
+						pOrderBy->a[i].fg.sort_order;
 					if (revSet) {
-						if ((rev ^ revIdx) !=
-						    pOrderBy->a[i].sort_order)
-							isMatch = 0;
+						isMatch = (rev ^ revIdx) ==
+							  order;
 					} else {
-						rev =
-						    revIdx ^ pOrderBy->a[i].
-						    sort_order;
+						rev = revIdx ^ order;
 						if (rev)
 							*pRevMask |=
 							    MASKBIT(iLoop);

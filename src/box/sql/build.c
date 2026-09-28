@@ -2305,7 +2305,7 @@ index_fill_def(struct Parse *parse, struct index *index,
 		part->is_nullable = part->nullable_action == ON_CONFLICT_ACTION_NONE;
 		part->exclude_null = false;
 		/* An unspecified order (undef) defaults to ascending. */
-		enum sort_order sort_order = expr_list->a[i].sort_order;
+		enum sort_order sort_order = expr_list->a[i].fg.sort_order;
 		part->sort_order = sort_order == SORT_ORDER_UNDEF ?
 				   SORT_ORDER_ASC : sort_order;
 		part->coll_id = coll_id;
