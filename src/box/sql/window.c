@@ -528,6 +528,7 @@ sqlWindowRewrite(Parse *pParse, Select *p)
 				    pHaving, pSort, 0, 0, 0);
 		p->pSrc = sql_src_list_append(0, 0);
 		p->pSrc->a[0].pSelect = pSub;
+		p->pSrc->a[0].fg.isCorrelated = 1;
 		sqlSrcListAssignCursors(pParse, p->pSrc);
 		sqlExpandSubquery(pParse, &p->pSrc->a[0]);
 		pSub->selFlags |= SF_Expanded;
