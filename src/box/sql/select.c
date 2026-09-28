@@ -4659,6 +4659,12 @@ searchWith(With * pWith,		/* Current innermost WITH clause */
 					return &p->a[i];
 				}
 			}
+			/*
+			 * The names in a view may not refer to the CTEs of
+			 * the statement using it.
+			 */
+			if (p->bView)
+				break;
 		}
 	}
 	return 0;
@@ -4928,7 +4934,18 @@ selectExpander(Walker * pWalker, Select * p)
 	pTabList = p->pSrc;
 	pEList = p->pEList;
 	if (pWalker->xSelectCallback2 == sqlSelectPopWith) {
-		sqlWithPush(pParse, findRightmost(p)->pWith, 0);
+		struct Select *pRight = findRightmost(p);
+		/*
+		 * A view gets a WITH clause of its own, even an empty one,
+		 * to stop the search for CTEs from going past it into the
+		 * statement that uses the view.
+		 */
+		if (pParse->pWith != NULL && (p->selFlags & SF_View) != 0) {
+			if (pRight->pWith == NULL)
+				pRight->pWith = sql_xmalloc0(sizeof(With));
+			pRight->pWith->bView = 1;
+		}
+		sqlWithPush(pParse, pRight->pWith, 0);
 	}
 
 	/* Make sure cursor numbers have been assigned to all entries in
@@ -4984,6 +5001,7 @@ selectExpander(Walker * pWalker, Select * p)
 				sqlSrcListAssignCursors(pParse,
 							    select->pSrc);
 				assert(pFrom->pSelect == 0);
+				select->selFlags |= SF_View;
 				pFrom->pSelect = select;
 				sqlSelectSetName(pFrom->pSelect,
 						 space->def->name);

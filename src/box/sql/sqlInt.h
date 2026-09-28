@@ -1891,6 +1891,8 @@ struct Select {
 #define SF_SingleRow      0x20000
 /* Result set contains subquery or function */
 #define SF_ComplexResult  0x40000
+/** SELECT statement is a view. */
+#define SF_View           0x80000
 
 /*
  * The results of a SELECT can be distributed in several ways, as defined
@@ -2470,6 +2472,7 @@ sqlSelectWalkAssert2(struct Walker *walker, struct Select *select);
  */
 struct With {
 	int nCte;		/* Number of CTEs in the WITH clause */
+	int bView;		/* Belongs to the outermost Select of a view */
 	With *pOuter;		/* Containing WITH clause, or NULL */
 	struct Cte {		/* For each CTE in the WITH clause.... */
 		char *zName;	/* Name of this CTE */
