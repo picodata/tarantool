@@ -1104,7 +1104,7 @@ test:do_catchsql2_test(
     [[SELECT A.f1, f1 FROM test1 as A, test1 as A
          ORDER BY f2]], {
         -- <select1-6.8c>
-        1, "ambiguous column name: A.F1"
+        1, "table name \"A\" specified more than once"
         -- </select1-6.8c>
     })
 

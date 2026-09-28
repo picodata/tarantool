@@ -41,6 +41,7 @@
 #include "box/box.h"
 #include "box/coll_id_cache.h"
 #include "box/schema.h"
+#include "assoc.h"
 
 /*
  * Trace output macros
@@ -860,6 +861,70 @@ naturalJoinUsing(struct SrcList *pSrc, int N)
 		pUsing->a[i].zName = sql_xstrdup(zName);
 	}
 	return pUsing;
+}
+
+/*
+ * Return true if a FROM clause item is a parenthesized join without an alias.
+ * The tables inside such a join are visible by their own names, as if they
+ * were items of the FROM clause it is in.
+ */
+static bool
+srcItemIsUnaliasedJoin(const struct SrcItem *item)
+{
+	return item->zAlias == NULL && item->pSubq != NULL &&
+	       (item->pSubq->pSelect->selFlags & SF_NestedFrom) != 0;
+}
+
+/*
+ * Return the name a FROM clause item is visible under: its alias, or the name
+ * of the table, view or CTE. Return NULL for a subquery without an alias and
+ * for a parenthesized join without an alias.
+ */
+static const char *
+srcItemTableName(const struct SrcItem *item)
+{
+	return item->zAlias != NULL ? item->zAlias : item->zName;
+}
+
+/*
+ * Check that no two items of a FROM clause are visible under the same table
+ * name. The names seen so far are kept in the set `names`. The tables inside a
+ * parenthesized join without an alias are visible by their own names, so
+ * their names are checked and added to the set as well.
+ *
+ * Return 0 on success, -1 if a table name is specified more than once.
+ */
+static int
+srcListCheckTableNames(struct Parse *pParse, const struct SrcList *pSrc,
+		       struct mh_strnptr_t *names)
+{
+	for (int i = 0; i < pSrc->nSrc; i++) {
+		const struct SrcItem *item = &pSrc->a[i];
+		if (srcItemIsUnaliasedJoin(item)) {
+			if (srcListCheckTableNames(pParse,
+						   item->pSubq->pSelect->pSrc,
+						   names) != 0)
+				return -1;
+			continue;
+		}
+		const char *zName = srcItemTableName(item);
+		if (zName == NULL)
+			continue;
+		uint32_t len = strlen(zName);
+		if (mh_strnptr_find_str(names, zName, len) == mh_end(names)) {
+			uint32_t hash = mh_strn_hash(zName, len);
+			const struct mh_strnptr_node_t node =
+				{zName, len, hash, NULL};
+			mh_strnptr_put(names, &node, NULL, NULL);
+			continue;
+		}
+		const char *err = tt_sprintf("table name \"%s\" specified "
+					     "more than once", zName);
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC, err);
+		pParse->is_aborted = true;
+		return -1;
+	}
+	return 0;
 }
 
 /*
@@ -5155,6 +5220,12 @@ selectExpander(Walker * pWalker, Select * p)
 			return WRC_Abort;
 		}
 	}
+
+	struct mh_strnptr_t *names = mh_strnptr_new();
+	int rc = srcListCheckTableNames(pParse, pTabList, names);
+	mh_strnptr_delete(names);
+	if (rc != 0)
+		return WRC_Abort;
 
 	/* Process NATURAL keywords, and ON and USING clauses of joins.
 	 */

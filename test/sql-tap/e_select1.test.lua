@@ -412,7 +412,7 @@ test:do_test(
 
 -- x3, x3    (Nlhs=5, Nrhs=5)   (Mlhs=4, Mrhs=4)
 do_join_test("e_select-1.4.3.7", [[
-  SELECT count(*) FROM x3 JOIN_PATTERN x3
+  SELECT count(*) FROM x3 JOIN_PATTERN x3 AS x4
 ]], {5 * 5})
 test:do_test(
     "e_select-1.4.3.8",

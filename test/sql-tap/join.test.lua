@@ -932,13 +932,13 @@ test:do_test(
         -- </join-11.1>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "join-11.2",
     [[
         SELECT a FROM t1 JOIN t1 USING (a)
     ]], {
         -- <join-11.2>
-        1, 2
+        1, 'table name "T1" specified more than once'
         -- </join-11.2>
     })
 
@@ -962,13 +962,13 @@ test:do_execsql_test(
         -- </join-11.3>
     })
 
-test:do_execsql_test(
+test:do_catchsql_test(
     "join-11.4",
     [[
         SELECT * FROM t1 NATURAL JOIN t1
     ]], {
         -- <join-11.4>
-        1, "abc", 2, "def"
+        1, 'table name "T1" specified more than once'
         -- </join-11.4>
     })
 
@@ -1059,7 +1059,11 @@ test:do_execsql_test(
     ]])
 
 local function jointest(tn, nTbl, res)
-    local sql = "SELECT 1 FROM "..string.rep("t14,", (nTbl - 1)).." t14;"
+    local items = {}
+    for i = 1, nTbl do
+        items[i] = "t14 AS a"..i
+    end
+    local sql = "SELECT 1 FROM "..table.concat(items, ", ")..";"
     test:do_catchsql_test(tn, sql, res)
     -- X(685, "X!cmd", [=[["uplevel",[["list","do_catchsql_test",["tn"],["sql"],["res"]]]]]=])
 end
