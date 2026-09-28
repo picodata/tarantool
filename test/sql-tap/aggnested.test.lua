@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(11)
+test:plan(15)
 
 --!./tcltestrunner.lua
 -- 2012 August 23
@@ -330,6 +330,67 @@ test:do_execsql_test("aggnested-4.4",
         SELECT max((SELECT a FROM (SELECT count(*) AS a FROM ty) AS s)) FROM tx;
     ]], {
         3
+    })
+
+-- dbsqlfuzz a779227f721a834df95f4f42d0c31550a1f8b8a2
+--
+-- The same correlated column in the GROUP BY and the HAVING clause of a
+-- subquery of an aggregate query.
+test:execsql([[
+    DROP TABLE IF EXISTS t1;
+    DROP TABLE IF EXISTS t2;
+    CREATE TABLE t1(id INT PRIMARY KEY AUTOINCREMENT, a TEXT);
+    CREATE TABLE t2(id INT PRIMARY KEY AUTOINCREMENT, b INT);
+    INSERT INTO t1(a) VALUES('x');
+    INSERT INTO t2(b) VALUES(1);
+]])
+
+test:do_execsql_test("aggnested-6.1.1",
+    [[
+        SELECT (
+            SELECT t2.b FROM (SELECT t2.b AS c FROM t1) GROUP BY 1
+            HAVING t2.b <> 0
+        )
+        FROM t2 GROUP BY 'constant_string';
+    ]], {
+        1
+    })
+
+test:do_execsql_test("aggnested-6.1.2",
+    [[
+        SELECT (
+            SELECT c FROM (SELECT t2.b AS c FROM t1) GROUP BY c
+            HAVING t2.b <> 0
+        )
+        FROM t2 GROUP BY 'constant_string';
+    ]], {
+        1
+    })
+
+test:execsql([[
+    UPDATE t2 SET b = 0;
+]])
+
+test:do_execsql_test("aggnested-6.2.1",
+    [[
+        SELECT (
+            SELECT t2.b FROM (SELECT t2.b AS c FROM t1) GROUP BY 1
+            HAVING t2.b <> 0
+        )
+        FROM t2 GROUP BY 'constant_string';
+    ]], {
+        ""
+    })
+
+test:do_execsql_test("aggnested-6.2.2",
+    [[
+        SELECT (
+            SELECT c FROM (SELECT t2.b AS c FROM t1) GROUP BY c
+            HAVING t2.b <> 0
+        )
+        FROM t2 GROUP BY 'constant_string';
+    ]], {
+        ""
     })
 
 test:finish_test()
