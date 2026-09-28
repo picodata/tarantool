@@ -1029,7 +1029,7 @@ sql_expr_new_int(int value)
 {
 	struct Expr *e = sql_expr_new_empty(TK_INTEGER, 0);
 	e->type = FIELD_TYPE_INTEGER;
-	e->flags |= EP_IntValue;
+	e->flags |= EP_IntValue | EP_Leaf;
 	e->u.iValue = value;
 	return e;
 }

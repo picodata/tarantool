@@ -458,6 +458,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 	sql_expr_delete(pExpr->pRight);
 	pExpr->pRight = 0;
 	pExpr->op = (isTrigger ? TK_TRIGGER : TK_COLUMN_REF);
+	ExprSetProperty(pExpr, EP_Leaf);
  lookupname_end:
 	if (cnt == 1) {
 		assert(pNC != 0);
