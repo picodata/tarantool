@@ -4777,7 +4777,11 @@ withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
 		pCte->zCteErr = "circular reference: %s";
 		pSavedWith = pParse->pWith;
 		pParse->pWith = pWith;
-		sqlWalkSelect(pWalker, bMayRecursive ? pSel->pPrior : pSel);
+		if (sqlWalkSelect(pWalker,
+				  bMayRecursive ? pSel->pPrior : pSel) != 0) {
+			pParse->pWith = pSavedWith;
+			return -1;
+		}
 		pParse->pWith = pWith;
 
 		for (pLeft = pSel; pLeft->pPrior; pLeft = pLeft->pPrior) ;
@@ -4807,7 +4811,10 @@ withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
 				pCte->zCteErr =
 				    "recursive reference in a subquery: %s";
 			}
-			sqlWalkSelect(pWalker, pSel);
+			if (sqlWalkSelect(pWalker, pSel) != 0) {
+				pParse->pWith = pSavedWith;
+				return -1;
+			}
 		}
 		pCte->zCteErr = 0;
 		pParse->pWith = pSavedWith;
