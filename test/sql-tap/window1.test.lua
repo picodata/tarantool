@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(97)
+test:plan(105)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -1149,6 +1149,78 @@ SELECT c, c IN (
 ) FROM t26b
     ]],
     {1, true, 2, false, 3, true, 4, false}
+)
+
+test:do_execsql_test(
+    "window1-43.1.1",
+    [[
+DROP TABLE IF EXISTS t43a;
+CREATE TABLE t43a(x INTEGER PRIMARY KEY);
+INSERT INTO t43a VALUES (10);
+    ]]
+)
+
+-- An alias of a window function may not be used from a subquery.
+test:do_catchsql_test(
+    "window1-43.1.2",
+    [[
+SELECT count(*) OVER() AS m FROM t43a ORDER BY (SELECT m);
+    ]],
+    {1, "misuse of aliased window function M"}
+)
+
+test:do_execsql_test(
+    "window1-43.2.1",
+    [[
+DROP TABLE IF EXISTS t43b;
+CREATE TABLE t43b(a INTEGER PRIMARY KEY, b INTEGER);
+INSERT INTO t43b(a, b) VALUES(1,  10); -- 10
+INSERT INTO t43b(a, b) VALUES(2,  15); -- 25
+INSERT INTO t43b(a, b) VALUES(3,  -5); -- 20
+INSERT INTO t43b(a, b) VALUES(4,  -5); -- 15
+INSERT INTO t43b(a, b) VALUES(5,  20); -- 35
+INSERT INTO t43b(a, b) VALUES(6, -11); -- 24
+    ]]
+)
+
+test:do_execsql_test(
+    "window1-43.2.2",
+    [[
+SELECT a, sum(b) OVER (ORDER BY a) AS abc FROM t43b ORDER BY 2
+    ]],
+    {1, 10, 4, 15, 3, 20, 6, 24, 2, 25, 5, 35}
+)
+
+test:do_execsql_test(
+    "window1-43.2.3",
+    [[
+SELECT a, sum(b) OVER (ORDER BY a) AS abc FROM t43b ORDER BY abc
+    ]],
+    {1, 10, 4, 15, 3, 20, 6, 24, 2, 25, 5, 35}
+)
+
+test:do_execsql_test(
+    "window1-43.2.4",
+    [[
+SELECT a, sum(b) OVER (ORDER BY a) AS abc FROM t43b ORDER BY abc+5
+    ]],
+    {1, 10, 4, 15, 3, 20, 6, 24, 2, 25, 5, 35}
+)
+
+test:do_catchsql_test(
+    "window1-43.2.5",
+    [[
+SELECT a, sum(b) OVER (ORDER BY a) AS abc FROM t43b ORDER BY (SELECT abc)
+    ]],
+    {1, "misuse of aliased window function ABC"}
+)
+
+test:do_catchsql_test(
+    "window1-43.2.6",
+    [[
+SELECT a, 1+sum(b) OVER (ORDER BY a) AS abc FROM t43b ORDER BY (SELECT abc)
+    ]],
+    {1, "misuse of aliased window function ABC"}
 )
 
 -- Do not push outer constraints into compound queries with window functions.

@@ -202,19 +202,21 @@ lookupNestedFromName(const struct ExprList *pEList, const char *zCol,
 /*
  * Check that the result column pOrig named zAs may be referred to by its
  * alias in the name context pNC: an aggregate only where aggregates are
- * allowed, a window function only where window functions are, and never a
- * row value. Report an error and return -1 if it may not.
+ * allowed, a window function only where window functions are and not from a
+ * subquery, whose name context pTopNC is then, and never a row value. Report
+ * an error and return -1 if it may not.
  */
 static int
 checkAliasUse(struct Parse *pParse, const struct NameContext *pNC,
-	      struct Expr *pOrig, const char *zAs)
+	      const struct NameContext *pTopNC, struct Expr *pOrig,
+	      const char *zAs)
 {
 	const char *err = NULL;
 	if ((pNC->ncFlags & NC_AllowAgg) == 0 &&
 	    ExprHasProperty(pOrig, EP_Agg))
 		err = tt_sprintf("misuse of aliased aggregate %s", zAs);
-	else if ((pNC->ncFlags & NC_AllowWin) == 0 &&
-		 ExprHasProperty(pOrig, EP_Win))
+	else if (ExprHasProperty(pOrig, EP_Win) &&
+		 ((pNC->ncFlags & NC_AllowWin) == 0 || pNC != pTopNC))
 		err = tt_sprintf("misuse of aliased window function %s", zAs);
 	else if (sqlExprVectorSize(pOrig) != 1)
 		err = "row value misused";
@@ -422,8 +424,8 @@ lookupName(Parse * pParse,	/* The parsing context */
 					assert(pExpr->x.pList == 0);
 					assert(pExpr->x.pSelect == 0);
 					pOrig = pEList->a[j].pExpr;
-					if (checkAliasUse(pParse, pNC, pOrig,
-							  zAs) != 0)
+					if (checkAliasUse(pParse, pNC, pTopNC,
+							  pOrig, zAs) != 0)
 						return WRC_Abort;
 					resolveAlias(pEList, j, pExpr, "",
 						     nSubquery);
