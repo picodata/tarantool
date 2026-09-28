@@ -1101,7 +1101,8 @@ sqlResolveOrderGroupBy(Parse * pParse,	/* Parsing context.  Leave error messages
 }
 
 /*
- ** Walker callback for resolveRemoveWindows().
+ ** Walker callback for sqlWindowRemoveExprFromSelect() and
+ ** sqlWindowRemoveExprListFromSelect()
  */
 static int
 resolveRemoveWindowsCb(Walker *pWalker, Expr *pExpr)
@@ -1123,14 +1124,34 @@ resolveRemoveWindowsCb(Walker *pWalker, Expr *pExpr)
  ** Remove any Window objects owned by the expression pExpr from the
  ** Select.pWin list of Select object pSelect.
  */
-static void
-resolveRemoveWindows(Select *pSelect, Expr *pExpr)
+void
+sqlWindowRemoveExprFromSelect(struct Select *pSelect, struct Expr *pExpr)
 {
+	if (pSelect->pWin != NULL) {
+		Walker sWalker;
+		memset(&sWalker, 0, sizeof(Walker));
+		sWalker.xExprCallback = resolveRemoveWindowsCb;
+		sWalker.u.pSelect = pSelect;
+		sqlWalkExpr(&sWalker, pExpr);
+	}
+}
+
+/*
+ * Remove any Window objects owned by the expression list from the
+ * Select.pWin list of Select object pSelect.
+ */
+void
+sqlWindowRemoveExprListFromSelect(struct Select *pSelect,
+				  struct ExprList *pList)
+{
+	if (pList == NULL || pSelect->pWin == NULL)
+		return;
 	Walker sWalker;
 	memset(&sWalker, 0, sizeof(Walker));
 	sWalker.xExprCallback = resolveRemoveWindowsCb;
 	sWalker.u.pSelect = pSelect;
-	sqlWalkExpr(&sWalker, pExpr);
+	for (int i = 0; i < pList->nExpr; i++)
+		sqlWalkExpr(&sWalker, pList->a[i].pExpr);
 }
 
 /*
@@ -1214,7 +1235,7 @@ resolveOrderGroupBy(NameContext * pNC,	/* The name context of the SELECT stateme
 				 ** belonging to the expression from the
 				 ** Select.pWin list.
 				 */
-				resolveRemoveWindows(pSelect, pE);
+				sqlWindowRemoveExprFromSelect(pSelect, pE);
 				pItem->u.x.iOrderByCol = j + 1;
 			}
 		}

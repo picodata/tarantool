@@ -5653,6 +5653,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		/* If ORDER BY makes no difference in the output then neither does
 		 * DISTINCT so it can be removed too.
 		 */
+		sqlWindowRemoveExprListFromSelect(p, p->pOrderBy);
 		sql_expr_list_delete(p->pOrderBy);
 		p->pOrderBy = 0;
 		p->selFlags &= ~SF_Distinct;

@@ -2560,6 +2560,21 @@ void
 sqlWindowUpdate(Parse *pParse, Window *pList, Window *pWin,
 		struct func *pFunc);
 
+/**
+ * Remove any Window objects owned by the expression pExpr from the
+ * Select.pWin list of Select object pSelect.
+ */
+void
+sqlWindowRemoveExprFromSelect(struct Select *pSelect, struct Expr *pExpr);
+
+/**
+ * Remove any Window objects owned by the expressions of pList from the
+ * Select.pWin list of Select object pSelect.
+ */
+void
+sqlWindowRemoveExprListFromSelect(struct Select *pSelect,
+				  struct ExprList *pList);
+
 Window *
 sqlWindowDup(Expr *pOwner, Window *p);
 
