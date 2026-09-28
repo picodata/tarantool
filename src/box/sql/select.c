@@ -5196,6 +5196,30 @@ sqlExprWalkNoop(Walker * NotUsed, Expr * NotUsed2)
 }
 
 /*
+ * No-op routine for the parse-tree walker for SELECT statements.
+ * subquery in the parser tree.
+ */
+int
+sqlSelectWalkNoop(struct Walker *NotUsed, struct Select *NotUsed2)
+{
+	UNUSED_PARAMETER2(NotUsed, NotUsed2);
+	return WRC_Continue;
+}
+
+#ifdef SQL_DEBUG
+/*
+ * Always assert. This xSelectCallback2 implementation proves that the
+ * xSelectCallback2 is never invoked.
+ */
+void
+sqlSelectWalkAssert2(struct Walker *NotUsed, struct Select *NotUsed2)
+{
+	UNUSED_PARAMETER2(NotUsed, NotUsed2);
+	assert(0);
+}
+#endif
+
+/*
  * This routine "expands" a SELECT statement and all of its subqueries.
  * For additional information on what it means to "expand" a SELECT
  * statement, see the comment on the selectExpand worker callback above.
@@ -5211,14 +5235,15 @@ static void
 sqlSelectExpand(Parse * pParse, Select * pSelect)
 {
 	Walker w;
-	memset(&w, 0, sizeof(w));
 	w.xExprCallback = sqlExprWalkNoop;
 	w.pParse = pParse;
 	if (pParse->hasCompound) {
 		w.xSelectCallback = convertCompoundSelectToSubquery;
+		w.xSelectCallback2 = NULL;
 		sqlWalkSelect(&w, pSelect);
 	}
 	w.xSelectCallback = selectExpander;
+	w.xSelectCallback2 = NULL;
 	if ((pSelect->selFlags & SF_MultiValue) == 0) {
 		w.xSelectCallback2 = selectPopWith;
 	}
@@ -5280,7 +5305,7 @@ static void
 sqlSelectAddTypeInfo(Parse * pParse, Select * pSelect)
 {
 	Walker w;
-	memset(&w, 0, sizeof(w));
+	w.xSelectCallback = sqlSelectWalkNoop;
 	w.xSelectCallback2 = selectAddSubqueryTypeInfo;
 	w.xExprCallback = sqlExprWalkNoop;
 	w.pParse = pParse;

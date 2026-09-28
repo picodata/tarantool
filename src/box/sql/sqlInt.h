@@ -2417,6 +2417,14 @@ int sqlWalkSelect(Walker *, Select *);
 int sqlWalkSelectExpr(Walker *, Select *);
 int sqlWalkSelectFrom(Walker *, Select *);
 int sqlExprWalkNoop(Walker *, Expr *);
+/** A no-op xSelectCallback that walks into every SELECT. */
+int
+sqlSelectWalkNoop(struct Walker *walker, struct Select *select);
+#ifdef SQL_DEBUG
+/** An xSelectCallback2 that must never be invoked. */
+void
+sqlSelectWalkAssert2(struct Walker *walker, struct Select *select);
+#endif
 
 /*
  * Return code from the parse-tree walking primitives and their

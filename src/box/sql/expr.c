@@ -2097,10 +2097,12 @@ static int
 exprIsConst(Expr * p, int initFlag, int iCur)
 {
 	Walker w;
-	memset(&w, 0, sizeof(w));
 	w.eCode = initFlag;
 	w.xExprCallback = exprNodeIsConstant;
 	w.xSelectCallback = selectNodeIsConstant;
+#ifdef SQL_DEBUG
+	w.xSelectCallback2 = sqlSelectWalkAssert2;
+#endif
 	w.u.iCur = iCur;
 	sqlWalkExpr(&w, p);
 	return w.eCode;
@@ -5211,8 +5213,8 @@ sqlFunctionUsesThisSrc(Expr * pExpr, SrcList * pSrcList)
 	Walker w;
 	struct SrcCount cnt;
 	assert(pExpr->op == TK_AGG_FUNCTION);
-	memset(&w, 0, sizeof(w));
 	w.xExprCallback = exprSrcCount;
+	w.xSelectCallback = NULL;
 	w.u.pSrcCount = &cnt;
 	cnt.pSrc = pSrcList;
 	cnt.nThis = 0;
@@ -5450,9 +5452,16 @@ analyzeAggregate(Walker * pWalker, Expr * pExpr)
 static int
 analyzeAggregatesInSelect(Walker * pWalker, Select * pSelect)
 {
-	UNUSED_PARAMETER(pWalker);
 	UNUSED_PARAMETER(pSelect);
+	pWalker->walkerDepth++;
 	return WRC_Continue;
+}
+
+static void
+analyzeAggregatesInSelectEnd(struct Walker *pWalker, struct Select *pSelect)
+{
+	UNUSED_PARAMETER(pSelect);
+	pWalker->walkerDepth--;
 }
 
 /*
@@ -5468,9 +5477,10 @@ void
 sqlExprAnalyzeAggregates(NameContext * pNC, Expr * pExpr)
 {
 	Walker w;
-	memset(&w, 0, sizeof(w));
 	w.xExprCallback = analyzeAggregate;
 	w.xSelectCallback = analyzeAggregatesInSelect;
+	w.xSelectCallback2 = analyzeAggregatesInSelectEnd;
+	w.walkerDepth = 0;
 	w.u.pNC = pNC;
 	w.pParse = 0;
 	assert(pNC->pSrcList != 0);
