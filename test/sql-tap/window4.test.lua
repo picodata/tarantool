@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(160)
+test:plan(164)
 
 test:execsql([[
     DROP TABLE IF EXISTS t3;
@@ -4925,6 +4925,48 @@ test:do_execsql_test(
 SELECT id, min(b) OVER (PARTITION BY a ORDER BY id) FROM t7;
    ]], {
       1, 2, 2, 2, 3, 2, 4, "", 5, 8, 6, 1
+})
+
+-- An aggregate as the argument of a window function, with and without
+-- GROUP BY. The upstream file names both of the first two tests 11.5.
+test:execsql([[
+DROP TABLE IF EXISTS t8;
+CREATE TABLE t8(id INTEGER PRIMARY KEY AUTOINCREMENT, t INT, total INT);
+INSERT INTO t8(t, total) VALUES(0,2);
+INSERT INTO t8(t, total) VALUES(5,1);
+INSERT INTO t8(t, total) VALUES(10,1);
+]])
+
+test:do_execsql_test(
+   "11.5",
+   [[
+SELECT sum( min(t) ) OVER () FROM t8 GROUP BY total;
+   ]], {
+      5, 5
+})
+
+test:do_execsql_test(
+   "11.6",
+   [[
+SELECT sum( max(t) ) OVER () FROM t8 GROUP BY total;
+   ]], {
+      10, 10
+})
+
+test:do_execsql_test(
+   "11.7",
+   [[
+SELECT sum( min(t) ) OVER () FROM t8;
+   ]], {
+      0
+})
+
+test:do_execsql_test(
+   "11.8",
+   [[
+SELECT sum( max(t) ) OVER () FROM t8;
+   ]], {
+      10
 })
 
 test:finish_test()

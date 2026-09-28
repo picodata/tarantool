@@ -531,8 +531,14 @@ sqlWindowRewrite(Parse *pParse, Select *p)
 		sqlSrcListAssignCursors(pParse, p->pSrc);
 		sqlExpandSubquery(pParse, &p->pSrc->a[0]);
 		pSub->selFlags |= SF_Expanded;
+		uint32_t sel_flags = p->selFlags;
 		p->selFlags &= ~SF_Aggregate;
 		sqlSelectPrep(pParse, pSub, 0);
+		/*
+		 * The aggregates of the query are computed by the
+		 * subquery, even without a GROUP BY.
+		 */
+		pSub->selFlags |= sel_flags & SF_Aggregate;
 
 		/*
 		 * Ephemeral table requires PK, so append a rowid to the end
