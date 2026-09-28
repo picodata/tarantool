@@ -1348,6 +1348,11 @@ sqlWhereExprUsage(WhereMaskSet * pMaskSet, Expr * p)
 	} else if (p->x.pList) {
 		mask |= sqlWhereExprListUsage(pMaskSet, p->x.pList);
 	}
+	if (p->op == TK_FUNCTION && p->y.pWin != NULL) {
+		struct Window *win = p->y.pWin;
+		mask |= sqlWhereExprListUsage(pMaskSet, win->pPartition);
+		mask |= sqlWhereExprListUsage(pMaskSet, win->pOrderBy);
+	}
 	return mask;
 }
 

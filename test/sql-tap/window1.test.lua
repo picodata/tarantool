@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(90)
+test:plan(93)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -1063,6 +1063,44 @@ FROM t8
 ORDER BY 10+sum(a) OVER (ORDER BY a) DESC;
     ]],
     {16,13,11,}
+)
+
+test:do_execsql_test(
+    "window1-18.0",
+    [[
+DROP TABLE IF EXISTS t18a;
+DROP TABLE IF EXISTS t18b;
+DROP TABLE IF EXISTS t18c;
+CREATE TABLE t18a ( t1_id INTEGER PRIMARY KEY );
+CREATE TABLE t18b ( t2_id INTEGER PRIMARY KEY );
+CREATE TABLE t18c ( t3_id INTEGER PRIMARY KEY );
+
+INSERT INTO t18a VALUES(1),  (3), (5);
+INSERT INTO t18b VALUES      (3), (5);
+INSERT INTO t18c VALUES(10), (11), (12);
+    ]]
+)
+
+test:do_execsql_test(
+    "window1-18.1",
+    [[
+SELECT t18a.* FROM t18a, t18b WHERE
+  t1_id=t2_id AND t1_id IN (
+      SELECT t1_id + row_number() OVER ( ORDER BY t1_id ) FROM t18c
+  )
+    ]],
+    {}
+)
+
+test:do_execsql_test(
+    "window1-18.2",
+    [[
+SELECT t18a.* FROM t18a, t18b WHERE
+  t1_id=t2_id AND t1_id IN (
+      SELECT         row_number() OVER ( ORDER BY t1_id ) FROM t18c
+  )
+    ]],
+    {3}
 )
 
 -- Do not push outer constraints into compound queries with window functions.
