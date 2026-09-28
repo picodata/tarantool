@@ -1531,10 +1531,6 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			}
 		}
 
-		/* The ORDER BY and GROUP BY clauses may not refer to terms in
-		 * outer queries
-		 */
-		sNC.pNext = 0;
 		sNC.ncFlags |= NC_AllowAgg | NC_AllowWin;
 
 		/* If this is a converted compound query, move the ORDER BY clause from
