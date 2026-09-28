@@ -1,7 +1,7 @@
 #!/usr/bin/env tarantool
 require('compat').binary_data_decoding = 'new'
 local test = require("sqltester")
-test:plan(64)
+test:plan(66)
 
 --!./tcltestrunner.lua
 -- 2014 January 11
@@ -1069,6 +1069,34 @@ test:do_catchsql_test(16.1, [[
   -- <16.1>
   1, "Tarantool does not support recursive aggregate queries"
   -- </16.1>
+})
+
+-- Or window-function recursive queries. Ticket e8275b41.
+--
+test:do_catchsql_test(16.2, [[
+  WITH RECURSIVE
+    i(x) AS (VALUES(1) UNION SELECT count(*) OVER () FROM i)
+  SELECT * FROM i;
+]], {
+  -- <16.2>
+  1, "cannot use window functions in recursive queries"
+  -- </16.2>
+})
+
+test:do_catchsql_test(16.3, [[
+  WITH RECURSIVE
+    t(id, parent) AS (VALUES(1,2)),
+    q(id, parent, rn) AS (
+        VALUES(1,2,3)
+        UNION ALL
+        SELECT t.*, ROW_NUMBER() OVER (ORDER BY t.id) AS rn
+        FROM q JOIN t ON t.parent = q.id
+        )
+      SELECT * FROM q;
+]], {
+  -- <16.3>
+  1, "cannot use window functions in recursive queries"
+  -- </16.3>
 })
 
 test:finish_test()

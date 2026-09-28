@@ -2529,6 +2529,13 @@ generateWithRecursiveQuery(Parse * pParse,	/* Parsing context */
 	Expr *pLimit, *pOffset;	/* Saved LIMIT and OFFSET */
 	int regLimit, regOffset;	/* Registers used by LIMIT and OFFSET */
 
+	if (p->pWin != NULL) {
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC, "cannot use "
+			 "window functions in recursive queries");
+		pParse->is_aborted = true;
+		return;
+	}
+
 	/* Process the LIMIT and OFFSET clauses, if they exist */
 	addrBreak = sqlVdbeMakeLabel(v);
 	p->nSelectRow = 320;	/* 4 billion rows */
