@@ -2189,11 +2189,11 @@ sqlResultSetOfSelect(Parse * pParse, Select * pSelect)
 	uint32_t saved_flags = pParse->sql_flags;
 	pParse->sql_flags = 0;
 	sqlSelectPrep(pParse, pSelect, 0);
+	pParse->sql_flags = saved_flags;
 	if (pParse->is_aborted)
 		return NULL;
 	while (pSelect->pPrior)
 		pSelect = pSelect->pPrior;
-	pParse->sql_flags = saved_flags;
 	struct space *space = sql_template_space_new(pParse, NULL);
 	/* The sqlResultSetOfSelect() is only used in contexts where lookaside
 	 * is disabled
