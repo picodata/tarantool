@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(22)
+test:plan(23)
 
 --!./tcltestrunner.lua
 -- 2005 September 19
@@ -326,5 +326,27 @@ test:do_execsql_test(
         -- </join6-4.2>
     })
 
-test:finish_test()
+-- An IN list with a correlated value on its right side, in a join.
+test:execsql([[
+    DROP TABLE IF EXISTS t0;
+    DROP TABLE IF EXISTS t1;
+    CREATE TABLE t0 (c0 INT, c1 INT, PRIMARY KEY (c0, c1));
+    CREATE TABLE t1 (id INT PRIMARY KEY AUTOINCREMENT, c0 INT);
+    INSERT INTO t1(c0) VALUES (2);
+    INSERT INTO t0 VALUES(0, 10);
+    INSERT INTO t0 VALUES(1, 10);
+    INSERT INTO t0 VALUES(2, 10);
+    INSERT INTO t0 VALUES(3, 10);
+]])
 
+test:do_execsql_test(
+    "join5-8.1",
+    [[
+        SELECT t0.c0, t0.c1, t1.c0 FROM t0, t1
+        WHERE (t0.c1 >= 1 OR t0.c1 < 1) AND t0.c0 IN (1, t1.c0) ORDER BY 1;
+    ]], {
+        1, 10, 2,
+        2, 10, 2
+    })
+
+test:finish_test()
