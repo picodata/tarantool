@@ -1372,6 +1372,18 @@ selectInnerLoop(Parse * pParse,		/* The parser context */
 	case SRT_DistFifo:
 	case SRT_Table:
 	case SRT_EphemTab:{
+			/*
+			 * The sorter keeps the result columns apart, as
+			 * generateSortTail() reads them one by one to
+			 * append the ID of the row.
+			 */
+			if (pSort != NULL) {
+				assert(eDest == SRT_Table ||
+				       eDest == SRT_EphemTab);
+				pushOntoSorter(pParse, pSort, p, regResult,
+					       regOrig, nResultCol, nPrefixReg);
+				break;
+			}
 			int r1 = sqlGetTempRange(pParse, nPrefixReg + 1);
 			sqlVdbeAddOp3(v, OP_MakeRecord, regResult,
 					  nResultCol, r1 + nPrefixReg);
@@ -1390,33 +1402,29 @@ selectInnerLoop(Parse * pParse,		/* The parser context */
 						     addr, r1, 0);
 				sqlVdbeAddOp2(v, OP_IdxInsert, r1,
 						  pDest->reg_eph + 1);
-				assert(pSort == 0);
 			}
 
-			if (pSort) {
-				pushOntoSorter(pParse, pSort, p,
-					       r1 + nPrefixReg, regResult, 1,
-					       nPrefixReg);
-			} else {
-				int regRec = sqlGetTempReg(pParse);
-				/* Last column is required for ID. */
-				int regCopy = sqlGetTempRange(pParse, nResultCol + 1);
-				sqlVdbeAddOp2(v, OP_NextIdEphemeral, pDest->reg_eph,
-						  regCopy + nResultCol);
-				/* Positioning ID column to be last in inserted tuple.
-				 * NextId -> regCopy + n + 1
-				 * Copy [regResult, regResult + n] -> [regCopy, regCopy + n]
-				 * MakeRecord -> [regCopy, regCopy + n + 1] -> regRec
-				 * IdxInsert -> regRec
-				 */
-				sqlVdbeAddOp3(v, OP_Copy, regResult, regCopy, nResultCol - 1);
-				sqlVdbeAddOp3(v, OP_MakeRecord, regCopy, nResultCol + 1, regRec);
-				/* Set flag to save memory allocating one by malloc. */
-				sqlVdbeChangeP5(v, 1);
-				sqlVdbeAddOp2(v, OP_IdxInsert, regRec, pDest->reg_eph);
-				sqlReleaseTempReg(pParse, regRec);
-				sqlReleaseTempRange(pParse, regCopy, nResultCol + 1);
-			}
+			int regRec = sqlGetTempReg(pParse);
+			/* Last column is required for ID. */
+			int regCopy = sqlGetTempRange(pParse, nResultCol + 1);
+			sqlVdbeAddOp2(v, OP_NextIdEphemeral, pDest->reg_eph,
+				      regCopy + nResultCol);
+			/* Positioning ID column to be last in inserted tuple.
+			 * NextId -> regCopy + n + 1
+			 * Copy [regResult, regResult + n] ->
+			 *      [regCopy, regCopy + n]
+			 * MakeRecord -> [regCopy, regCopy + n + 1] -> regRec
+			 * IdxInsert -> regRec
+			 */
+			sqlVdbeAddOp3(v, OP_Copy, regResult, regCopy,
+				      nResultCol - 1);
+			sqlVdbeAddOp3(v, OP_MakeRecord, regCopy, nResultCol + 1,
+				      regRec);
+			/* Set flag to save memory allocating one by malloc. */
+			sqlVdbeChangeP5(v, 1);
+			sqlVdbeAddOp2(v, OP_IdxInsert, regRec, pDest->reg_eph);
+			sqlReleaseTempReg(pParse, regRec);
+			sqlReleaseTempRange(pParse, regCopy, nResultCol + 1);
 			sqlReleaseTempRange(pParse, r1, nPrefixReg + 1);
 			break;
 		}
@@ -1803,13 +1811,14 @@ generateSortTail(Parse * pParse,	/* Parsing context */
 	switch (eDest) {
 	case SRT_Table:
 	case SRT_EphemTab: {
-			int regCopy = sqlGetTempRange(pParse,  nColumn);
+			/* The last column is the ID of the row. */
+			int regCopy = sqlGetTempRange(pParse, nColumn + 1);
 			sqlVdbeAddOp2(v, OP_NextIdEphemeral, pDest->reg_eph,
-					  regTupleid);
+				      regCopy + nColumn);
 			sqlVdbeAddOp3(v, OP_Copy, regRow, regCopy, nSortData - 1);
 			sqlVdbeAddOp3(v, OP_MakeRecord, regCopy, nColumn + 1, regRow);
 			sqlVdbeAddOp2(v, OP_IdxInsert, regRow, pDest->reg_eph);
-			sqlReleaseTempReg(pParse, regCopy);
+			sqlReleaseTempRange(pParse, regCopy, nColumn + 1);
 			break;
 		}
 	case SRT_Set:{
