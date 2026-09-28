@@ -161,6 +161,25 @@ sql_space_info_new_from_expr_list(struct Parse *parser, struct ExprList *list,
 	return info;
 }
 
+/**
+ * Create the definition of the ephemeral space of an SRT_EphemTab
+ * destination: the result columns and the ID of the row after them. The ID
+ * is the only part of the key, so the rows are kept in the order in which
+ * they are inserted, such as the order of the ORDER BY of the query.
+ */
+static struct sql_space_info *
+sql_space_info_new_for_ephem_tab(struct Parse *parser, struct ExprList *list)
+{
+	struct sql_space_info *info =
+		sql_space_info_new_from_expr_list(parser, list, true);
+	if (info == NULL)
+		return NULL;
+	info->parts[0] = list->nExpr;
+	info->sort_orders[0] = SORT_ORDER_ASC;
+	info->part_count = 1;
+	return info;
+}
+
 static struct sql_space_info *
 sql_space_info_new_from_order_by(struct Parse *parser, struct Select *select,
 				 struct ExprList *order_by)
@@ -2767,8 +2786,7 @@ multiSelect(Parse * pParse,	/* Parsing context */
 	if (dest.eDest == SRT_EphemTab) {
 		assert(p->pEList);
 		struct sql_space_info *info =
-			sql_space_info_new_from_expr_list(pParse, p->pEList,
-							  true);
+			sql_space_info_new_for_ephem_tab(pParse, p->pEList);
 		if (info == NULL) {
 			pParse->is_aborted = true;
 			rc = 1;
@@ -5952,7 +5970,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	 */
 	if (pDest->eDest == SRT_EphemTab) {
 		struct sql_space_info *info =
-			sql_space_info_new_from_expr_list(pParse, pEList, true);
+			sql_space_info_new_for_ephem_tab(pParse, pEList);
 		if (info == NULL) {
 			pParse->is_aborted = true;
 			goto select_end;

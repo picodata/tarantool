@@ -20,10 +20,10 @@ test:do_execsql_test(
         SELECT * FROM ( SELECT A FROM T1 LIMIT 1), (SELECT B FROM T2 LIMIT 10);
     ]],
     {
+        12, 5,
         12, 2,
         12, 2,
-        12, 2,
-        12, 5
+        12, 2
     }
 )
 

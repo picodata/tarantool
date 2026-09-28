@@ -4245,14 +4245,11 @@ struct sql_space_info *
 sql_space_info_new(uint32_t field_count, uint32_t part_count);
 
 /**
- * Initialize the field types and key parts of space_info with space_def.
- * Additionally added one more field type and key part for rowid. Rowid is
- * always INTEGER. Key parts will be initialized with the same values as the
- * field types. The number of initialized field types and key parts will be the
- * same as the field_count in space_def plus one.
+ * Create the definition of an ephemeral space with the only field, an
+ * INTEGER row ID, such as the key of a materialized view.
  */
 struct sql_space_info *
-sql_space_info_new_from_space_def(const struct space_def *def);
+sql_space_info_new_for_rowid(void);
 
 /**
  * Initialize the field types and key parts of space_info with index_def.

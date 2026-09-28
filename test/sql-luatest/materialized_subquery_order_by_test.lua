@@ -44,3 +44,31 @@ g.test_materialized_window_query = function()
         t.assert_equals(rows, {{10}, {20}, {20}, {30}})
     end)
 end
+
+-- A materialized subquery keeps its rows in the order in which they are
+-- inserted, as the ID of the row is the key of its ephemeral space. So a
+-- window function sees them in the order of its ORDER BY, not sorted by
+-- the values of the columns.
+g.test_materialized_window_query_order = function()
+    g.server:exec(function()
+        local sql = [[SELECT ALL a, b, sum(b) OVER (ORDER BY b, a) FROM t;]]
+        t.assert_equals(box.execute(sql).rows,
+                        {{1, 10, 10}, {2, 20, 30}, {3, 20, 50}, {2, 30, 80}})
+
+        sql = [[SELECT ALL a, b, sum(b) OVER (ORDER BY b DESC, a DESC)
+                FROM t;]]
+        t.assert_equals(box.execute(sql).rows,
+                        {{2, 30, 30}, {3, 20, 50}, {2, 20, 70}, {1, 10, 80}})
+    end)
+end
+
+-- The rows of a materialized subquery with LIMIT come in the order of the
+-- query it is made of.
+g.test_materialized_subquery_order = function()
+    g.server:exec(function()
+        local sql = [[SELECT * FROM (SELECT b FROM t ORDER BY b DESC, a
+                                     LIMIT 3),
+                                    (SELECT 1 LIMIT 1);]]
+        t.assert_equals(box.execute(sql).rows, {{30, 1}, {20, 1}, {20, 1}})
+    end)
+end

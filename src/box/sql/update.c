@@ -194,8 +194,12 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 	uint32_t pk_part_count;
 	if (is_view) {
 		sql_materialize_view(pParse, def->name, pWhere, pk_cursor);
-		/* Number of columns from SELECT plus ID.*/
-		pk_part_count = nKey = def->field_count + 1;
+		/*
+		 * The ID of a row, after the columns of the view, is
+		 * the key of the materialized view.
+		 */
+		pk_part_count = 1;
+		nKey = 1;
 	} else {
 		assert(space != NULL);
 		vdbe_emit_open_cursor(pParse, pk_cursor, 0, space);
@@ -219,7 +223,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 	struct sql_space_info *info;
 	assert(space->index_count > 0 || is_view);
 	if (is_view)
-		info = sql_space_info_new_from_space_def(def);
+		info = sql_space_info_new_for_rowid();
 	else
 		info = sql_space_info_new_from_index_def(pPk->def, false);
 	if (info == NULL) {
@@ -237,9 +241,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 		goto update_cleanup;
 	okOnePass = sqlWhereOkOnePass(pWInfo, aiCurOnePass);
 	if (is_view) {
-		for (i = 0; i < (int) pk_part_count; i++) {
-			sqlVdbeAddOp3(v, OP_Column, pk_cursor, i, iPk + i);
-		}
+		sqlVdbeAddOp3(v, OP_Column, pk_cursor, def->field_count, iPk);
 	} else {
 		for (i = 0; i < (int) pk_part_count; i++) {
 			sqlVdbeAddOp3(v, OP_Column, pk_cursor,

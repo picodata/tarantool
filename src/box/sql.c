@@ -323,18 +323,10 @@ sql_space_info_new(uint32_t field_count, uint32_t part_count)
 }
 
 struct sql_space_info *
-sql_space_info_new_from_space_def(const struct space_def *def)
+sql_space_info_new_for_rowid(void)
 {
-	uint32_t field_count = def->field_count + 1;
-	struct sql_space_info *info = sql_space_info_new(field_count, 0);
-	if (info == NULL)
-		return NULL;
-	for (uint32_t i = 0; i < def->field_count; ++i) {
-		info->types[i] = def->fields[i].type;
-		info->coll_ids[i] = def->fields[i].coll_id;
-	}
-	/* Add one more field for rowid. */
-	info->types[def->field_count] = FIELD_TYPE_INTEGER;
+	struct sql_space_info *info = sql_space_info_new(1, 0);
+	info->types[0] = FIELD_TYPE_INTEGER;
 	return info;
 }
 

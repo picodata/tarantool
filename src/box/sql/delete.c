@@ -207,7 +207,7 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 		 */
 		int reg_eph = ++parse->nMem;
 		int reg_pk = parse->nMem + 1;
-		int pk_len = is_view ? space->def->field_count + 1 :
+		int pk_len = is_view ? 1 :
 			     space->index[0]->def->key_def->part_count;
 		/*
 		 * This increase should not be necessary, but when filling
@@ -228,15 +228,11 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 			 * CREATE TABLE t (id INT PRIMARY KEY, a INT);
 			 * INSERT INTO t VALUES (1, 1), (2, 1), (3, 1);
 			 * CREATE VIEW v AS SELECT a FROM t;
-			 * Meanwhile ephemeral tables feature PK covering ALL
-			 * fields of format, so without id materialization
-			 * processing is impossible. Then, results of
-			 * materialization are transferred to the table being
-			 * created below. So to fit tuples in it we must
-			 * account that id field as well. That's why pk_len
-			 * has one field more than view format.
+			 * The id is the key of the materialized view, so
+			 * only the ids of the rows to delete are collected
+			 * in the table created below.
 			 */
-			info = sql_space_info_new_from_space_def(space->def);
+			info = sql_space_info_new_for_rowid();
 		} else {
                         assert(space->index_count > 0);
 			struct index_def *index_def = space->index[0]->def;
@@ -289,10 +285,8 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 					      part->fieldno, reg_pk + i);
 			}
 		} else {
-			for (int i = 0; i < pk_len; i++) {
-				sqlVdbeAddOp3(v, OP_Column, tab_cursor,
-						  i, reg_pk + i);
-			}
+			sqlVdbeAddOp3(v, OP_Column, tab_cursor,
+				      space->def->field_count, reg_pk);
 		}
 
 		int reg_key;
