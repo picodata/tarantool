@@ -4831,8 +4831,8 @@ withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
  * sqlSelectExpand() when walking a SELECT tree to resolve table
  * names and other FROM clause elements.
  */
-static void
-selectPopWith(Walker * pWalker, Select * p)
+void
+sqlSelectPopWith(struct Walker *pWalker, struct Select *p)
 {
 	Parse *pParse = pWalker->pParse;
 	With *pWith = findRightmost(p)->pWith;
@@ -4927,7 +4927,7 @@ selectExpander(Walker * pWalker, Select * p)
 	}
 	pTabList = p->pSrc;
 	pEList = p->pEList;
-	if (pWalker->xSelectCallback2 == selectPopWith) {
+	if (pWalker->xSelectCallback2 == sqlSelectPopWith) {
 		sqlWithPush(pParse, findRightmost(p)->pWith, 0);
 	}
 
@@ -5262,7 +5262,7 @@ sqlSelectExpand(Parse * pParse, Select * pSelect)
 	w.xSelectCallback = selectExpander;
 	w.xSelectCallback2 = NULL;
 	if ((pSelect->selFlags & SF_MultiValue) == 0) {
-		w.xSelectCallback2 = selectPopWith;
+		w.xSelectCallback2 = sqlSelectPopWith;
 	}
 	sqlWalkSelect(&w, pSelect);
 }

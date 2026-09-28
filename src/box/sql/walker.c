@@ -148,6 +148,14 @@ sqlWalkSelectExpr(Walker * pWalker, Select * p)
 		return WRC_Abort;
 	if (sqlWalkExpr(pWalker, p->pOffset))
 		return WRC_Abort;
+	/*
+	 * The subqueries in the window definitions of the SELECT are
+	 * expanded with the rest of it, while the CTEs it may refer to are
+	 * in scope.
+	 */
+	if (pWalker->xSelectCallback2 == sqlSelectPopWith &&
+	    walkWindowList(pWalker, p->pWinDefn) != 0)
+		return WRC_Abort;
 	return WRC_Continue;
 }
 

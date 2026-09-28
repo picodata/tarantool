@@ -2443,6 +2443,13 @@ int sqlExprWalkNoop(Walker *, Expr *);
 /** A no-op xSelectCallback that walks into every SELECT. */
 int
 sqlSelectWalkNoop(struct Walker *walker, struct Select *select);
+/**
+ * If the SELECT has an associated WITH clause, pop it from the stack of
+ * the parser. It is the xSelectCallback2 of the walker that expands a
+ * SELECT, which is told apart by it.
+ */
+void
+sqlSelectPopWith(struct Walker *walker, struct Select *select);
 #ifdef SQL_DEBUG
 /** An xSelectCallback2 that must never be invoked. */
 void

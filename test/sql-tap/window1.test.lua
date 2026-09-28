@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(105)
+test:plan(108)
 
 test:execsql( [[
     DROP TABLE IF EXISTS t1;
@@ -1284,6 +1284,42 @@ test:do_execsql_test(
 SELECT max(1) OVER () BETWEEN 1 AND 1;
     ]],
     {true}
+)
+
+test:do_execsql_test(
+    "window1-67.0",
+    [[
+DROP TABLE IF EXISTS t67a;
+DROP TABLE IF EXISTS t67b;
+CREATE TABLE t67a(id INT PRIMARY KEY AUTOINCREMENT, a INT, b INT, c INT);
+CREATE TABLE t67b(id INT PRIMARY KEY AUTOINCREMENT, a INT, b INT, c INT);
+    ]]
+)
+
+-- A subquery in a window definition is expanded with its SELECT, so a
+-- missing table is reported rather than the misplaced ORDER BY term.
+-- Tarantool has no nth_value(), so sum() is used instead.
+test:do_catchsql_test(
+    "window1-67.1",
+    [[
+SELECT a,c,b FROM t67a INTERSECT SELECT a,b,c FROM t67a ORDER BY (
+    SELECT sum(a) OVER w1
+    WINDOW w1 AS ( ORDER BY ((SELECT 1 FROM v67)) )
+)
+    ]],
+    {1, "Space 'V67' does not exist"}
+)
+
+test:do_catchsql_test(
+    "window1-67.2",
+    [[
+SELECT a,c,b FROM t67a INTERSECT SELECT a,b,c FROM t67a ORDER BY (
+    SELECT sum(a) OVER w1
+    WINDOW w1 AS ( ORDER BY ((SELECT 1 FROM t67b)) )
+)
+    ]],
+    {1, "Error at ORDER BY in place 1: term does not match any column in "..
+        "the result set"}
 )
 
 test:finish_test()
