@@ -176,6 +176,32 @@ sqlMatchSpanName(const char *zSpan,
 }
 
 /*
+ * Check that the result column pOrig named zAs may be referred to by its
+ * alias in the name context pNC: an aggregate only where aggregates are
+ * allowed, a window function only where window functions are, and never a
+ * row value. Report an error and return -1 if it may not.
+ */
+static int
+checkAliasUse(struct Parse *pParse, const struct NameContext *pNC,
+	      struct Expr *pOrig, const char *zAs)
+{
+	const char *err = NULL;
+	if ((pNC->ncFlags & NC_AllowAgg) == 0 &&
+	    ExprHasProperty(pOrig, EP_Agg))
+		err = tt_sprintf("misuse of aliased aggregate %s", zAs);
+	else if ((pNC->ncFlags & NC_AllowWin) == 0 &&
+		 ExprHasProperty(pOrig, EP_Win))
+		err = tt_sprintf("misuse of aliased window function %s", zAs);
+	else if (sqlExprVectorSize(pOrig) != 1)
+		err = "row value misused";
+	if (err == NULL)
+		return 0;
+	diag_set(ClientError, ER_SQL_PARSER_GENERIC, err);
+	pParse->is_aborted = true;
+	return -1;
+}
+
+/*
  * Given the name of a column of the form X.Y.Z or Y.Z or just Z, look up
  * that name in the set of source tables in pSrcList and make the pExpr
  * expression node refer back to that source column.  The following changes
@@ -376,23 +402,9 @@ lookupName(Parse * pParse,	/* The parsing context */
 					assert(pExpr->x.pList == 0);
 					assert(pExpr->x.pSelect == 0);
 					pOrig = pEList->a[j].pExpr;
-					const char *err = "misuse of aliased "\
-							  "aggregate %s";
-					if ((pNC->ncFlags & NC_AllowAgg) == 0
-					    && ExprHasProperty(pOrig, EP_Agg)) {
-						diag_set(ClientError,
-							 ER_SQL_PARSER_GENERIC,
-							 tt_sprintf(err, zAs));
-						pParse->is_aborted = true;
+					if (checkAliasUse(pParse, pNC, pOrig,
+							  zAs) != 0)
 						return WRC_Abort;
-					}
-					if (sqlExprVectorSize(pOrig) != 1) {
-						diag_set(ClientError,
-							 ER_SQL_PARSER_GENERIC,
-							 "row value misused");
-						pParse->is_aborted = true;
-						return WRC_Abort;
-					}
 					resolveAlias(pEList, j, pExpr, "",
 						     nSubquery);
 					cnt = 1;
@@ -608,6 +620,9 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 			int nId;	/* Number of characters in function name */
 			const char *zId;	/* The function name. */
 
+			int savedAllowFlags =
+				pNC->ncFlags & (NC_AllowAgg | NC_AllowWin);
+
 			assert(!ExprHasProperty(pExpr, EP_xIsSelect));
 			zId = pExpr->u.zToken;
 			nId = sqlStrlen30(zId);
@@ -662,8 +677,15 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 				is_window = 0;
 			}
 			if (is_agg || is_window) {
-				pNC->ncFlags &= ~(pExpr->y.pWin ?
-						  NC_AllowWin : NC_AllowAgg);
+				/*
+				 * Window functions may not be arguments of
+				 * aggregate functions. Or arguments of other
+				 * window functions. But aggregate functions
+				 * may be arguments for window functions.
+				 */
+				pNC->ncFlags &= ~(NC_AllowWin |
+						  (pExpr->y.pWin == NULL ?
+						   NC_AllowAgg : 0));
 			}
 			sqlWalkExprList(pWalker, pList);
 			if (pParse->is_aborted)
@@ -716,7 +738,7 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 						pSel->pWin;
 						pSel->pWin = pExpr->y.pWin;
 					}
-					pNC->ncFlags |= NC_AllowWin;
+					pNC->ncFlags |= NC_HasWin;
 				} else {
 					NameContext *pNC2 = pNC;
 					pExpr->op = TK_AGG_FUNCTION;
@@ -735,8 +757,8 @@ resolveExprStep(Walker * pWalker, Expr * pExpr)
 						pNC2->ncFlags |= is_minmax ?
 							NC_MinMaxAgg : 0;
 					}
-					pNC->ncFlags |= NC_AllowAgg;
 				}
+				pNC->ncFlags |= savedAllowFlags;
 			}
 			return WRC_Prune;
 		}
@@ -1566,8 +1588,8 @@ sqlResolveExprNames(NameContext * pNC,	/* Namespace to resolve expressions in. *
 
 	if (pExpr == 0)
 		return 0;
-	savedHasAgg = pNC->ncFlags & (NC_HasAgg | NC_MinMaxAgg);
-	pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg);
+	savedHasAgg = pNC->ncFlags & (NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
+	pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
 	w.pParse = pNC->pParse;
 	w.xExprCallback = resolveExprStep;
 	w.xSelectCallback = resolveSelectStep;
@@ -1582,9 +1604,9 @@ sqlResolveExprNames(NameContext * pNC,	/* Namespace to resolve expressions in. *
 #if SQL_MAX_EXPR_DEPTH > 0
 	w.pParse->nHeight -= pExpr->nHeight;
 #endif
-	if (pNC->ncFlags & NC_HasAgg) {
-		ExprSetProperty(pExpr, EP_Agg);
-	}
+	static_assert(EP_Agg == NC_HasAgg, "EP_Agg must be NC_HasAgg");
+	static_assert(EP_Win == NC_HasWin, "EP_Win must be NC_HasWin");
+	ExprSetProperty(pExpr, pNC->ncFlags & (NC_HasAgg | NC_HasWin));
 	pNC->ncFlags |= savedHasAgg;
 	return pNC->nErr > 0 || w.pParse->is_aborted;
 }

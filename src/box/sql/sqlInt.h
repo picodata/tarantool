@@ -1476,12 +1476,16 @@ struct Expr {
 
 /*
  * The following are the meanings of bits in the Expr.flags field.
+ * Value restrictions:
+ *
+ *          EP_Agg == NC_HasAgg == SF_HasAgg
+ *          EP_Win == NC_HasWin
  */
 #define EP_FromJoin  0x000001	/* Originates in ON/USING clause of outer join */
-#define EP_Agg       0x000002	/* Contains one or more aggregate functions */
+#define EP_Distinct  0x000002	/* Aggregate function with DISTINCT keyword */
 #define EP_Resolved  0x000004	/* IDs have been resolved to COLUMNs */
-		  /* 0x000008 // available for use */
-#define EP_Distinct  0x000010	/* Aggregate function with DISTINCT keyword */
+/*      0x000008	   available for use */
+#define EP_Agg       0x000010	/* Contains one or more aggregate functions */
 #define EP_VarSelect 0x000020	/* pSelect is correlated, not constant */
 #define EP_DblQuoted 0x000040	/* token.z was originally in "..." */
 #define EP_InfixFunc 0x000080	/* True for an infix function: LIKE, etc */
@@ -1491,7 +1495,7 @@ struct Expr {
 #define EP_Skip      0x001000	/* COLLATE, AS, or UNLIKELY */
 #define EP_Reduced   0x002000	/* Expr struct EXPR_REDUCEDSIZE bytes only */
 #define EP_TokenOnly 0x004000	/* Expr struct EXPR_TOKENONLYSIZE bytes only */
-#define EP_Static    0x008000	/* Held in memory not obtained from malloc() */
+#define EP_Win       0x008000	/* Contains window functions */
 #define EP_MemToken  0x010000	/* Need to sql_xfree() Expr.zToken */
 #define EP_NoReduce  0x020000	/* Cannot EXPRDUP_REDUCE this Expr */
 #define EP_Unlikely  0x040000	/* unlikely() or likelihood() function */
@@ -1504,6 +1508,7 @@ struct Expr {
 /** Expression is system-defined. */
 #define EP_System   0x2000000
 #define EP_HasFunc  0x4000000	/* Contains one or more functions of any kind */
+#define EP_Static   0x8000000	/* Held in memory not obtained from malloc() */
 
 
 /*
@@ -1787,7 +1792,8 @@ struct NameContext {
  * Allowed values for the NameContext, ncFlags field.
  *
  * Value constraints (all checked via assert()):
- *    NC_HasAgg    == SF_HasAgg
+ *    NC_HasAgg    == SF_HasAgg    == EP_Agg
+ *    NC_HasWin    == EP_Win
  *    NC_MinMaxAgg == SF_MinMaxAgg
  *
  */
@@ -1802,6 +1808,7 @@ struct NameContext {
 /** One or more identifiers are out of aggregate function. */
 #define NC_HasUnaggregatedId     0x2000
 #define NC_AllowWin  0x4000	/* Window functions are allowed here */
+#define NC_HasWin    0x8000	/* One or more window functions seen */
 /*
  * An instance of the following structure contains all information
  * needed to generate code for a single SELECT statement.
