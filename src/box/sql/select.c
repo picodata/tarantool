@@ -1823,9 +1823,7 @@ generateSortTail(Parse * pParse,	/* Parsing context */
 			iRead = iCol++;
 		}
 		sqlVdbeAddOp3(v, OP_Column, iSortTab, iRead, regRow + i);
-		VdbeComment((v, "%s",
-			     aOutEx[i].zEName ? aOutEx[i].zEName : aOutEx[i].
-			     zSpan));
+		VdbeComment((v, "%s", aOutEx[i].zEName));
 	}
 	switch (eDest) {
 	case SRT_Table:
@@ -1982,7 +1980,8 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 		enum field_type type = sql_expr_type(p);
 		vdbe_metadata_set_col_type(v, i, field_type_strs[type]);
 		vdbe_metadata_set_col_nullability(v, i, -1);
-		const char *colname = pEList->a[i].zEName;
+		const char *colname = pEList->a[i].eEName == ENAME_NAME ?
+				      pEList->a[i].zEName : NULL;
 		if (p->op == TK_COLUMN_REF || p->op == TK_AGG_COLUMN) {
 			char *zCol;
 			int iCol = p->iColumn;
@@ -2079,7 +2078,8 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 		 * Check if the column contains an "AS <name>"
 		 * phrase.
 		 */
-		char *name = expr_list->a[i].zEName;
+		char *name = expr_list->a[i].eEName == ENAME_NAME ?
+			     expr_list->a[i].zEName : NULL;
 		if (name == NULL) {
 			struct Expr *pColExpr = expr_list->a[i].pExpr;
 			struct space_def *space_def = NULL;
@@ -5017,11 +5017,18 @@ selectExpander(Walker * pWalker, Select * p)
 		if (pE->op == TK_DOT && pE->pRight->op == TK_ASTERISK)
 			has_asterisk = true;
 		elistFlags |= pE->flags;
-		if (pEList->a[k].zEName == NULL &&
+		if ((pEList->a[k].eEName != ENAME_NAME ||
+		     pEList->a[k].zEName == NULL) &&
 		    expr_autoname_is_required(pE)) {
+			/*
+			 * An expression without an AS name is given a
+			 * generated one, which replaces its text.
+			 */
 			uint32_t idx = ++pParse->autoname_i;
+			sql_xfree(pEList->a[k].zEName);
 			pEList->a[k].zEName =
 				sql_xstrdup(sql_generate_column_name(idx));
+			pEList->a[k].eEName = ENAME_NAME;
 		}
 	}
 	if (!has_asterisk)
@@ -5049,9 +5056,8 @@ selectExpander(Walker * pWalker, Select * p)
 			 */
 			pNew = sql_expr_list_append(pNew, a[k].pExpr);
 			pNew->a[pNew->nExpr - 1].zEName = a[k].zEName;
-			pNew->a[pNew->nExpr - 1].zSpan = a[k].zSpan;
+			pNew->a[pNew->nExpr - 1].eEName = a[k].eEName;
 			a[k].zEName = 0;
-			a[k].zSpan = 0;
 			a[k].pExpr = 0;
 			continue;
 		}
@@ -5092,8 +5098,8 @@ selectExpander(Walker * pWalker, Select * p)
 
 				assert(zName != NULL);
 				if (zTName != NULL && pSub != NULL &&
-				    sqlMatchSpanName(pSub->pEList->a[j].zSpan,
-						     0, zTName) == 0)
+				    sqlMatchEName(&pSub->pEList->a[j], NULL,
+						  zTName) == 0)
 					continue;
 				tableSeen = 1;
 
@@ -5141,16 +5147,17 @@ selectExpander(Walker * pWalker, Select * p)
 				}
 				struct ExprList_item *pX =
 					&pNew->a[pNew->nExpr - 1];
+				sql_xfree(pX->zEName);
 				if (pSub != NULL) {
 					const char *str =
-						pSub->pEList->a[j].zSpan;
-					pX->zSpan = sql_xstrdup(str);
+						pSub->pEList->a[j].zEName;
+					pX->zEName = sql_xstrdup(str);
 				} else {
-					pX->zSpan = sqlMPrintf("%s.%s",
-							       zTabName,
-							       zColname);
+					pX->zEName = sqlMPrintf("%s.%s",
+								zTabName,
+								zColname);
 				}
-				pX->bSpanIsTab = 1;
+				pX->eEName = ENAME_TAB;
 				sql_xfree(zToFree);
 			}
 		}

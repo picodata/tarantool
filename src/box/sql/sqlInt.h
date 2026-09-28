@@ -1556,23 +1556,28 @@ struct Expr {
  * also be used as the argument to a function, in which case the a.zEName
  * field is not used.
  *
- * By default the Expr.zSpan field holds a human-readable description of
- * the expression that is used in the generation of error messages and
- * column labels.  In this case, Expr.zSpan is typically the text of a
- * column expression as it exists in a SELECT statement.  However, if
- * the bSpanIsTab flag is set, then zSpan is overloaded to mean the name
- * of the result column in the form: DATABASE.TABLE.COLUMN.  This later
- * form is used for name resolution with nested FROM clauses.
+ * In order to try to keep memory usage down, the Expr.a.zEName field
+ * is used for multiple purposes:
+ *
+ *     eEName          Usage
+ *    ----------       -------------------------
+ *    ENAME_NAME       (1) the AS of result set column
+ *                     (2) COLUMN= of an UPDATE
+ *
+ *    ENAME_TAB        TABLE.NAME used to resolve names
+ *                     of subqueries
+ *
+ *    ENAME_SPAN       Text of the original result set
+ *                     expression.
  */
 struct ExprList {
 	int nExpr;		/* Number of expressions on the list */
 	struct ExprList_item {	/* For each expression in the list */
 		Expr *pExpr;	/* The list of expressions */
 		char *zEName;	/* Token associated with this expression */
-		char *zSpan;	/* Original text of the expression */
 		enum sort_order sort_order;
+		unsigned eEName:2;	/* Meaning of zEName */
 		unsigned done:1;	/* A flag to indicate when processing is finished */
-		unsigned bSpanIsTab:1;	/* zSpan holds DB.TABLE.COLUMN */
 		unsigned reusable:1;	/* Constant expression is reusable */
 		union {
 			struct {
@@ -1584,6 +1589,13 @@ struct ExprList {
 		} u;
 	} *a;			/* Alloc a power of two greater or equal to nExpr */
 };
+
+/*
+ * Allowed values for Expr.a.eEName
+ */
+#define ENAME_NAME  0		/* The AS clause of a result set */
+#define ENAME_SPAN  1		/* Complete text of the result set expression */
+#define ENAME_TAB   2		/* "TABLE.NAME" for the result set */
 
 /*
  * An instance of this structure is used by the parser to record both
@@ -2870,8 +2882,8 @@ void sqlExprListSetSortOrder(ExprList *, enum sort_order sort_order);
 void sqlExprListSetName(Parse *, ExprList *, Token *, int);
 
 /**
- * Set the ExprList.a[].zSpan element of the most recently added item on the
- * expression list.
+ * Set the ExprList.a[].zEName element of the most recently added item on the
+ * expression list to the text of its expression, unless it has an AS name.
  */
 void
 sqlExprListSetSpan(struct ExprList *pList, struct ExprSpan *pSpan);
@@ -4157,7 +4169,14 @@ void sqlSelectPrep(Parse *, Select *, NameContext *);
 const char *
 sql_select_op_name(int id);
 
-int sqlMatchSpanName(const char *, const char *, const char *);
+/**
+ * Check whether the list item names a column of a parenthesized join as
+ * "TABLE.COLUMN" and matches zTab and zCol. A NULL zTab or zCol matches
+ * anything.
+ */
+int
+sqlMatchEName(const struct ExprList_item *item, const char *zCol,
+	      const char *zTab);
 int sqlResolveExprNames(NameContext *, Expr *);
 int sqlResolveExprListNames(NameContext *, ExprList *);
 void sqlResolveSelectNames(Parse *, Select *, NameContext *);

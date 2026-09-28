@@ -154,17 +154,20 @@ nameInUsingClause(IdList * pUsing, const char *zCol)
 
 /*
  * Subqueries stores the original database, table and column names for their
- * result sets in ExprList.a[].zSpan, in the form "DATABASE.TABLE.COLUMN".
- * Check to see if the zSpan given to this routine matches the zTab,
+ * result sets in ExprList.a[].zEName, in the form "TABLE.COLUMN".
+ * Check to see if the zEName given to this routine matches the zTab,
  * and zCol.  If any of zTab, and zCol are NULL then those fields will
  * match anything.
  */
 int
-sqlMatchSpanName(const char *zSpan,
-		     const char *zCol, const char *zTab
-	)
+sqlMatchEName(const struct ExprList_item *item, const char *zCol,
+	      const char *zTab)
 {
 	int n;
+	const char *zSpan;
+	if (item->eEName != ENAME_TAB)
+		return 0;
+	zSpan = item->zEName;
 	for (n = 0; ALWAYS(zSpan[n]) && zSpan[n] != '.'; n++) {
 	}
 	if (zTab && (sqlStrNICmp(zSpan, zTab, n) != 0 || zTab[n] != 0)) {
@@ -175,6 +178,25 @@ sqlMatchSpanName(const char *zSpan,
 		return 0;
 	}
 	return 1;
+}
+
+/*
+ * Look a column up in the result set pEList of a parenthesized join, whose
+ * columns are matched by their "TABLE.COLUMN" names. Return the number of
+ * matching columns, and write the index of the last one to pExpr->iColumn.
+ */
+static int
+lookupNestedFromName(const struct ExprList *pEList, const char *zCol,
+		     const char *zTab, struct Expr *pExpr)
+{
+	int hit = 0;
+	for (int j = 0; j < pEList->nExpr; j++) {
+		if (sqlMatchEName(&pEList->a[j], zCol, zTab)) {
+			hit++;
+			pExpr->iColumn = j;
+		}
+	}
+	return hit;
 }
 
 /*
@@ -269,20 +291,15 @@ lookupName(Parse * pParse,	/* The parsing context */
 				if (pItem->pSelect
 				    && (pItem->pSelect->
 					selFlags & SF_NestedFrom) != 0) {
-					int hit = 0;
-					pEList = pItem->pSelect->pEList;
-					for (j = 0; j < pEList->nExpr; j++) {
-						if (sqlMatchSpanName
-						    (pEList->a[j].zSpan, zCol,
-						     zTab)) {
-							cnt++;
-							cntTab = 2;
-							pMatch = pItem;
-							pExpr->iColumn = j;
-							hit = 1;
-						}
+					int hit = lookupNestedFromName(
+						pItem->pSelect->pEList, zCol,
+						zTab, pExpr);
+					if (hit > 0) {
+						cnt += hit;
+						cntTab = 2;
+						pMatch = pItem;
 					}
-					if (hit || zTab == 0)
+					if (hit > 0 || zTab == 0)
 						continue;
 				}
 				if (zTab) {
@@ -397,7 +414,8 @@ lookupName(Parse * pParse,	/* The parsing context */
 			assert(pEList != NULL);
 			for (j = 0; j < pEList->nExpr; j++) {
 				char *zAs = pEList->a[j].zEName;
-				if (zAs != 0 && strcmp(zAs, zCol) == 0) {
+				if (pEList->a[j].eEName == ENAME_NAME &&
+				    zAs != NULL && strcmp(zAs, zCol) == 0) {
 					Expr *pOrig;
 					assert(pExpr->pLeft == 0
 					       && pExpr->pRight == 0);
@@ -870,7 +888,8 @@ resolveAsName(Parse * pParse,	/* Parsing context for error messages */
 		char *zCol = pE->u.zToken;
 		for (i = 0; i < pEList->nExpr; i++) {
 			char *zAs = pEList->a[i].zEName;
-			if (zAs != 0 && strcmp(zAs, zCol) == 0) {
+			if (pEList->a[i].eEName == ENAME_NAME &&
+			    zAs != NULL && strcmp(zAs, zCol) == 0) {
 				return i + 1;
 			}
 		}

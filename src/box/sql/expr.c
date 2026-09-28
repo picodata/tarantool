@@ -1708,10 +1708,9 @@ sql_expr_list_dup(struct ExprList *p, int flags)
 			}
 		}
 		pItem->zEName = sql_xstrdup(pOldItem->zEName);
-		pItem->zSpan = sql_xstrdup(pOldItem->zSpan);
 		pItem->sort_order = pOldItem->sort_order;
+		pItem->eEName = pOldItem->eEName;
 		pItem->done = 0;
-		pItem->bSpanIsTab = pOldItem->bSpanIsTab;
 		pItem->u = pOldItem->u;
 	}
 	return pNew;
@@ -1952,6 +1951,7 @@ sqlExprListSetName(Parse * pParse,	/* Parsing context */
 	assert(pList->nExpr > 0);
 	struct ExprList_item *item = &pList->a[pList->nExpr - 1];
 	assert(item->zEName == NULL);
+	assert(item->eEName == ENAME_NAME);
 	if (dequote) {
 		item->zEName = sql_normalized_name_new(pName->z, pName->n);
 	} else {
@@ -1967,8 +1967,11 @@ sqlExprListSetSpan(struct ExprList *pList, struct ExprSpan *pSpan)
 	struct ExprList_item *pItem = &pList->a[pList->nExpr - 1];
 	assert(pList->nExpr > 0);
 	assert(pItem->pExpr == pSpan->pExpr);
-	sql_xfree(pItem->zSpan);
-	pItem->zSpan = sql_xstrndup(pSpan->zStart, pSpan->zEnd - pSpan->zStart);
+	if (pItem->zEName == NULL) {
+		pItem->zEName = sql_xstrndup(pSpan->zStart,
+					     pSpan->zEnd - pSpan->zStart);
+		pItem->eEName = ENAME_SPAN;
+	}
 }
 
 /*
@@ -1983,7 +1986,6 @@ exprListDeleteNN(struct ExprList *pList)
 	for (pItem = pList->a, i = 0; i < pList->nExpr; i++, pItem++) {
 		sql_expr_delete(pItem->pExpr);
 		sql_xfree(pItem->zEName);
-		sql_xfree(pItem->zSpan);
 	}
 	sql_xfree(pList->a);
 	sql_xfree(pList);
