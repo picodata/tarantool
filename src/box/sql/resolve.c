@@ -490,10 +490,12 @@ lookupName(Parse * pParse,	/* The parsing context */
 
 	/* Clean up and return
 	 */
-	sql_expr_delete(pExpr->pLeft);
-	pExpr->pLeft = 0;
-	sql_expr_delete(pExpr->pRight);
-	pExpr->pRight = 0;
+	if (!ExprHasProperty(pExpr, EP_TokenOnly | EP_Leaf)) {
+		sql_expr_delete(pExpr->pLeft);
+		pExpr->pLeft = 0;
+		sql_expr_delete(pExpr->pRight);
+		pExpr->pRight = 0;
+	}
 	pExpr->op = (isTrigger ? TK_TRIGGER : TK_COLUMN_REF);
 	ExprSetProperty(pExpr, EP_Leaf);
  lookupname_end:
