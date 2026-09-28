@@ -483,7 +483,7 @@ lookupName(Parse * pParse,	/* The parsing context */
 	 * column number is greater than the number of bits in the bitmask
 	 * then set the high-order bit of the bitmask.
 	 */
-	if (pExpr->iColumn >= 0 && pMatch != 0) {
+	if (pExpr->iColumn >= 0 && cnt == 1 && pMatch != 0) {
 		int n = pExpr->iColumn;
 		if (n >= BMS) {
 			n = BMS - 1;
