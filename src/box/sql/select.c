@@ -572,8 +572,9 @@ sql_select_constains_cte(struct Select *select, const char *name)
 	struct SrcList *list = select->pSrc;
 	int item_count = sql_src_list_entry_count(list);
 	for (int i = 0; i < item_count; ++i) {
-		struct Select *sub = list->a[i].sq.pSelect;
-		if (sub != NULL && sql_select_constains_cte(sub, name))
+		struct Subquery *subq = list->a[i].pSubq;
+		if (subq != NULL &&
+		    sql_select_constains_cte(subq->pSelect, name))
 			return true;
 	}
 	return false;
@@ -674,8 +675,10 @@ sqlJoinType(Parse * pParse, Token * pA, Token * pB, Token * pC)
 static bool
 srcItemColumnIsHidden(const struct SrcItem *item, int iCol)
 {
-	const struct Select *sub = item->sq.pSelect;
-	if (sub == NULL || (sub->selFlags & SF_NestedFrom) == 0)
+	if (item->pSubq == NULL)
+		return false;
+	const struct Select *sub = item->pSubq->pSelect;
+	if ((sub->selFlags & SF_NestedFrom) == 0)
 		return false;
 	assert(iCol < sub->pEList->nExpr);
 	return sub->pEList->a[iCol].fg.bNoExpand;
@@ -697,8 +700,10 @@ sqlSrcItemColumnIndex(const struct SrcItem *item, const char *zCol,
 void
 sqlSrcItemColumnUsed(struct SrcItem *item, int iCol)
 {
-	struct Select *sub = item->sq.pSelect;
-	if (sub == NULL || (sub->selFlags & SF_NestedFrom) == 0)
+	if (item->pSubq == NULL)
+		return;
+	struct Select *sub = item->pSubq->pSelect;
+	if ((sub->selFlags & SF_NestedFrom) == 0)
 		return;
 	assert(iCol >= 0 && iCol < sub->pEList->nExpr);
 	sub->pEList->a[iCol].fg.bUsed = 1;
@@ -3849,8 +3854,10 @@ substSelect(Parse * pParse,	/* Report errors here */
 		pSrc = p->pSrc;
 		assert(pSrc != 0);
 		for (i = pSrc->nSrc, pItem = pSrc->a; i > 0; i--, pItem++) {
-			substSelect(pParse, pItem->sq.pSelect, iTable, pEList,
-				    1);
+			if (pItem->pSubq != NULL) {
+				substSelect(pParse, pItem->pSubq->pSelect,
+					    iTable, pEList, 1);
+			}
 			if (pItem->fg.isTabFunc) {
 				substExprList(pParse, pItem->u1.pFuncArg,
 					      iTable, pEList);
@@ -4031,7 +4038,8 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	assert(pSrc && iFrom >= 0 && iFrom < pSrc->nSrc);
 	pSubitem = &pSrc->a[iFrom];
 	iParent = pSubitem->iCursor;
-	pSub = pSubitem->sq.pSelect;
+	assert(pSubitem->pSubq != NULL);
+	pSub = pSubitem->pSubq->pSelect;
 	assert(pSub != 0);
 	if (p->pWin || pSub->pWin)
 		return 0;	/* Restrictions (25) */
@@ -4234,7 +4242,7 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	 * Begin flattening the iFrom-th entry of the FROM clause
 	 * in the outer query.
 	 */
-	pSub = pSubitem->sq.pSelect;
+	pSub = sqlSubqueryDetach(pSubitem);
 	pSub1 = pSub;
 
 	/* Delete the transient table structure associated with the
@@ -4244,7 +4252,6 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	sql_xfree(pSubitem->zAlias);
 	pSubitem->zName = 0;
 	pSubitem->zAlias = 0;
-	pSubitem->sq.pSelect = 0;
 
 	/* Deletion of the pSubitem->space will be done when a corresponding
 	 * region will be freed.
@@ -4541,7 +4548,7 @@ is_simple_count(struct Select *select, struct AggInfo *agg_info)
 {
 	assert(select->pGroupBy == NULL);
 	if (select->pWhere != NULL || select->pEList->nExpr != 1 ||
-	    select->pSrc->nSrc != 1 || select->pSrc->a[0].sq.pSelect != NULL) {
+	    select->pSrc->nSrc != 1 || select->pSrc->a[0].pSubq != NULL) {
 		return NULL;
 	}
 	struct space *space = select->pSrc->a[0].space;
@@ -4785,16 +4792,15 @@ withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
 
 		assert(pFrom->space == NULL);
 		pFrom->space = sql_template_space_new(pParse, pCte->zName);
-		pFrom->sq.pSelect = sqlSelectDup(pCte->pSelect, 0);
-		assert(pFrom->sq.pSelect);
+		sqlSrcItemAttachSubquery(pFrom, pCte->pSelect, true);
 
 		/* Check if this is a recursive CTE. */
-		pSel = pFrom->sq.pSelect;
+		pSel = pFrom->pSubq->pSelect;
 		bMayRecursive = (pSel->op == TK_ALL || pSel->op == TK_UNION);
 		uint32_t ref_counter = 0;
 		if (bMayRecursive) {
 			int i;
-			SrcList *pSrc = pFrom->sq.pSelect->pSrc;
+			SrcList *pSrc = pSel->pSrc;
 			for (i = 0; i < pSrc->nSrc; i++) {
 				struct SrcItem *pItem = &pSrc->a[i];
 				if (pItem->zName != 0
@@ -4895,7 +4901,8 @@ sqlSelectPopWith(struct Walker *pWalker, struct Select *p)
 void
 sqlExpandSubquery(Parse *pParse, struct SrcItem *pFrom)
 {
-	Select *pSelect = pFrom->sq.pSelect;
+	assert(pFrom->pSubq != NULL);
+	Select *pSelect = pFrom->pSubq->pSelect;
 
 	const char *name = "subquery_DEADBEAFDEADBEAF";
 	struct space *space =
@@ -5045,8 +5052,9 @@ selectExpander(Walker * pWalker, Select * p)
 		} else
 
 		if (pFrom->zName == 0) {
-			Select *pSel = pFrom->sq.pSelect;
 			/* A sub-query in the FROM clause of a SELECT */
+			assert(pFrom->pSubq != NULL);
+			Select *pSel = pFrom->pSubq->pSelect;
 			assert(pSel != 0);
 			assert(pFrom->space == NULL);
 			if (sqlWalkSelect(pWalker, pSel))
@@ -5076,12 +5084,10 @@ selectExpander(Walker * pWalker, Select * p)
 					return WRC_Abort;
 				sqlSrcListAssignCursors(pParse,
 							    select->pSrc);
-				assert(pFrom->sq.pSelect == 0);
 				select->selFlags |= SF_View;
-				pFrom->sq.pSelect = select;
-				sqlSelectSetName(pFrom->sq.pSelect,
-						 space->def->name);
-				sqlWalkSelect(pWalker, pFrom->sq.pSelect);
+				sqlSrcItemAttachSubquery(pFrom, select, false);
+				sqlSelectSetName(select, space->def->name);
+				sqlWalkSelect(pWalker, select);
 			}
 		}
 		/* Locate the index named by the INDEXED BY clause, if any. */
@@ -5180,7 +5186,8 @@ selectExpander(Walker * pWalker, Select * p)
 		for (i = 0, pFrom = pTabList->a;
 		     i < pTabList->nSrc; i++, pFrom++) {
 			struct space *space = pFrom->space;
-			struct Select *pSub = pFrom->sq.pSelect;
+			struct Select *pSub = pFrom->pSubq != NULL ?
+					      pFrom->pSubq->pSelect : NULL;
 			char *zTabName = pFrom->zAlias;
 			if (zTabName == NULL)
 				zTabName = space->def->name;
@@ -5408,7 +5415,8 @@ selectAddSubqueryTypeInfo(Walker * pWalker, Select * p)
 		assert(space != NULL);
 		if (space->def->id == 0) {
 			/* A sub-query in the FROM clause of a SELECT */
-			Select *pSel = pFrom->sq.pSelect;
+			Select *pSel = pFrom->pSubq != NULL ?
+				       pFrom->pSubq->pSelect : NULL;
 			if (pSel) {
 				while (pSel->pPrior)
 					pSel = pSel->pPrior;
@@ -5820,7 +5828,8 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	pTabList = p->pSrc;
 	for (i = 0; !p->pPrior && i < pTabList->nSrc; i++) {
 		struct SrcItem *pItem = &pTabList->a[i];
-		Select *pSub = pItem->sq.pSelect;
+		Select *pSub = pItem->pSubq != NULL ?
+			       pItem->pSubq->pSelect : NULL;
 		int isAggSub;
 		struct space *space = pItem->space;
 		if (pSub == 0)
@@ -5912,9 +5921,10 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	for (i = 0; i < pTabList->nSrc; i++) {
 		struct SrcItem *pItem = &pTabList->a[i];
 		SelectDest dest;
-		Select *pSub = pItem->sq.pSelect;
-		if (pSub == 0)
+		struct Subquery *subq = pItem->pSubq;
+		if (subq == NULL)
 			continue;
+		struct Select *pSub = subq->pSelect;
 
 		/* Sometimes the code for a subquery will be generated more than
 		 * once, if the subquery is part of the WHERE clause in a LEFT JOIN,
@@ -5923,10 +5933,10 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		 * is sufficient, though the subroutine to manifest the view does need
 		 * to be invoked again.
 		 */
-		if (pItem->sq.addrFillSub) {
+		if (subq->addrFillSub) {
 			if (pItem->fg.viaCoroutine == 0) {
-				sqlVdbeAddOp2(v, OP_Gosub, pItem->sq.regReturn,
-					      pItem->sq.addrFillSub);
+				sqlVdbeAddOp2(v, OP_Gosub, subq->regReturn,
+					      subq->addrFillSub);
 			}
 			continue;
 		}
@@ -5977,18 +5987,18 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			 * set on each invocation.
 			 */
 			int addrTop = sqlVdbeCurrentAddr(v) + 1;
-			pItem->sq.regReturn = ++pParse->nMem;
-			sqlVdbeAddOp3(v, OP_InitCoroutine, pItem->sq.regReturn,
+			subq->regReturn = ++pParse->nMem;
+			sqlVdbeAddOp3(v, OP_InitCoroutine, subq->regReturn,
 				      0, addrTop);
 			VdbeComment((v, "%s", pItem->space->def->name));
-			pItem->sq.addrFillSub = addrTop;
+			subq->addrFillSub = addrTop;
 			sqlSelectDestInit(&dest, SRT_Coroutine,
-					      pItem->sq.regReturn, -1);
+					  subq->regReturn, -1);
 			pItem->iSelectId = pParse->iNextSelectId;
 			sqlSelect(pParse, pSub, &dest);
 			pItem->fg.viaCoroutine = 1;
-			pItem->sq.regResult = dest.iSdst;
-			sqlVdbeEndCoroutine(v, pItem->sq.regReturn);
+			subq->regResult = dest.iSdst;
+			sqlVdbeEndCoroutine(v, subq->regReturn);
 			sqlVdbeJumpHere(v, addrTop - 1);
 			sqlClearTempRegCache(pParse);
 		} else {
@@ -6004,12 +6014,11 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			int topAddr;
 			int onceAddr = 0;
 			int retAddr;
-			assert(pItem->sq.addrFillSub == 0);
-			pItem->sq.regReturn = ++pParse->nMem;
-			topAddr =
-			    sqlVdbeAddOp2(v, OP_Integer, 0,
-					      pItem->sq.regReturn);
-			pItem->sq.addrFillSub = topAddr + 1;
+			assert(subq->addrFillSub == 0);
+			subq->regReturn = ++pParse->nMem;
+			topAddr = sqlVdbeAddOp2(v, OP_Integer, 0,
+						subq->regReturn);
+			subq->addrFillSub = topAddr + 1;
 			if (pItem->fg.isCorrelated == 0) {
 				/* If the subquery is not
 				 * correlated and if we are not
@@ -6030,8 +6039,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			sqlSelect(pParse, pSub, &dest);
 			if (onceAddr)
 				sqlVdbeJumpHere(v, onceAddr);
-			retAddr =
-			    sqlVdbeAddOp1(v, OP_Return, pItem->sq.regReturn);
+			retAddr = sqlVdbeAddOp1(v, OP_Return, subq->regReturn);
 			VdbeComment((v, "end %s", pItem->space->def->name));
 			sqlVdbeChangeP1(v, topAddr, retAddr);
 			sqlClearTempRegCache(pParse);

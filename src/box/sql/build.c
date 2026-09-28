@@ -2848,10 +2848,43 @@ sqlSrcListAssignCursors(Parse * pParse, SrcList * pList)
 		if (pItem->iCursor >= 0)
 			break;
 		pItem->iCursor = pParse->nTab++;
-		struct Select *sub = pItem->sq.pSelect;
-		if (sub != NULL)
+		if (pItem->pSubq != NULL) {
+			struct Select *sub = pItem->pSubq->pSelect;
+			assert(sub != NULL && sub->pSrc != NULL);
 			sqlSrcListAssignCursors(pParse, sub->pSrc);
+		}
 	}
+}
+
+void
+sqlSubqueryDelete(struct Subquery *subq)
+{
+	assert(subq != NULL && subq->pSelect != NULL);
+	sql_select_delete(subq->pSelect);
+	sql_xfree(subq);
+}
+
+struct Select *
+sqlSubqueryDetach(struct SrcItem *item)
+{
+	assert(item->pSubq != NULL);
+	struct Select *select = item->pSubq->pSelect;
+	sql_xfree(item->pSubq);
+	item->pSubq = NULL;
+	return select;
+}
+
+void
+sqlSrcItemAttachSubquery(struct SrcItem *item, struct Select *select,
+			 bool dup_select)
+{
+	assert(select != NULL);
+	assert(item->pSubq == NULL);
+	if (dup_select)
+		select = sqlSelectDup(select, 0);
+	struct Subquery *subq = sql_xmalloc0(sizeof(*subq));
+	subq->pSelect = select;
+	item->pSubq = subq;
 }
 
 void
@@ -2878,7 +2911,8 @@ sqlSrcListDelete(struct SrcList *pList)
 		assert(pItem->space == NULL ||
 			!pItem->space->def->opts.is_ephemeral ||
 			pItem->space->index == NULL);
-		sql_select_delete(pItem->sq.pSelect);
+		if (pItem->pSubq != NULL)
+			sqlSubqueryDelete(pItem->pSubq);
 		sql_expr_delete(pItem->pOn);
 		sqlIdListDelete(pItem->pUsing);
 	}
@@ -2906,7 +2940,8 @@ sqlSrcListAppendFromTerm(struct Parse *pParse, struct SrcList *p,
 	if (pAlias->n != 0) {
 		pItem->zAlias = sql_name_from_token(pAlias);
 	}
-	pItem->sq.pSelect = pSubquery;
+	if (pSubquery != NULL)
+		sqlSrcItemAttachSubquery(pItem, pSubquery, false);
 	pItem->pOn = pOn;
 	pItem->pUsing = pUsing;
 	pItem->fg.disallow_scan = disallow_scan;

@@ -1690,6 +1690,18 @@ typedef u64 Bitmask;
  * In the colUsed field, the high-order bit (bit 63) is set if the table
  * contains more than 63 columns and the 64-th or later column is used.
  */
+/** Details of the implementation of a subquery in a FROM clause. */
+struct Subquery {
+	/* A SELECT statement used in place of a table name */
+	struct Select *pSelect;
+	/* Address of subroutine to manifest a subquery */
+	int addrFillSub;
+	/* Register holding return address of addrFillSub */
+	int regReturn;
+	/* Registers holding results of a co-routine */
+	int regResult;
+};
+
 struct SrcList {
 	int nSrc;		/* Number of tables or subqueries in the FROM clause */
 	u32 nAlloc;		/* Number of entries allocated in a[] below */
@@ -1698,16 +1710,8 @@ struct SrcList {
 		char *zAlias;	/* The "B" part of a "A AS B" phrase.  zName is the "A" */
 		/** A space corresponding to zName */
 		struct space *space;
-		struct SrcItemSubquery {
-			/* A SELECT statement used in place of a table name */
-			Select *pSelect;
-			/* Address of subroutine to manifest a subquery */
-			int addrFillSub;
-			/* Register holding return address of addrFillSub */
-			int regReturn;
-			/* Registers holding results of a co-routine */
-			int regResult;
-		} sq;
+		/** The subquery used in place of a table name, or NULL. */
+		struct Subquery *pSubq;
 		struct {
 			u8 jointype;	/* Type of join between this table and the previous */
 			unsigned notIndexed:1;	/* True if there is a NOT INDEXED clause */
@@ -3192,6 +3196,26 @@ sqlSrcListAppendFromTerm(struct Parse *pParse, struct SrcList *p,
 			 struct Token *pTable, struct Token *pAlias,
 			 struct Select *pSubquery, struct Expr *pOn,
 			 struct IdList *pUsing, int disallow_scan);
+
+/** Delete a subquery object and its SELECT. */
+void
+sqlSubqueryDelete(struct Subquery *subq);
+
+/**
+ * Remove the subquery from a FROM clause item and return its SELECT. The
+ * returned SELECT becomes the responsibility of the caller.
+ */
+struct Select *
+sqlSubqueryDetach(struct SrcItem *item);
+
+/**
+ * Attach a new subquery object with the given SELECT to a FROM clause item,
+ * which must not have one. The item takes the ownership of the SELECT, or of
+ * its copy if dup_select is true.
+ */
+void
+sqlSrcItemAttachSubquery(struct SrcItem *item, struct Select *select,
+			 bool dup_select);
 
 /**
  * Add an INDEXED BY or NOT INDEXED clause to the most recently added element of

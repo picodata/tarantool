@@ -869,9 +869,11 @@ exprSelectUsage(WhereMaskSet * pMaskSet, Select * pS)
 		if (ALWAYS(pSrc != 0)) {
 			int i;
 			for (i = 0; i < pSrc->nSrc; i++) {
-				mask |=
-				    exprSelectUsage(pMaskSet,
-						    pSrc->a[i].sq.pSelect);
+				struct Subquery *subq = pSrc->a[i].pSubq;
+				if (subq != NULL) {
+					mask |= exprSelectUsage(pMaskSet,
+								subq->pSelect);
+				}
 				mask |=
 				    sqlWhereExprUsage(pMaskSet,
 							  pSrc->a[i].pOn);

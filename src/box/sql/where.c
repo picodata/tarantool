@@ -4708,9 +4708,10 @@ sqlWhereEnd(WhereInfo * pWInfo)
 		 * the co-routine into OP_Copy of result contained in a register.
 		 */
 		if (pTabItem->fg.viaCoroutine != 0) {
+			assert(pTabItem->pSubq != NULL);
 			translateColumnToCopy(v, pLevel->addrBody,
 					      pLevel->iTabCur,
-					      pTabItem->sq.regResult);
+					      pTabItem->pSubq->regResult);
 			continue;
 		}
 
