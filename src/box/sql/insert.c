@@ -1060,7 +1060,7 @@ xferOptimization(Parse * pParse,	/* Parser context */
 	if (pSelect->pSrc->nSrc != 1) {
 		return 0;	/* FROM clause must have exactly one term */
 	}
-	if (pSelect->pSrc->a[0].pSelect) {
+	if (pSelect->pSrc->a[0].sq.pSelect) {
 		return 0;	/* FROM clause cannot contain a subquery */
 	}
 	if (pSelect->pWhere) {

@@ -1698,10 +1698,16 @@ struct SrcList {
 		char *zAlias;	/* The "B" part of a "A AS B" phrase.  zName is the "A" */
 		/** A space corresponding to zName */
 		struct space *space;
-		Select *pSelect;	/* A SELECT statement used in place of a table name */
-		int addrFillSub;	/* Address of subroutine to manifest a subquery */
-		int regReturn;	/* Register holding return address of addrFillSub */
-		int regResult;	/* Registers holding results of a co-routine */
+		struct SrcItemSubquery {
+			/* A SELECT statement used in place of a table name */
+			Select *pSelect;
+			/* Address of subroutine to manifest a subquery */
+			int addrFillSub;
+			/* Register holding return address of addrFillSub */
+			int regReturn;
+			/* Registers holding results of a co-routine */
+			int regResult;
+		} sq;
 		struct {
 			u8 jointype;	/* Type of join between this table and the previous */
 			unsigned notIndexed:1;	/* True if there is a NOT INDEXED clause */

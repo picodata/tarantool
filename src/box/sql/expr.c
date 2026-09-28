@@ -1740,8 +1740,8 @@ sqlSrcListDup(struct SrcList *p, int flags)
 		pNewItem->zAlias = sql_xstrdup(pOldItem->zAlias);
 		pNewItem->fg = pOldItem->fg;
 		pNewItem->iCursor = pOldItem->iCursor;
-		pNewItem->addrFillSub = pOldItem->addrFillSub;
-		pNewItem->regReturn = pOldItem->regReturn;
+		pNewItem->sq.addrFillSub = pOldItem->sq.addrFillSub;
+		pNewItem->sq.regReturn = pOldItem->sq.regReturn;
 		if (pNewItem->fg.isIndexedBy) {
 			pNewItem->u1.zIndexedBy =
 				sql_xstrdup(pOldItem->u1.zIndexedBy);
@@ -1752,7 +1752,8 @@ sqlSrcListDup(struct SrcList *p, int flags)
 				sql_expr_list_dup(pOldItem->u1.pFuncArg, flags);
 		}
 		pNewItem->space = pOldItem->space;
-		pNewItem->pSelect = sqlSelectDup(pOldItem->pSelect, flags);
+		pNewItem->sq.pSelect =
+			sqlSelectDup(pOldItem->sq.pSelect, flags);
 		pNewItem->pOn = sqlExprDup(pOldItem->pOn, flags);
 		pNewItem->pUsing = sqlIdListDup(pOldItem->pUsing);
 		pNewItem->colUsed = pOldItem->colUsed;
@@ -2281,7 +2282,7 @@ isCandidateForInOpt(Expr * pX)
 	assert(pSrc != 0);
 	if (pSrc->nSrc != 1)
 		return 0;	/* Single term in FROM clause */
-	if (pSrc->a[0].pSelect)
+	if (pSrc->a[0].sq.pSelect)
 		return 0;	/* FROM is not a subquery or view */
 	assert(pSrc->a[0].space != NULL);
 	/* FROM clause is not a view */

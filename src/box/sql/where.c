@@ -4710,7 +4710,7 @@ sqlWhereEnd(WhereInfo * pWInfo)
 		if (pTabItem->fg.viaCoroutine != 0) {
 			translateColumnToCopy(v, pLevel->addrBody,
 					      pLevel->iTabCur,
-					      pTabItem->regResult);
+					      pTabItem->sq.regResult);
 			continue;
 		}
 

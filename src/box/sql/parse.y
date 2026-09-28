@@ -645,9 +645,9 @@ seltablist(A) ::= stl_prefix(A) LP seltablist(F) RP
       struct SrcItem *pNew = &A->a[A->nSrc-1];
       struct SrcItem *pOld = F->a;
       pNew->zName = pOld->zName;
-      pNew->pSelect = pOld->pSelect;
+      pNew->sq.pSelect = pOld->sq.pSelect;
       pOld->zName =  0;
-      pOld->pSelect = 0;
+      pOld->sq.pSelect = 0;
     }
     sqlSrcListDelete(F);
   }else{

@@ -871,7 +871,7 @@ exprSelectUsage(WhereMaskSet * pMaskSet, Select * pS)
 			for (i = 0; i < pSrc->nSrc; i++) {
 				mask |=
 				    exprSelectUsage(pMaskSet,
-						    pSrc->a[i].pSelect);
+						    pSrc->a[i].sq.pSelect);
 				mask |=
 				    sqlWhereExprUsage(pMaskSet,
 							  pSrc->a[i].pOn);

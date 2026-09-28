@@ -326,9 +326,9 @@ sqlTreeViewSelect(TreeView * pView, const Select * p, u8 moreToFollow)
 				sqlStrAccumFinish(&x);
 				sqlTreeViewItem(pView, zLine,
 						    i < p->pSrc->nSrc - 1);
-				if (pItem->pSelect) {
+				if (pItem->sq.pSelect) {
 					sqlTreeViewSelect(pView,
-							      pItem->pSelect,
+							      pItem->sq.pSelect,
 							      0);
 				}
 				if (pItem->fg.isTabFunc) {

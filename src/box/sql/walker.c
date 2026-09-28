@@ -176,7 +176,7 @@ sqlWalkSelectFrom(Walker * pWalker, Select * p)
 	pSrc = p->pSrc;
 	if (ALWAYS(pSrc)) {
 		for (i = pSrc->nSrc, pItem = pSrc->a; i > 0; i--, pItem++) {
-			if (sqlWalkSelect(pWalker, pItem->pSelect)) {
+			if (sqlWalkSelect(pWalker, pItem->sq.pSelect)) {
 				return WRC_Abort;
 			}
 			if (pItem->fg.isTabFunc

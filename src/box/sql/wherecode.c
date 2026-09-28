@@ -185,7 +185,7 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 			 ((wctrlFlags &
 			   (WHERE_ORDERBY_MIN | WHERE_ORDERBY_MAX)) != 0);
 	struct SrcItem *pItem = &pTabList->a[pLevel->iFrom];
-	assert(pItem->zName != NULL || pItem->pSelect != NULL);
+	assert(pItem->zName != NULL || pItem->sq.pSelect != NULL);
 	if (pParse->explain == 0 && !is_search && pItem->fg.disallow_scan &&
 	    (pParse->sql_flags & SQL_SeqScan) == 0) {
 		const char *obj = pItem->zName == NULL ? "subselect" :
@@ -208,7 +208,7 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 
 		sqlStrAccumInit(&str, zBuf, sizeof(zBuf), SQL_MAX_LENGTH);
 		sqlStrAccumAppendAll(&str, is_search ? "SEARCH" : "SCAN");
-		if (pItem->pSelect) {
+		if (pItem->sq.pSelect) {
 			sqlXPrintf(&str, " SUBQUERY %d", pItem->iSelectId);
 		} else {
 			sqlXPrintf(&str, " TABLE %s", pItem->zName);
@@ -729,9 +729,9 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 
 	/* Special case of a FROM clause subquery implemented as a co-routine */
 	if (pTabItem->fg.viaCoroutine) {
-		int regYield = pTabItem->regReturn;
+		int regYield = pTabItem->sq.regReturn;
 		sqlVdbeAddOp3(v, OP_InitCoroutine, regYield, 0,
-				  pTabItem->addrFillSub);
+				  pTabItem->sq.addrFillSub);
 		pLevel->p2 = sqlVdbeAddOp2(v, OP_Yield, regYield, addrBrk);
 		VdbeComment((v, "next row of \"%s\"", pTabItem->space->def->name));
 		pLevel->op = OP_Goto;

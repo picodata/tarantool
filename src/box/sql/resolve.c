@@ -200,7 +200,7 @@ static int
 lookupNestedFromName(struct SrcItem *pItem, const char *zCol,
 		     const char *zTab, struct Expr *pExpr, int cntBefore)
 {
-	struct ExprList *pEList = pItem->pSelect->pEList;
+	struct ExprList *pEList = pItem->sq.pSelect->pEList;
 	int hit = 0;
 	for (int j = 0; j < pEList->nExpr; j++) {
 		struct ExprList_item *pX = &pEList->a[j];
@@ -308,9 +308,9 @@ lookupName(Parse * pParse,	/* The parsing context */
 				       pItem->space->def->name != NULL);
 				struct space_def *space_def = pItem->space->def;
 				assert(space_def->field_count > 0);
-				if (pItem->pSelect
-				    && (pItem->pSelect->
-					selFlags & SF_NestedFrom) != 0) {
+				struct Select *sub = pItem->sq.pSelect;
+				if (sub != NULL &&
+				    (sub->selFlags & SF_NestedFrom) != 0) {
 					int hit = lookupNestedFromName(
 						pItem, zCol, zTab, pExpr, cnt);
 					if (hit > 0) {
@@ -1382,7 +1382,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 * after the names have been resolved.
 		 */
 		if (p->selFlags & SF_Converted) {
-			Select *pSub = p->pSrc->a[0].pSelect;
+			Select *pSub = p->pSrc->a[0].sq.pSelect;
 			assert(p->pSrc->nSrc == 1 && p->pOrderBy);
 			assert(pSub->pPrior && pSub->pOrderBy == 0);
 			pSub->pOrderBy = p->pOrderBy;
@@ -1395,8 +1395,8 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			pOuterNC->nNestedSelect++;
 		for (i = 0; i < p->pSrc->nSrc; i++) {
 			struct SrcItem *pItem = &p->pSrc->a[i];
-			if (pItem->pSelect != NULL &&
-			    (pItem->pSelect->selFlags & SF_Resolved) == 0) {
+			if (pItem->sq.pSelect != NULL &&
+			    (pItem->sq.pSelect->selFlags & SF_Resolved) == 0) {
 				NameContext *pNC;	/* Used to iterate name contexts */
 				int nRef = 0;	/* Refcount for pOuterNC and outer contexts */
 
@@ -1410,7 +1410,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 					nRef += pNC->nRef;
 
 				sqlResolveSelectNames(pParse,
-							  pItem->pSelect,
+							  pItem->sq.pSelect,
 							  pOuterNC);
 				if (pParse->is_aborted)
 					return WRC_Abort;
@@ -1548,7 +1548,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 * set expressions by the call to resolveOrderGroupBy() below.
 		 */
 		if (p->selFlags & SF_Converted) {
-			Select *pSub = p->pSrc->a[0].pSelect;
+			Select *pSub = p->pSrc->a[0].sq.pSelect;
 			p->pOrderBy = pSub->pOrderBy;
 			pSub->pOrderBy = 0;
 		}

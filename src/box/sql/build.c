@@ -2848,8 +2848,9 @@ sqlSrcListAssignCursors(Parse * pParse, SrcList * pList)
 		if (pItem->iCursor >= 0)
 			break;
 		pItem->iCursor = pParse->nTab++;
-		if (pItem->pSelect != NULL)
-			sqlSrcListAssignCursors(pParse, pItem->pSelect->pSrc);
+		struct Select *sub = pItem->sq.pSelect;
+		if (sub != NULL)
+			sqlSrcListAssignCursors(pParse, sub->pSrc);
 	}
 }
 
@@ -2877,7 +2878,7 @@ sqlSrcListDelete(struct SrcList *pList)
 		assert(pItem->space == NULL ||
 			!pItem->space->def->opts.is_ephemeral ||
 			pItem->space->index == NULL);
-		sql_select_delete(pItem->pSelect);
+		sql_select_delete(pItem->sq.pSelect);
 		sql_expr_delete(pItem->pOn);
 		sqlIdListDelete(pItem->pUsing);
 	}
@@ -2905,7 +2906,7 @@ sqlSrcListAppendFromTerm(struct Parse *pParse, struct SrcList *p,
 	if (pAlias->n != 0) {
 		pItem->zAlias = sql_name_from_token(pAlias);
 	}
-	pItem->pSelect = pSubquery;
+	pItem->sq.pSelect = pSubquery;
 	pItem->pOn = pOn;
 	pItem->pUsing = pUsing;
 	pItem->fg.disallow_scan = disallow_scan;
