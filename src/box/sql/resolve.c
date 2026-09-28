@@ -226,7 +226,8 @@ lookupName(Parse * pParse,	/* The parsing context */
 	ExprSetVVAProperty(pExpr, EP_NoReduce);
 
 	/* Start at the inner-most context and move outward until a match is found */
-	while (pNC && cnt == 0) {
+	assert(pNC != NULL && cnt == 0);
+	do {
 		ExprList *pEList;
 		SrcList *pSrcList = pNC->pSrcList;
 
@@ -402,11 +403,11 @@ lookupName(Parse * pParse,	/* The parsing context */
 		/* Advance to the next name context.  The loop will exit when either
 		 * we have a match (cnt>0) or when we run out of name contexts.
 		 */
-		if (cnt == 0) {
-			pNC = pNC->pNext;
-			nSubquery++;
-		}
-	}
+		if (cnt != 0)
+			break;
+		pNC = pNC->pNext;
+		nSubquery++;
+	} while (pNC != NULL);
 
 	/*
 	 * cnt==0 means there was not match.  cnt>1 means there were two or
