@@ -2092,8 +2092,9 @@ sqlColumnsFromExprList(Parse * parse, ExprList * expr_list,
 				pColExpr = pColExpr->pRight;
 				assert(pColExpr != 0);
 			}
-			if (pColExpr->op == TK_COLUMN_REF
-			    && ALWAYS(pColExpr->y.space_def != NULL)) {
+			if ((pColExpr->op == TK_COLUMN_REF ||
+			     pColExpr->op == TK_AGG_COLUMN) &&
+			    ALWAYS(pColExpr->y.space_def != NULL)) {
 				/* For columns use the column name name */
 				int iCol = pColExpr->iColumn;
 				assert(iCol >= 0);
