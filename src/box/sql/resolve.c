@@ -246,6 +246,191 @@ checkAliasUse(struct Parse *pParse, const struct NameContext *pNC,
 }
 
 /*
+ * Look a column up in a FROM clause item that is not matched by the
+ * "TABLE.COLUMN" names of its result set. If there has been exactly one prior
+ * match, in an item to the left, and the item is joined to it by USING on the
+ * name, the column is skipped: it is the join column already found. The
+ * match is counted in *cnt, written to pExpr->iColumn and marked as used.
+ *
+ * Return true if the column matched.
+ */
+static bool
+lookupItemColumn(struct SrcItem *pItem, const char *zTab, const char *zCol,
+		 struct Expr *pExpr, int *cnt)
+{
+	int j = sqlSrcItemColumnIndex(pItem, zCol, zTab != NULL);
+	/* A NATURAL join has a USING clause of its common columns by now. */
+	if (j < 0 || (*cnt == 1 && nameInUsingClause(pItem->pUsing, zCol)))
+		return false;
+	(*cnt)++;
+	pExpr->iColumn = (i16)j;
+	sqlSrcItemColumnUsed(pItem, j);
+	return true;
+}
+
+/*
+ * Look a column up in the FROM clause of the name context pNC. The matching
+ * columns are counted in *cnt and the matching tables in *cntTab. *ppMatch is
+ * set to the item the column is found in, or to the first item of the given
+ * name, and is left as it is if there is neither. If *ppMatch is set, pExpr
+ * is made to refer to that item.
+ */
+static void
+lookupSrcListName(struct NameContext *pNC, const char *zTab,
+		  const char *zCol, struct Expr *pExpr, int *cnt, int *cntTab,
+		  struct SrcItem **ppMatch)
+{
+	struct SrcList *pSrcList = pNC->pSrcList;
+	for (int i = 0; i < pSrcList->nSrc; i++) {
+		struct SrcItem *pItem = &pSrcList->a[i];
+		assert(pItem->space != NULL &&
+		       pItem->space->def->name != NULL);
+		struct space_def *space_def = pItem->space->def;
+		assert(space_def->field_count > 0);
+		struct Subquery *subq = pItem->pSubq;
+		if (subq != NULL &&
+		    (subq->pSelect->selFlags & SF_NestedFrom) != 0) {
+			int hit = lookupNestedFromName(pItem, zCol, zTab,
+						       pExpr, *cnt);
+			if (hit > 0) {
+				*cnt += hit;
+				*cntTab = 2;
+				*ppMatch = pItem;
+			}
+			if (hit > 0 || zTab == NULL)
+				continue;
+		}
+		if (zTab != NULL) {
+			const char *zTabName = pItem->zAlias != NULL ?
+					       pItem->zAlias : space_def->name;
+			if (strcmp(zTabName, zTab) != 0)
+				continue;
+		}
+		if ((*cntTab)++ == 0)
+			*ppMatch = pItem;
+		if (lookupItemColumn(pItem, zTab, zCol, pExpr, cnt))
+			*ppMatch = pItem;
+	}
+	struct SrcItem *pMatch = *ppMatch;
+	if (pMatch == NULL)
+		return;
+	pExpr->iTable = pMatch->iCursor;
+	pExpr->y.space_def = pMatch->space->def;
+	/* RIGHT JOIN not (yet) supported */
+	assert((pMatch->fg.jointype & JT_RIGHT) == 0);
+	if ((pMatch->fg.jointype & JT_LEFT) != 0)
+		ExprSetProperty(pExpr, EP_CanBeNull);
+}
+
+/*
+ * Look a column up in the new.* or old.* row of the trigger being compiled,
+ * if zTab names one of them. The matching table is counted in *cntTab and
+ * the matching column in *cnt.
+ *
+ * Return true if the column is found.
+ */
+static bool
+lookupTriggerName(struct Parse *pParse, const char *zTab, const char *zCol,
+		  struct Expr *pExpr, int *cnt, int *cntTab)
+{
+	int op = pParse->eTriggerOp;
+	assert(op == TK_DELETE || op == TK_UPDATE || op == TK_INSERT);
+	struct space_def *space_def = NULL;
+	if (op != TK_DELETE && strcmp(zTab, "NEW") == 0) {
+		pExpr->iTable = 1;
+		space_def = pParse->triggered_space->def;
+	} else if (op != TK_INSERT && strcmp(zTab, "OLD") == 0) {
+		pExpr->iTable = 0;
+		space_def = pParse->triggered_space->def;
+	}
+	if (space_def == NULL)
+		return false;
+	(*cntTab)++;
+	int iCol = sqlColumnIndex(space_def, zCol);
+	if (iCol < 0)
+		return false;
+	(*cnt)++;
+	uint64_t *mask = pExpr->iTable == 0 ? &pParse->oldmask :
+			 &pParse->newmask;
+	column_mask_set_fieldno(mask, iCol);
+	pExpr->iColumn = iCol;
+	pExpr->y.space_def = space_def;
+	return true;
+}
+
+/*
+ * If the input is of the form Z (not Y.Z or X.Y.Z) then the name Z might
+ * refer to an result-set alias.  This happens, for example, when we are
+ * resolving names in the WHERE clause of the following command:
+ *
+ *     SELECT a+b AS x FROM table WHERE x<10;
+ *
+ * In cases like this, replace pExpr with a copy of the expression that forms
+ * the result set entry ("a+b" in the example). Note that the expression in
+ * the result set should have already been resolved by the time the WHERE
+ * clause is resolved. pTopNC is the name context the name is looked up from.
+ *
+ * The ability to use an output result-set column in the WHERE, GROUP BY, or
+ * HAVING clauses, or as part of a larger expression in the ORDER BY clause is
+ * not standard SQL.  This is a (goofy) sql extension, that is supported for
+ * backwards compatibility only.
+ *
+ * Return 1 if pExpr is replaced, 0 if the name is not a result-set alias of
+ * pNC, and -1 on error, which is set in pParse.
+ */
+static int
+lookupResultAlias(struct Parse *pParse, struct NameContext *pNC,
+		  const struct NameContext *pTopNC, const char *zCol,
+		  struct Expr *pExpr, int nSubquery)
+{
+	if ((pNC->ncFlags & NC_UEList) == 0)
+		return 0;
+	struct ExprList *pEList = pNC->uNC.pEList;
+	assert(pEList != NULL);
+	int iAs = -1;
+	for (int j = 0; j < pEList->nExpr && iAs < 0; j++) {
+		const char *zAs = pEList->a[j].zEName;
+		if (pEList->a[j].fg.eEName == ENAME_NAME && zAs != NULL &&
+		    strcmp(zAs, zCol) == 0)
+			iAs = j;
+	}
+	if (iAs < 0)
+		return 0;
+	assert(pExpr->pLeft == NULL && pExpr->pRight == NULL);
+	assert(pExpr->x.pList == NULL);
+	assert(pExpr->x.pSelect == NULL);
+	struct Expr *pOrig = pEList->a[iAs].pExpr;
+	if (checkAliasUse(pParse, pNC, pTopNC, pOrig,
+			  pEList->a[iAs].zEName) != 0)
+		return -1;
+	resolveAlias(pEList, iAs, pExpr, "", nSubquery);
+	return 1;
+}
+
+/*
+ * Set the error of a name that matched cnt columns, which is not exactly one:
+ * none of them, or several, in which case the name is ambiguous.
+ */
+static void
+reportLookupError(struct Parse *pParse, const char *zTab, const char *zCol,
+		  int cnt)
+{
+	assert(cnt != 1);
+	if (cnt > 1) {
+		const char *err = zTab != NULL ?
+			tt_sprintf("ambiguous column name: %s.%s", zTab, zCol) :
+			tt_sprintf("ambiguous column name: %s", zCol);
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC, err);
+	} else if (zTab == NULL) {
+		diag_set(ClientError, ER_SQL_CANT_RESOLVE_FIELD, zCol);
+	} else {
+		diag_set(ClientError, ER_NO_SUCH_FIELD_NAME_IN_SPACE, zCol,
+			 zTab);
+	}
+	pParse->is_aborted = true;
+}
+
+/*
  * Given the name of a column of the form X.Y.Z or Y.Z or just Z, look up
  * that name in the set of source tables in pSrcList and make the pExpr
  * expression node refer back to that source column.  The following changes
@@ -277,11 +462,9 @@ lookupName(Parse * pParse,	/* The parsing context */
 	   Expr * pExpr		/* Make this EXPR node point to the selected column */
     )
 {
-	int i, j;		/* Loop counters */
 	int cnt = 0;		/* Number of matching column names */
 	int cntTab = 0;		/* Number of matching table names */
 	int nSubquery = 0;	/* How many levels of subquery */
-	struct SrcItem *pItem;	/* Use for looping over pSrcList items */
 	struct SrcItem *pMatch = 0;	/* The matching pSrcList item */
 	NameContext *pTopNC = pNC;	/* First namecontext in the list */
 	int isTrigger = 0;	/* True if resolved to a trigger column */
@@ -298,147 +481,29 @@ lookupName(Parse * pParse,	/* The parsing context */
 	/* Start at the inner-most context and move outward until a match is found */
 	assert(pNC != NULL && cnt == 0);
 	do {
-		ExprList *pEList;
-		SrcList *pSrcList = pNC->pSrcList;
-
-		if (pSrcList) {
-			for (i = 0, pItem = pSrcList->a; i < pSrcList->nSrc;
-			     i++, pItem++) {
-				assert(pItem->space != NULL &&
-				       pItem->space->def->name != NULL);
-				struct space_def *space_def = pItem->space->def;
-				assert(space_def->field_count > 0);
-				struct Subquery *subq = pItem->pSubq;
-				if (subq != NULL &&
-				    (subq->pSelect->selFlags &
-				     SF_NestedFrom) != 0) {
-					int hit = lookupNestedFromName(
-						pItem, zCol, zTab, pExpr, cnt);
-					if (hit > 0) {
-						cnt += hit;
-						cntTab = 2;
-						pMatch = pItem;
-					}
-					if (hit > 0 || zTab == 0)
-						continue;
-				}
-				if (zTab) {
-					const char *zTabName =
-					    pItem->zAlias ? pItem->
-					    zAlias : space_def->name;
-					assert(zTabName != 0);
-					if (strcmp(zTabName, zTab) != 0) {
-						continue;
-					}
-				}
-				if (0 == (cntTab++)) {
-					pMatch = pItem;
-				}
-				j = sqlSrcItemColumnIndex(pItem, zCol,
-							  zTab != NULL);
-				/*
-				 * If there has been exactly one prior
-				 * match and this match is in a USING
-				 * clause, then skip this match. A NATURAL
-				 * join has a USING clause of its common
-				 * columns by now.
-				 */
-				if (j >= 0 && cnt == 1 &&
-				    nameInUsingClause(pItem->pUsing, zCol))
-					j = -1;
-				if (j >= 0) {
-					cnt++;
-					pMatch = pItem;
-					pExpr->iColumn = (i16) j;
-					sqlSrcItemColumnUsed(pItem, j);
-				}
-			}
-			if (pMatch) {
-				pExpr->iTable = pMatch->iCursor;
-				pExpr->y.space_def = pMatch->space->def;
-				/* RIGHT JOIN not (yet) supported */
-				assert((pMatch->fg.jointype & JT_RIGHT) == 0);
-				if ((pMatch->fg.jointype & JT_LEFT) != 0) {
-					ExprSetProperty(pExpr, EP_CanBeNull);
-				}
-			}
+		if (pNC->pSrcList != NULL) {
+			lookupSrcListName(pNC, zTab, zCol, pExpr, &cnt,
+					  &cntTab, &pMatch);
 		}
-		/* if( pSrcList ) */
+
 		/* If we have not already resolved the name, then maybe
 		 * it is a new.* or old.* trigger argument reference
 		 */
 		if (zTab != NULL && cntTab == 0 &&
-		    pParse->triggered_space != NULL) {
-			int op = pParse->eTriggerOp;
-			assert(op == TK_DELETE || op == TK_UPDATE
-			       || op == TK_INSERT);
-			struct space_def *space_def = NULL;
-			if (op != TK_DELETE && strcmp(zTab, "NEW") == 0) {
-				pExpr->iTable = 1;
-				space_def = pParse->triggered_space->def;
-			} else if (op != TK_INSERT &&
-				   strcmp(zTab, "OLD") == 0) {
-				pExpr->iTable = 0;
-				space_def = pParse->triggered_space->def;
-			}
+		    pParse->triggered_space != NULL &&
+		    lookupTriggerName(pParse, zTab, zCol, pExpr, &cnt,
+				      &cntTab))
+			isTrigger = 1;
 
-			if (space_def != NULL) {
-				cntTab++;
-				int iCol = sqlColumnIndex(space_def, zCol);
-				if (iCol >= 0) {
-					cnt++;
-					uint64_t *mask = pExpr->iTable == 0 ?
-							 &pParse->oldmask :
-							 &pParse->newmask;
-					column_mask_set_fieldno(mask, iCol);
-					pExpr->iColumn = iCol;
-					pExpr->y.space_def = space_def;
-					isTrigger = 1;
-				}
-			}
-		}
-
-		/*
-		 * If the input is of the form Z (not Y.Z or X.Y.Z) then the name Z
-		 * might refer to an result-set alias.  This happens, for example, when
-		 * we are resolving names in the WHERE clause of the following command:
-		 *
-		 *     SELECT a+b AS x FROM table WHERE x<10;
-		 *
-		 * In cases like this, replace pExpr with a copy of the expression that
-		 * forms the result set entry ("a+b" in the example) and return immediately.
-		 * Note that the expression in the result set should have already been
-		 * resolved by the time the WHERE clause is resolved.
-		 *
-		 * The ability to use an output result-set column in the WHERE, GROUP BY,
-		 * or HAVING clauses, or as part of a larger expression in the ORDER BY
-		 * clause is not standard SQL.  This is a (goofy) sql extension, that
-		 * is supported for backwards compatibility only.
-		 */
-		if (cnt == 0 && (pNC->ncFlags & NC_UEList) != 0 &&
-		    zTab == NULL) {
-			pEList = pNC->uNC.pEList;
-			assert(pEList != NULL);
-			for (j = 0; j < pEList->nExpr; j++) {
-				char *zAs = pEList->a[j].zEName;
-				if (pEList->a[j].fg.eEName == ENAME_NAME &&
-				    zAs != NULL && strcmp(zAs, zCol) == 0) {
-					Expr *pOrig;
-					assert(pExpr->pLeft == 0
-					       && pExpr->pRight == 0);
-					assert(pExpr->x.pList == 0);
-					assert(pExpr->x.pSelect == 0);
-					pOrig = pEList->a[j].pExpr;
-					if (checkAliasUse(pParse, pNC, pTopNC,
-							  pOrig, zAs) != 0)
-						return WRC_Abort;
-					resolveAlias(pEList, j, pExpr, "",
-						     nSubquery);
-					cnt = 1;
-					pMatch = 0;
-					assert(zTab == 0);
-					goto lookupname_end;
-				}
+		if (cnt == 0 && zTab == NULL) {
+			int rc = lookupResultAlias(pParse, pNC, pTopNC, zCol,
+						   pExpr, nSubquery);
+			if (rc < 0)
+				return WRC_Abort;
+			if (rc > 0) {
+				cnt = 1;
+				pMatch = 0;
+				goto lookupname_end;
 			}
 		}
 
@@ -453,32 +518,15 @@ lookupName(Parse * pParse,	/* The parsing context */
 
 	/*
 	 * cnt==0 means there was not match.  cnt>1 means there were two or
-	 * more matches.  Either way, we have an error.
+	 * more matches.  Either way, we have an error, and a name that matched
+	 * nothing is turned into NULL.
 	 */
-	if (cnt > 1) {
-		const char *err;
-		if (zTab) {
-			err = tt_sprintf("ambiguous column name: %s.%s", zTab,
-					 zCol);
-		} else {
-			err = tt_sprintf("ambiguous column name: %s", zCol);
-		}
-		diag_set(ClientError, ER_SQL_PARSER_GENERIC, err);
-		pParse->is_aborted = true;
-		pTopNC->nErr++;
-	}
-	/* The operator the expression is turned into. */
 	int eNewExprOp = isTrigger ? TK_TRIGGER : TK_COLUMN_REF;
-	if (cnt == 0) {
-		if (zTab == NULL) {
-			diag_set(ClientError, ER_SQL_CANT_RESOLVE_FIELD, zCol);
-		} else {
-			diag_set(ClientError, ER_NO_SUCH_FIELD_NAME_IN_SPACE,
-				 zCol, zTab);
-		}
-		pParse->is_aborted = true;
+	if (cnt != 1) {
+		reportLookupError(pParse, zTab, zCol, cnt);
 		pTopNC->nErr++;
-		eNewExprOp = TK_NULL;
+		if (cnt == 0)
+			eNewExprOp = TK_NULL;
 	}
 
 	/* If a column from a table in pSrcList is referenced, then record
