@@ -160,7 +160,7 @@ nameInUsingClause(IdList * pUsing, const char *zCol)
 }
 
 /*
- * Subqueries stores the original database, table and column names for their
+ * Subqueries stores the original table and column names for their
  * result sets in ExprList.a[].zEName, in the form "TABLE.COLUMN".
  * Check to see if the zEName given to this routine matches the zTab,
  * and zCol.  If any of zTab, and zCol are NULL then those fields will
@@ -170,13 +170,12 @@ int
 sqlMatchEName(const struct ExprList_item *item, const char *zCol,
 	      const char *zTab)
 {
-	int n;
-	const char *zSpan;
 	if (item->fg.eEName != ENAME_TAB)
 		return 0;
-	zSpan = item->zEName;
-	for (n = 0; ALWAYS(zSpan[n]) && zSpan[n] != '.'; n++) {
-	}
+	const char *zSpan = item->zEName;
+	/* Both names may contain dots, so the name is not searched for one. */
+	uint32_t n = item->eNameTabLen;
+	assert(zSpan[n] == '.');
 	if (zTab && (strncmp(zSpan, zTab, n) != 0 || zTab[n] != 0)) {
 		return 0;
 	}

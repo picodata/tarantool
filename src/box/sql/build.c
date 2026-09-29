@@ -2933,6 +2933,12 @@ sqlSrcListAppendFromTerm(struct Parse *pParse, struct SrcList *p,
 	assert(pAlias != 0);
 	if (pAlias->n != 0) {
 		pItem->zAlias = sql_name_from_token(pAlias);
+		/*
+		 * An alias is checked like any other name. Besides, name
+		 * resolution relies on it not being empty (see struct
+		 * ExprList).
+		 */
+		sqlCheckIdentifierName(pParse, pItem->zAlias);
 	}
 	if (pSubquery != NULL)
 		sqlSrcItemAttachSubquery(pItem, pSubquery, false);
@@ -3091,6 +3097,7 @@ sqlWithAdd(Parse * pParse,	/* Parsing context */
 	 * clause. If not, store an error in the Parse structure.
 	 */
 	char *name = sql_name_from_token(pName);
+	sqlCheckIdentifierName(pParse, name);
 	if (pWith != NULL) {
 		int i;
 		const char *err = "Ambiguous table name in WITH query: %s";

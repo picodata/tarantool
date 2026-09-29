@@ -1721,6 +1721,7 @@ sql_expr_list_dup(struct ExprList *p, int flags)
 			}
 		}
 		pItem->zEName = sql_xstrdup(pOldItem->zEName);
+		pItem->eNameTabLen = pOldItem->eNameTabLen;
 		pItem->fg = pOldItem->fg;
 		pItem->fg.done = 0;
 		pItem->u = pOldItem->u;
@@ -1989,6 +1990,19 @@ sqlExprListSetSpan(struct ExprList *pList, struct ExprSpan *pSpan)
 					     pSpan->zEnd - pSpan->zStart);
 		pItem->fg.eEName = ENAME_SPAN;
 	}
+}
+
+void
+sql_expr_list_item_set_tab_name(struct ExprList_item *item, const char *tab,
+				const char *col)
+{
+	sql_xfree(item->zEName);
+	item->zEName = sqlMPrintf("%s.%s", tab, col);
+	item->fg.eEName = ENAME_TAB;
+	/* Names are at most BOX_NAME_MAX long. */
+	size_t len = strlen(tab);
+	assert(len <= UINT16_MAX);
+	item->eNameTabLen = len;
 }
 
 /*

@@ -1569,7 +1569,13 @@ struct Expr {
  *                     (2) COLUMN= of an UPDATE
  *
  *    ENAME_TAB        TABLE.NAME used to resolve names
- *                     of subqueries
+ *                     of subqueries. Both names may contain
+ *                     dots, so eNameTabLen holds the length
+ *                     of the TABLE part. It is empty for the
+ *                     column a parenthesized join takes by
+ *                     USING, which is visible by its name
+ *                     alone, and never otherwise, as empty
+ *                     table names and aliases are rejected.
  *
  *    ENAME_SPAN       Text of the original result set
  *                     expression.
@@ -1579,6 +1585,8 @@ struct ExprList {
 	struct ExprList_item {	/* For each expression in the list */
 		Expr *pExpr;	/* The list of expressions */
 		char *zEName;	/* Token associated with this expression */
+		/** Length of the TABLE part of an ENAME_TAB zEName. */
+		u16 eNameTabLen;
 		struct {
 			/* Sort order of an ORDER BY term */
 			enum sort_order sort_order;
@@ -4268,6 +4276,14 @@ void sqlSelectPrep(Parse *, Select *, NameContext *);
  */
 const char *
 sql_select_op_name(int id);
+
+/**
+ * Set the name of an expression list item to "TABLE.COLUMN" (see
+ * ENAME_TAB in struct ExprList).
+ */
+void
+sql_expr_list_item_set_tab_name(struct ExprList_item *item, const char *tab,
+				const char *col);
 
 /**
  * Check whether the list item names a column of a parenthesized join as

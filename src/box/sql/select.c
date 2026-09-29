@@ -5029,8 +5029,7 @@ appendUsingTerm(struct ExprList *pList, const char *zName)
 	pList = sql_expr_list_append(pList,
 				     sql_expr_new_named(TK_ID, zName));
 	struct ExprList_item *pX = &pList->a[pList->nExpr - 1];
-	pX->zEName = sqlMPrintf(".%s", zName);
-	pX->fg.eEName = ENAME_TAB;
+	sql_expr_list_item_set_tab_name(pX, "", zName);
 	pX->fg.bUsingTerm = 1;
 	return pList;
 }
@@ -5329,17 +5328,18 @@ selectExpander(Walker * pWalker, Select * p)
 				}
 				struct ExprList_item *pX =
 					&pNew->a[pNew->nExpr - 1];
-				sql_xfree(pX->zEName);
 				if (pSub != NULL) {
-					const char *str =
-						pSub->pEList->a[j].zEName;
-					pX->zEName = sql_xstrdup(str);
+					struct ExprList_item *src =
+						&pSub->pEList->a[j];
+					assert(src->fg.eEName == ENAME_TAB);
+					sql_xfree(pX->zEName);
+					pX->zEName = sql_xstrdup(src->zEName);
+					pX->eNameTabLen = src->eNameTabLen;
+					pX->fg.eEName = ENAME_TAB;
 				} else {
-					pX->zEName = sqlMPrintf("%s.%s",
-								zTabName,
-								zName);
+					sql_expr_list_item_set_tab_name(
+						pX, zTabName, zName);
 				}
-				pX->fg.eEName = ENAME_TAB;
 				pX->fg.bNoExpand = isHidden || isUsing ||
 						   isUsingLeft;
 				sql_xfree(zToFree);
