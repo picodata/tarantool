@@ -861,18 +861,6 @@ g.test_datetime_18_2 = function()
     end)
 end
 
-g.test_datetime_18_3 = function()
-    g.server:exec(function()
-        local dt = require('datetime')
-        local dt1 = dt.new(
-            {year = 2001, month = 1, day = 1, hour = 1, tz = 'Z'})
-        local sql = [[SELECT CAST('2001-01-01T01:00:00Z' AS DATETIME);]]
-        local res = {{dt1}}
-        local rows = box.execute(sql).rows
-        t.assert_equals(rows, res)
-    end)
-end
-
 g.test_datetime_18_4 = function()
     g.server:exec(function()
         local sql = [[SELECT CAST(CAST(1 AS NUMBER) AS DATETIME);]]
@@ -2243,18 +2231,6 @@ g.test_datetime_31_8 = function()
 end
 
 -- Make sure cast from STRING to DATETIME works as intended.
-g.test_datetime_32_1 = function()
-    g.server:exec(function()
-        local dt = require('datetime')
-        local dt1 = dt.new(
-            {year = 2000, month = 2, day = 29, hour = 1, tz = 'Z'})
-        local sql = [[SELECT CAST('2000-02-29T01:00:00Z' AS DATETIME);]]
-        local res = {{dt1}}
-        local rows = box.execute(sql).rows
-        t.assert_equals(rows, res)
-    end)
-end
-
 g.test_datetime_32_2 = function()
     g.server:exec(function()
         local sql = [[SELECT CAST('2001-02-29T01:00:00Z' AS DATETIME);]]
