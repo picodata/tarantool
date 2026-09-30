@@ -29,22 +29,25 @@ private:
 
 		memset(&memtx, 0, sizeof(memtx));
 
-		quota_init(&memtx.quota, QUOTA_MAX);
+		quota_init(&memtx.allocator_meta.quota, QUOTA_MAX);
 
 		int rc;
-		rc = slab_arena_create(&memtx.arena, &memtx.quota,
+		rc = slab_arena_create(&memtx.allocator_meta.arena,
+				       &memtx.allocator_meta.quota,
 				       16 * 1024 * 1024, 16 * 1024 * 1024,
 				       SLAB_ARENA_PRIVATE);
 		if (rc != 0)
 			abort();
 
-		slab_cache_create(&memtx.slab_cache, &memtx.arena);
+		slab_cache_create(&memtx.allocator_meta.slab_cache,
+				  &memtx.allocator_meta.arena);
 
 		float actual_alloc_factor;
 		allocator_settings alloc_settings;
-		allocator_settings_init(&alloc_settings, &memtx.slab_cache,
+		allocator_settings_init(&alloc_settings,
+					&memtx.allocator_meta.slab_cache,
 					16, 8, 1.1, &actual_alloc_factor,
-					&memtx.quota);
+					&memtx.allocator_meta.quota);
 		SmallAlloc<USER>::create(&alloc_settings);
 		memtx_set_tuple_format_vtab("small");
 
@@ -64,8 +67,8 @@ private:
 		tuple_format_unref(fmt);
 		tuple_free();
 		SmallAlloc<USER>::destroy();
-		slab_cache_destroy(&memtx.slab_cache);
-		tuple_arena_destroy(&memtx.arena);
+		slab_cache_destroy(&memtx.allocator_meta.slab_cache);
+		tuple_arena_destroy(&memtx.allocator_meta.arena);
 		fiber_free();
 		memory_free();
 	}
