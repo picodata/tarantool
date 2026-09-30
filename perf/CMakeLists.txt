@@ -3,7 +3,7 @@ set(CMAKE_CXX_STANDARD 14)
 add_subdirectory(lua)
 
 find_package(benchmark QUIET)
-if (NOT ${benchmark_FOUND})
+if (NOT benchmark_FOUND)
     message(AUTHOR_WARNING "Google Benchmark library was not found")
     set(MSG "Target test-c-perf is dummy, Google Benchmark library was not found")
     add_custom_target(test-c-perf
