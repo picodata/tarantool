@@ -617,6 +617,18 @@ g.test_json_tuple_decode = function()
     end)
 end
 
+-- The __tostring metamethod can be fetched from the registry and called on
+-- anything, so it has to raise an error instead of trusting its argument.
+g.test_json_tostring_wrong_arg = function()
+    g.server:exec(function()
+        local tostr = debug.getregistry()['struct mp_json'].__tostring
+        for _, arg in ipairs({42, 'x', {}, box.NULL}) do
+            t.assert_error_msg_content_equals(
+                'expected json as the first argument', tostr, arg)
+        end
+    end)
+end
+
 -- Read a JSON value as a cdata and write it back: round-trips intact.
 g.test_json_roundtrip = function()
     g.server:exec(function()

@@ -277,11 +277,12 @@ luaT_json_tostring(const char *data, uint32_t len, uint32_t *out_len)
 static int
 lua_mp_json_tostring(struct lua_State *L)
 {
-	struct region *region = &fiber()->gc;
-	size_t region_svp = region_used(region);
 	uint32_t len;
 	const char *raw = luaT_tojson(L, 1, &len);
-	assert(raw != NULL);
+	if (raw == NULL)
+		return luaL_error(L, "expected json as the first argument");
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
 	uint32_t text_len;
 	const char *text = luaT_json_tostring(raw, len, &text_len);
 	if (text == NULL)
