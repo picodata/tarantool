@@ -1363,10 +1363,17 @@ xlog_tx_write(struct xlog *log)
 		} else {
 #ifdef HAVE_SYNC_FILE_RANGE
 			/** sync data from cache to disk */
-			sync_file_range(log->fd, sync_from, sync_len,
-					SYNC_FILE_RANGE_WAIT_BEFORE |
-					SYNC_FILE_RANGE_WRITE |
-					SYNC_FILE_RANGE_WAIT_AFTER);
+			if (sync_file_range(log->fd, sync_from, sync_len,
+					    SYNC_FILE_RANGE_WAIT_BEFORE |
+					    SYNC_FILE_RANGE_WRITE |
+					    SYNC_FILE_RANGE_WAIT_AFTER) != 0) {
+				if (errno == EIO || errno == ENOSPC) {
+					diag_set(SystemError,
+						 "failed to sync file '%s'",
+						 log->filename);
+					return -1;
+				}
+			}
 #endif /* HAVE_SYNC_FILE_RANGE */
 		}
 		log->sync_time = ev_monotonic_time();
