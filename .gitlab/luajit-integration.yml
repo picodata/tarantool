@@ -1,0 +1,85 @@
+# LuaJIT integration testing.
+#
+# This file is not a part of the tarantool pipeline. It is included
+# into the CI of the Picodata LuaJIT fork, so the jobs below run in
+# the LuaJIT project pipeline: they clone tarantool, bump the
+# third_party/luajit submodule to the LuaJIT commit being tested and
+# run the LuaJIT test suites against the tarantool binary (the same
+# `run-luajit-test` step as in the tarantool pipeline).
+#
+# The tarantool branch to test with is chosen as follows:
+# 1. TARANTOOL_BRANCH, if set (e.g. when running a pipeline manually);
+# 2. the branch with the same name as the LuaJIT one, if it exists in
+#    tarantool (to test the coordinated changes in both repos);
+# 3. TARANTOOL_MAIN_BRANCH otherwise.
+
+.luajit-integration:
+  image:
+    name: docker-public.binary.picodata.io/tarantool-testing:latest
+    pull_policy: always
+  tags:
+    - docker
+  stage: test
+  interruptible: true
+  retry:
+    max: 1
+    when:
+      - scheduler_failure
+      - runner_system_failure
+      - stuck_or_timeout_failure
+      - api_failure
+  rules:
+    # Branch pipelines only, same as in the tarantool pipeline.
+    - if: $CI_COMMIT_BRANCH
+  variables:
+    TARANTOOL_PROJECT: core/tarantool
+    TARANTOOL_MAIN_BRANCH: 2.11.8-picodata
+    TARANTOOL_BRANCH: ""
+    # LuaJIT sources are fetched into the tarantool submodule below.
+    GIT_STRATEGY: none
+    # k8s runner config
+    KUBERNETES_CPU_REQUEST: 6
+    KUBERNETES_CPU_LIMIT: 6
+    KUBERNETES_MEMORY_REQUEST: "6Gi"
+  cache:
+    paths:
+      - .cmake-downloads/
+    key: luajit-integration-cmake-downloads
+  script:
+    - |
+      TARANTOOL_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${TARANTOOL_PROJECT}.git"
+      if [ -z "$TARANTOOL_BRANCH" ]; then
+        # Exit code 2 means there is no such branch, others are errors.
+        git ls-remote --exit-code --heads "$TARANTOOL_URL" \
+            "refs/heads/$CI_COMMIT_BRANCH" > /dev/null && rc=0 || rc=$?
+        case $rc in
+          0) TARANTOOL_BRANCH=$CI_COMMIT_BRANCH ;;
+          2) TARANTOOL_BRANCH=$TARANTOOL_MAIN_BRANCH ;;
+          *) exit $rc ;;
+        esac
+      fi
+      echo "Testing LuaJIT $CI_COMMIT_SHA with $TARANTOOL_PROJECT@$TARANTOOL_BRANCH"
+    - rm -rf tarantool
+    - git clone --branch "$TARANTOOL_BRANCH" --recurse-submodules "$TARANTOOL_URL" tarantool
+    - git -C tarantool/third_party/luajit fetch "$CI_REPOSITORY_URL" "$CI_COMMIT_SHA"
+    - git -C tarantool/third_party/luajit checkout --detach "$CI_COMMIT_SHA"
+    - git -C tarantool submodule status third_party/luajit
+    - mkdir -p .cmake-downloads
+    - ln -s "$CI_PROJECT_DIR/.cmake-downloads" tarantool/.cmake-downloads
+    - cd tarantool && make -f .test.mk test-luajit-Linux-x86_64
+  artifacts:
+    when: on_failure
+    paths:
+      - tarantool/third_party/luajit/test/Testing/Temporary/
+
+# CMake parameters are the same as for test-release and test-debug
+# in .test.mk.
+luajit-integration-release:
+  extends: .luajit-integration
+  variables:
+    CMAKE_EXTRA_PARAMS: -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_WERROR=ON -DTEST_BUILD=ON
+
+luajit-integration-debug:
+  extends: .luajit-integration
+  variables:
+    CMAKE_EXTRA_PARAMS: -DCMAKE_BUILD_TYPE=Debug -DTEST_BUILD=ON

@@ -1,8 +1,8 @@
 [submodule "third_party/luajit"]
 	path = third_party/luajit
-	url = https://github.com/tarantool/luajit.git
+	url = https://git.picodata.io/core/luajit.git
 	ignore = dirty
-	branch = tarantool-1.7
+	branch = 2.11.8-picodata
 [submodule "third_party/libyaml"]
 	path = third_party/libyaml
 	url = https://github.com/tarantool/libyaml.git
