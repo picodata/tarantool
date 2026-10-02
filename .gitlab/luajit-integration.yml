@@ -5,7 +5,8 @@
 # the LuaJIT project pipeline: they clone tarantool, bump the
 # third_party/luajit submodule to the LuaJIT commit being tested and
 # run the LuaJIT test suites against the tarantool binary (the same
-# `run-luajit-test` step as in the tarantool pipeline).
+# `run-luajit-test` step as in the tarantool pipeline) or luacheck
+# (the same as the `luacheck` job in the tarantool pipeline).
 #
 # The tarantool branch to test with is chosen as follows:
 # 1. TARANTOOL_BRANCH, if set (e.g. when running a pipeline manually);
@@ -35,6 +36,8 @@
     TARANTOOL_PROJECT: core/tarantool
     TARANTOOL_MAIN_BRANCH: 2.11.8-picodata
     TARANTOOL_BRANCH: ""
+    # The .test.mk target to run.
+    MAKE_TARGET: test-luajit-Linux-x86_64
     # LuaJIT sources are fetched into the tarantool submodule below.
     GIT_STRATEGY: none
     # k8s runner config
@@ -66,7 +69,7 @@
     - git -C tarantool submodule status third_party/luajit
     - mkdir -p .cmake-downloads
     - ln -s "$CI_PROJECT_DIR/.cmake-downloads" tarantool/.cmake-downloads
-    - cd tarantool && make -f .test.mk test-luajit-Linux-x86_64
+    - cd tarantool && make -f .test.mk "$MAKE_TARGET"
   artifacts:
     when: on_failure
     paths:
@@ -83,3 +86,10 @@ luajit-integration-debug:
   extends: .luajit-integration
   variables:
     CMAKE_EXTRA_PARAMS: -DCMAKE_BUILD_TYPE=Debug -DTEST_BUILD=ON
+
+# Checks the Lua code of tarantool and LuaJIT (the LuaJIT-luacheck
+# target with the LuaJIT .luacheckrc).
+luajit-integration-luacheck:
+  extends: .luajit-integration
+  variables:
+    MAKE_TARGET: luacheck
