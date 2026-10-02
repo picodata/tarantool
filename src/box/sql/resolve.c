@@ -1369,11 +1369,11 @@ resolveSelectStep(Walker * pWalker, Select * p)
 	NameContext *pOuterNC;	/* Context that contains this SELECT */
 	NameContext sNC;	/* Name context of this SELECT */
 	int isCompound;		/* True if p is a compound select */
-	int nCompound;		/* Number of compound terms processed so far */
 	Parse *pParse;		/* Parsing context */
 	int i;			/* Loop counter */
 	ExprList *pGroupBy;	/* The GROUP BY clause */
 	Select *pLeftmost;	/* Left-most of SELECT of a compound */
+	Select *pRightmost;	/* Right-most SELECT of a compound: p itself */
 
 	assert(p != 0);
 	if (p->selFlags & SF_Resolved) {
@@ -1396,9 +1396,19 @@ resolveSelectStep(Walker * pWalker, Select * p)
 	}
 
 	isCompound = p->pPrior != 0;
-	nCompound = 0;
+	pRightmost = p;
 	pLeftmost = p;
-	while (p) {
+	while (pLeftmost->pPrior != NULL)
+		pLeftmost = pLeftmost->pPrior;
+	/*
+	 * The terms of a compound go from the left, so that the
+	 * recursive term of a CTE, the right-most one, is resolved
+	 * after the anchor terms, which give the types of the columns
+	 * of the CTE.
+	 */
+	for (p = pLeftmost; p != NULL; p = p->pNext) {
+		assert(p->pNext != NULL ? p->pNext->pPrior == p :
+		       p == pRightmost);
 		assert(p->pWin == 0);
 		assert((p->selFlags & SF_Expanded) != 0);
 		assert((p->selFlags & SF_Resolved) == 0);
@@ -1438,6 +1448,18 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		for (i = 0; i < p->pSrc->nSrc; i++) {
 			struct SrcItem *pItem = &p->pSrc->a[i];
 			struct Subquery *subq = pItem->pSubq;
+			if (pItem->fg.isRecursive) {
+				/*
+				 * The recursive term of a CTE reads the CTE
+				 * itself. The anchor terms are resolved by
+				 * now, so the space of the CTE gets the types
+				 * and the collations of its columns from the
+				 * left-most one before the expressions of
+				 * this term are resolved.
+				 */
+				sqlSelectAddColumnTypeAndCollation(
+					pParse, pItem->space->def, pLeftmost);
+			}
 			if (subq != NULL &&
 			    (subq->pSelect->selFlags & SF_Resolved) == 0) {
 				NameContext *pNC;	/* Used to iterate name contexts */
@@ -1620,7 +1642,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		 * resolve those symbols on the incorrect ORDER BY for consistency.
 		 */
 		/* Defer right-most ORDER BY of a compound */
-		if (p->pOrderBy != NULL && isCompound <= nCompound &&
+		if (p->pOrderBy != NULL && (!isCompound || p->pNext != NULL) &&
 		    resolveOrderGroupBy(&sNC, p, p->pOrderBy, "ORDER") != 0) {
 			return WRC_Abort;
 		}
@@ -1670,17 +1692,12 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			pParse->is_aborted = true;
 			return WRC_Abort;
 		}
-
-		/* Advance to the next term of the compound
-		 */
-		p = p->pPrior;
-		nCompound++;
 	}
 
 	/* Resolve the ORDER BY on a compound SELECT after all terms of
 	 * the compound have been resolved.
 	 */
-	if (isCompound && resolveCompoundOrderBy(pParse, pLeftmost)) {
+	if (isCompound && resolveCompoundOrderBy(pParse, pRightmost)) {
 		return WRC_Abort;
 	}
 

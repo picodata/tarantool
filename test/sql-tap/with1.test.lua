@@ -1,7 +1,7 @@
 #!/usr/bin/env tarantool
 require('compat').binary_data_decoding = 'new'
 local test = require("sqltester")
-test:plan(66)
+test:plan(68)
 
 --!./tcltestrunner.lua
 -- 2014 January 11
@@ -1097,6 +1097,27 @@ test:do_catchsql_test(16.3, [[
   -- <16.3>
   1, "cannot use window functions in recursive queries"
   -- </16.3>
+})
+
+-- The recursive term of a CTE sees the types of the columns of the CTE,
+-- so a built-in function over such a column gets the right overload and
+-- the queue of the CTE gets a matching field type.
+test:do_execsql_test(17.1, [[
+  WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT ABS(n) + 1 FROM r WHERE n < 3)
+  SELECT * FROM r;
+]], {
+  -- <17.1>
+  1, 2, 3
+  -- </17.1>
+})
+
+test:do_execsql_test(17.2, [[
+  WITH RECURSIVE r(n) AS (SELECT 1.5e0 UNION ALL SELECT ROUND(n) + 1 FROM r WHERE n < 3)
+  SELECT * FROM r;
+]], {
+  -- <17.2>
+  1.5, 3
+  -- </17.2>
 })
 
 test:finish_test()

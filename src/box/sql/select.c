@@ -4794,8 +4794,13 @@ convertCompoundSelectToSubquery(Walker * pWalker, Select * p)
 	pNew->pGroupBy = 0;
 	pNew->pHaving = 0;
 	pNew->pOrderBy = 0;
+	/*
+	 * The copy becomes the right-most term of the chain it took
+	 * over. The wrapper keeps its place in the outer compound, if
+	 * any: the term to its right still points at it by pPrior.
+	 */
 	p->pPrior = 0;
-	p->pNext = 0;
+	pNew->pNext = 0;
 	p->pWith = 0;
 	p->selFlags &= ~SF_Compound;
 	assert((p->selFlags & SF_Converted) == 0);

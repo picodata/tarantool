@@ -669,7 +669,7 @@ test:do_test(
         local sql = [[SELECT AVG("x") FROM (SELECT 3 AS "x");]]
         return box.execute(sql).metadata[1]
     end, {
-        name = "COLUMN_1", type = 'integer'
+        name = "COLUMN_1", type = 'decimal'
     })
 
 test:do_test(
