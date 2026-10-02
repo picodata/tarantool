@@ -5516,69 +5516,6 @@ sqlSelectExpand(Parse * pParse, Select * pSelect)
 }
 
 /*
- * This is a Walker.xSelectCallback callback for the sqlSelectTypeInfo()
- * interface.
- *
- * For each FROM-clause subquery, add Column.zType and Column.zColl
- * information to the Table structure that represents the result set
- * of that subquery.
- *
- * The Table structure that represents the result set was constructed
- * by selectExpander() but the type and collation information was omitted
- * at that point because identifiers had not yet been resolved.  This
- * routine is called after identifier resolution.
- */
-static void
-selectAddSubqueryTypeInfo(Walker * pWalker, Select * p)
-{
-	Parse *pParse;
-	int i;
-	SrcList *pTabList;
-	struct SrcItem *pFrom;
-
-	assert(p->selFlags & SF_Resolved);
-	if (p->selFlags & SF_HasTypeInfo)
-		return;
-	p->selFlags |= SF_HasTypeInfo;
-	pParse = pWalker->pParse;
-	pTabList = p->pSrc;
-	for (i = 0, pFrom = pTabList->a; i < pTabList->nSrc; i++, pFrom++) {
-		struct space *space = pFrom->space;
-		assert(space != NULL);
-		if (space->def->id == 0) {
-			/* A sub-query in the FROM clause of a SELECT */
-			Select *pSel = pFrom->pSubq != NULL ?
-				       pFrom->pSubq->pSelect : NULL;
-			if (pSel) {
-				while (pSel->pPrior)
-					pSel = pSel->pPrior;
-				sqlSelectAddColumnTypeAndCollation(pParse,
-								   space->def,
-							 	   pSel);
-			}
-		}
-	}
-}
-
-/*
- * This routine adds datatype and collating sequence information to
- * the Table structures of all FROM-clause subqueries in a
- * SELECT statement.
- *
- * Use this routine after name resolution.
- */
-static void
-sqlSelectAddTypeInfo(Parse * pParse, Select * pSelect)
-{
-	Walker w;
-	w.xSelectCallback = sqlSelectWalkNoop;
-	w.xSelectCallback2 = selectAddSubqueryTypeInfo;
-	w.xExprCallback = sqlExprWalkNoop;
-	w.pParse = pParse;
-	sqlWalkSelect(&w, pSelect);
-}
-
-/*
  * This routine sets up a SELECT statement for processing.  The
  * following is accomplished:
  *
@@ -5587,6 +5524,7 @@ sqlSelectAddTypeInfo(Parse * pParse, Select * pSelect)
  *     *  ON and USING clauses are shifted into WHERE statements
  *     *  Wildcards "*" and "TABLE.*" in result sets are expanded.
  *     *  Identifiers in expression are matched to tables.
+ *     *  FROM-clause subqueries get the types and collations of their columns.
  *
  * This routine acts recursively on all subqueries within the SELECT.
  */
@@ -5598,15 +5536,12 @@ sqlSelectPrep(Parse * pParse,	/* The parser context */
 {
 	if (NEVER(p == 0))
 		return;
-	if (p->selFlags & SF_HasTypeInfo)
+	if (p->selFlags & SF_Resolved)
 		return;
 	sqlSelectExpand(pParse, p);
 	if (pParse->is_aborted)
 		return;
 	sqlResolveSelectNames(pParse, p, pOuterNC);
-	if (pParse->is_aborted)
-		return;
-	sqlSelectAddTypeInfo(pParse, p);
 }
 
 /*

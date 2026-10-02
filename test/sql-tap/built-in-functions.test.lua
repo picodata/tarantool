@@ -1,6 +1,6 @@
 #!/usr/bin/env tarantool
 local test = require("sqltester")
-test:plan(66)
+test:plan(70)
 
 --
 -- Make sure that number of arguments check is checked properly for SQL built-in
@@ -660,6 +660,46 @@ test:do_test(
         return {tostring(res[3])}
     end, {
         "Type mismatch: can not convert integer(1) to string"
+    })
+
+-- A built-in function over a column of a subquery takes the type of the column.
+test:do_test(
+    "builtins-5.1",
+    function()
+        local sql = [[SELECT AVG("x") FROM (SELECT 3 AS "x");]]
+        return box.execute(sql).metadata[1]
+    end, {
+        name = "COLUMN_1", type = 'integer'
+    })
+
+test:do_test(
+    "builtins-5.2",
+    function()
+        local sql = [[SELECT AVG("x") FROM (SELECT 1.5e0 AS "x");]]
+        return box.execute(sql).metadata[1]
+    end, {
+        name = "COLUMN_1", type = 'double'
+    })
+
+-- The format of an ephemeral table built from such a function takes the
+-- type of its real overload: a subquery materialized in a join and the
+-- index of DISTINCT.
+test:do_execsql_test(
+    "builtins-5.3",
+    [[
+        SELECT "q"."x", "w"."y"
+            FROM (SELECT 1 AS "x") AS "q",
+                 (SELECT AVG("q2"."x") AS "y" FROM (SELECT 2 AS "x") AS "q2") AS "w";
+    ]], {
+        1, 2
+    })
+
+test:do_execsql_test(
+    "builtins-5.4",
+    [[
+        SELECT DISTINCT "y" FROM (SELECT AVG("x") AS "y" FROM (SELECT 2 AS "x"));
+    ]], {
+        2
     })
 
 test:finish_test()

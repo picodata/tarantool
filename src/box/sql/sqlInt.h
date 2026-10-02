@@ -1916,7 +1916,6 @@ struct Select {
 #define SF_HasAgg         0x00010	/* Contains aggregate functions */
 #define SF_UsesEphemeral  0x00020	/* Uses the OpenEphemeral opcode */
 #define SF_Expanded       0x00040	/* sqlSelectExpand() called on this */
-#define SF_HasTypeInfo    0x00080	/* FROM subqueries have Table metadata */
 #define SF_Compound       0x00100	/* Part of a compound query */
 #define SF_Values         0x00200	/* Synthesized from VALUES clause */
 #define SF_MultiValue     0x00400	/* Single VALUES term with multiple rows */

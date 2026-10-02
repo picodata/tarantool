@@ -1456,6 +1456,23 @@ resolveSelectStep(Walker * pWalker, Select * p)
 						      pOuterNC);
 				if (pParse->is_aborted)
 					return WRC_Abort;
+				/*
+				 * The expander gave the space of a subquery or
+				 * a CTE only the names of its columns. Add the
+				 * types and the collations before the
+				 * expressions of this SELECT are resolved, so
+				 * that the overloads of the built-in functions
+				 * are chosen by the real column types. A view
+				 * keeps its own space.
+				 */
+				if (!pItem->space->def->opts.is_view) {
+					struct Select *pLeft = subq->pSelect;
+					while (pLeft->pPrior != NULL)
+						pLeft = pLeft->pPrior;
+					sqlSelectAddColumnTypeAndCollation(
+						pParse, pItem->space->def,
+						pLeft);
+				}
 
 				for (pNC = pOuterNC; pNC; pNC = pNC->pNext)
 					nRef -= pNC->nRef;
