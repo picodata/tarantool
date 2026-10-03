@@ -312,6 +312,54 @@ log_set_nonblock(struct log *log)
 }
 
 /**
+ * The size log_set_pipe_sz() grows a log pipe to.
+ *
+ * Note that we intentionally don't use the maximum value
+ * (`/proc/sys/fs/pipe-max-size` or 1M), because the kernel counts every pipe's
+ * capacity of a given user towards a single limit. And when that total capacity
+ * exceeds `/proc/sys/fs/pipe-user-pages-soft` (64M), every subsequent new pipe
+ * will only get 8K which is 4 times smaller then the default.
+ *
+ * This is relevant for us as a typical picodata deployment involves a lot of
+ * processes. Assuming 2 pipes per process (default + audit) with 1M per pipe
+ * we would run out of the limit with 32 processes while 256K gives us 128
+ * processes.
+ */
+enum { SAY_PIPE_SIZE = 256 * 1024 };
+
+/**
+ * If @a fd is a pipe or a FIFO, grow it to SAY_PIPE_SIZE, so that the
+ * log reader can lag further behind before a write blocks or, for a
+ * non-blocking logger, fails.
+ *
+ * Note that either way an entry larger than PIPE_BUF may get cut.
+ *
+ * Log a warning if increasing the size failed.
+ */
+static void
+log_set_pipe_sz(int fd)
+{
+#ifdef F_SETPIPE_SZ
+	int size = fcntl(fd, F_GETPIPE_SZ);
+	if (size < 0) {
+		/* EBADF means fd is not a pipe or a FIFO. */
+		if (errno != EBADF)
+			say_syserror("can't get the size of log pipe, fd=%i",
+				     fd);
+		return;
+	}
+	if (size >= SAY_PIPE_SIZE)
+		return;
+	/* Fails with EPERM over /proc/sys/fs/pipe-user-pages-soft. */
+	if (fcntl(fd, F_SETPIPE_SZ, SAY_PIPE_SIZE) < 0)
+		say_warn("can't grow log pipe from %i to %i bytes, fd=%i: %s",
+			 size, (int)SAY_PIPE_SIZE, fd, tt_strerror(errno));
+#else
+	(void)fd;
+#endif
+}
+
+/**
  * Rotate logs on SIGHUP
  */
 static int
@@ -720,6 +768,7 @@ log_create(struct log *log, const char *init_str, int nonblock)
 		log->type = SAY_LOGGER_STDERR;
 		log->fd = STDERR_FILENO;
 	}
+	log_set_pipe_sz(log->fd);
 	if (log->type == SAY_LOGGER_FILE)
 		rlist_add_entry(&log_rotate_list, log, in_log_list);
 	else

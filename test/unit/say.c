@@ -11,6 +11,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 int
 parse_logger_type(const char *input)
@@ -218,13 +219,36 @@ main_f(va_list ap)
 	return 0;
 }
 
+/** Same value as SAY_PIPE_SIZE in src/lib/core/say.c **/
+enum { TEST_LOG_PIPE_SIZE = 256 * 1024 };
+
+#ifdef F_SETPIPE_SZ
+/**
+ * This is called when the pipe size check failed. The idea is to check if
+ * growing other pipes fails too which would mean that the user's pipe capacity
+ * limit /proc/sys/fs/pipe-user-pages-soft has been reached.
+ */
+static bool
+check_setting_pipe_size_fails(void)
+{
+	int fds[2];
+	fail_if(pipe(fds) != 0);
+	int rc = fcntl(fds[1], F_SETPIPE_SZ, TEST_LOG_PIPE_SIZE);
+	int save_errno = errno;
+	close(fds[0]);
+	close(fds[1]);
+	/* When the limit is reached `fcntl` fails with EPERM */
+	return rc < 0 && save_errno == EPERM;
+}
+#endif
+
 int main()
 {
 	memory_init();
 	fiber_init(fiber_c_invoke);
 	say_logger_init("/dev/null", S_INFO, 0, "plain");
 
-	plan(35);
+	plan(38);
 
 #define PARSE_LOGGER_TYPE(input, rc) \
 	ok(parse_logger_type(input) == rc, "%s", input)
@@ -336,6 +360,66 @@ int main()
 	ok(check_json_bounds("%s", "hello"), "json format bounds");
 	ok(check_json_bounds("json", "{\"message\": \"hello\"}"),
 	   "json format bounds, preformatted message");
+	{
+		/* Check SAY_LOGGER_PIPE grows the pipe */
+		fail_if(log_create(&test_log, "|cat > /dev/null", false) != 0);
+#ifdef F_SETPIPE_SZ
+		ok((fcntl(test_log.fd, F_GETPIPE_SZ) == TEST_LOG_PIPE_SIZE) ||
+		   check_setting_pipe_size_fails(),
+		   "pipe logger grows its pipe");
+#else
+		ok(true, "pipe logger grows its pipe");
+#endif
+		log_destroy(&test_log);
+	}
+	{
+		/* First redirect STDERR to a pipe */
+		int stderr_copy = dup(STDERR_FILENO);
+		int fds[2];
+		fail_if(stderr_copy < 0 || pipe(fds) != 0);
+		fail_if(dup2(fds[1], STDERR_FILENO) < 0);
+
+		/* Check SAY_LOGGER_STDERR grows the pipe */
+		fail_if(log_create(&test_log, NULL, false) != 0);
+#ifdef F_SETPIPE_SZ
+		ok((fcntl(fds[0], F_GETPIPE_SZ) == TEST_LOG_PIPE_SIZE) ||
+		   check_setting_pipe_size_fails(),
+		   "stderr logger grows a stderr pipe");
+#else
+		ok(true, "stderr logger grows a stderr pipe");
+#endif
+		log_destroy(&test_log);
+
+		/* Restore original STDERR */
+		fail_if(dup2(stderr_copy, STDERR_FILENO) < 0);
+		close(stderr_copy);
+		close(fds[0]);
+		close(fds[1]);
+	}
+	{
+		/* Create a FIFO pipe to exercise the pipe growth code path */
+		char fifo_path[64];
+		snprintf(fifo_path, sizeof(fifo_path), "%s/log.fifo", tmp_dir);
+		fail_if(mkfifo(fifo_path, 0600) != 0);
+		/* Without a reader, opening a FIFO for writing would block. */
+		int fifo_fd = open(fifo_path, O_RDONLY | O_NONBLOCK);
+		fail_if(fifo_fd < 0);
+
+		/* Check SAY_LOGGER_FILE grows the pipe */
+		fail_if(log_create(&test_log, fifo_path, false) != 0);
+#ifdef F_SETPIPE_SZ
+		ok((fcntl(fifo_fd, F_GETPIPE_SZ) == TEST_LOG_PIPE_SIZE) ||
+		   check_setting_pipe_size_fails(),
+		   "file logger grows a FIFO");
+#else
+		ok(true, "file logger grows a FIFO");
+#endif
+		log_destroy(&test_log);
+
+		/* Drop the FIFO */
+		close(fifo_fd);
+		unlink(fifo_path);
+	}
 
 	fiber_free();
 	memory_free();

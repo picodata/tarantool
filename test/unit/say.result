@@ -1,4 +1,4 @@
-1..35
+1..38
 # type: file
 # next: 
 ok 1 - 
@@ -67,3 +67,6 @@ ok 32 - fseek
 ok 33 - syslog line
 ok 34 - json format bounds
 ok 35 - json format bounds, preformatted message
+ok 36 - pipe logger grows its pipe
+ok 37 - stderr logger grows a stderr pipe
+ok 38 - file logger grows a FIFO
