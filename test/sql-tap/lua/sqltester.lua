@@ -1,4 +1,5 @@
 local tap = require('tap')
+local decimal = require("decimal")
 local json = require('json')
 local test = tap.test("errno")
 local sql_tokenizer = require('sql_tokenizer')
@@ -68,7 +69,24 @@ local function table_check_regex_p(t, regex)
     return nmatch
 end
 
+-- A number, a decimal and a 64-bit integer. A string stays outside: it
+-- converts to a decimal, and then '3' would be equal to 3.
+local function number_like_p(value)
+    return type(value) == 'number' or type(value) == 'cdata'
+end
+
 local function is_deeply_regex(got, expected)
+    -- An aggregate function on an integer returns a decimal, as PostgreSQL
+    -- does. Compare such a result with a number by value. Do not compare
+    -- the types. A test that must check the type uses typeof().
+    if (decimal.is_decimal(got) or decimal.is_decimal(expected)) and
+       number_like_p(got) and number_like_p(expected) then
+        local got_ok, got_dec = pcall(decimal.new, got)
+        local expected_ok, expected_dec = pcall(decimal.new, expected)
+        if got_ok and expected_ok then
+            return got_dec == expected_dec
+        end
+    end
     if type(expected) == "number" or type(got) == "number" then
         if got ~= got and expected ~= expected then
             return true -- nan
