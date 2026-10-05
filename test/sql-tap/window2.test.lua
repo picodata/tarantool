@@ -4180,7 +4180,7 @@ test:do_execsql_test(
         SELECT avg(x) OVER (ORDER BY y) AS z FROM t1 ORDER BY z;
     ]], {
         -- <window2-5.1>
-        7, 8, 10, 11, 15
+        7.2, 8.75, 10, 11, 15
         -- </window2-5.1>
     })
 
@@ -4191,7 +4191,7 @@ test:do_execsql_test(
         SELECT avg(x) OVER (ORDER BY y) z FROM t1 ORDER BY z + 0.0;
     ]], {
         -- <window2-5.2>
-        7, 8, 10, 11, 15
+        7.2, 8.75, 10, 11, 15
         -- </window2-5.2>
     })
 

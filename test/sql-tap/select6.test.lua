@@ -312,7 +312,7 @@ test:do_execsql_test(
         SELECT a,b,a+b FROM (SELECT avg(x) as a, avg(y) as b FROM t1)
     ]], {
         -- <select6-3.3>
-        10, 3, 13
+        10.5, 3.7, 14.2
         -- </select6-3.3>
     })
 
@@ -322,7 +322,7 @@ test:do_execsql_test(
         SELECT a,b,a+b FROM (SELECT avg(x) as a, avg(y) as b FROM t1 WHERE y=4)
     ]], {
         -- <select6-3.4>
-        11, 4, 15
+        11.5, 4, 15.5
         -- </select6-3.4>
     })
 
@@ -343,6 +343,7 @@ test:do_execsql_test(
         WHERE a>10
     ]], {
         -- <select6-3.6>
+        10.5, 3.7, 14.2
         -- </select6-3.6>
     })
 
@@ -364,7 +365,7 @@ test:do_execsql_test(
         WHERE a>10
     ]], {
         -- <select6-3.8>
-        11, 4, 15
+        11.5, 4, 15.5
         -- </select6-3.8>
     })
 
@@ -386,7 +387,7 @@ test:do_execsql_test(
         ORDER BY a
     ]], {
         -- <select6-3.10>
-        1, 1, 2, 2, 2, 4, 5, 3, 8, 11, 4, 15, 18, 5, 23
+        1, 1, 2, 2.5, 2, 4.5, 5.5, 3, 8.5, 11.5, 4, 15.5, 18, 5, 23
         -- </select6-3.10>
     })
 
@@ -398,7 +399,7 @@ test:do_execsql_test(
         WHERE b<4 ORDER BY a
     ]], {
         -- <select6-3.11>
-        1, 1, 2, 2, 2, 4, 5, 3, 8
+        1, 1, 2, 2.5, 2, 4.5, 5.5, 3, 8.5
         -- </select6-3.11>
     })
 
@@ -410,7 +411,7 @@ test:do_execsql_test(
         WHERE b<4 ORDER BY a
     ]], {
         -- <select6-3.12>
-        2, 2, 4, 5, 3, 8
+        2.5, 2, 4.5, 5.5, 3, 8.5
         -- </select6-3.12>
     })
 
@@ -422,7 +423,7 @@ test:do_execsql_test(
         ORDER BY a
     ]], {
         -- <select6-3.13>
-        2, 2, 4, 5, 3, 8, 11, 4, 15, 18, 5, 23
+        2.5, 2, 4.5, 5.5, 3, 8.5, 11.5, 4, 15.5, 18, 5, 23
         -- </select6-3.13>
     })
 
@@ -486,7 +487,7 @@ test:do_execsql_test(
         SELECT avg(y) FROM (SELECT DISTINCT y FROM t1) WHERE y<5 ORDER BY y
     ]], {
         -- <select6-4.4>
-        2
+        2.5
         -- </select6-4.4>
     })
 
@@ -496,7 +497,7 @@ test:do_execsql_test(
         SELECT avg(y) FROM (SELECT DISTINCT y FROM t1 WHERE y<5) ORDER BY y
     ]], {
         -- <select6-4.5>
-        2
+        2.5
         -- </select6-4.5>
     })
 

@@ -244,11 +244,11 @@ step_avg(struct sql_context *ctx, int argc, const struct Mem *argv)
 	if (mem_is_null(&argv[0]))
 		return;
 	struct Mem *mem;
-	uint32_t *count;
+	uint64_t *count;
 	if (mem_is_null(ctx->pOut)) {
-		uint32_t size = sizeof(struct Mem) + sizeof(uint32_t);
+		uint32_t size = sizeof(struct Mem) + sizeof(uint64_t);
 		mem = sql_xmalloc(size);
-		count = (uint32_t *)(mem + 1);
+		count = (uint64_t *)(mem + 1);
 		mem_create(mem);
 		*count = 1;
 		mem_copy_as_ephemeral(mem, &argv[0]);
@@ -256,7 +256,7 @@ step_avg(struct sql_context *ctx, int argc, const struct Mem *argv)
 		return;
 	}
 	mem = (struct Mem *)ctx->pOut->z;
-	count = (uint32_t *)(mem + 1);
+	count = (uint64_t *)(mem + 1);
 	++*count;
 	if (mem_add(mem, &argv[0], mem) != 0)
 		ctx->is_aborted = true;
@@ -270,8 +270,18 @@ fin_avg(struct Mem *mem)
 	if (mem_is_null(mem))
 		return 0;
 	struct Mem *sum = (struct Mem *)mem->z;
-	uint32_t *count_val = (uint32_t *)(sum + 1);
+	uint64_t *count_val = (uint64_t *)(sum + 1);
 	assert(mem_is_trivial(sum));
+	/*
+	 * A division of an integer by an integer truncates the result.
+	 * But avg on an integer must return a decimal, as PostgreSQL
+	 * does. Make the sum a decimal, then mem_div() does a decimal
+	 * division. The accumulation is still an integer. Thus this
+	 * makes one conversion for each result, not one for each row.
+	 */
+	if (mem_is_int(sum) &&
+	    mem_cast_implicit(sum, FIELD_TYPE_DECIMAL) != 0)
+		return -1;
 	struct Mem count;
 	mem_create(&count);
 	mem_set_uint(&count, *count_val);
@@ -287,7 +297,7 @@ inverse_avg(struct sql_context *ctx, int argc, const struct Mem *argv)
 	if (mem_is_null(&argv[0]) || mem_is_null(ctx->pOut))
 		return;
 	struct Mem *sum = (struct Mem *)ctx->pOut->z;
-	uint32_t *count = (uint32_t *)(sum + 1);
+	uint64_t *count = (uint64_t *)(sum + 1);
 	if (*count == 0) {
 		mem_set_null(sum);
 		return;
@@ -2136,7 +2146,7 @@ static struct sql_func_definition definitions[] = {
 	 NULL, NULL, NULL},
 	{"AVG", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_avg, fin_avg,
 	 fin_avg, inverse_avg},
-	{"AVG", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_avg, fin_avg,
+	{"AVG", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_DECIMAL, step_avg, fin_avg,
 	 fin_avg, inverse_avg},
 	{"AVG", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_avg, fin_avg,
 	 fin_avg, inverse_avg},

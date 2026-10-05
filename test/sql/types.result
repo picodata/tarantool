@@ -774,9 +774,9 @@ box.execute("SELECT avg(i) FROM t;")
 ---
 - metadata:
   - name: COLUMN_1
-    type: integer
+    type: decimal
   rows:
-  - [6148914691236517204]
+  - [6148914691236517204.3333333333333333333]
 ...
 box.execute("SELECT total(i) FROM t;")
 ---

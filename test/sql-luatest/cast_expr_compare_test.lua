@@ -20,6 +20,7 @@ end)
 -- computed separately rather than share one result.
 g.test_aggregates_of_casts_to_different_types = function()
     g.server:exec(function()
+        local decimal = require('decimal')
         local res = box.execute([[
             SELECT SUM(CAST(c AS INTEGER)), SUM(CAST(c AS DOUBLE)) FROM t;]])
         t.assert_equals(res.metadata[1].type, 'integer')
@@ -28,6 +29,6 @@ g.test_aggregates_of_casts_to_different_types = function()
 
         res = box.execute([[
             SELECT AVG(CAST(c AS INTEGER)), AVG(CAST(c AS DOUBLE)) FROM t;]])
-        t.assert_equals(res.rows, {{1, 2}})
+        t.assert_equals(res.rows, {{decimal.new('1.5'), 2}})
     end)
 end
