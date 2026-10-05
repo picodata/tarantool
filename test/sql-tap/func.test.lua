@@ -1,6 +1,7 @@
 #!/usr/bin/env tarantool
 require('compat').binary_data_decoding = 'new'
 local test = require("sqltester")
+local dec = require("decimal")
 test:plan(14680)
 
 --!./tcltestrunner.lua
@@ -1490,7 +1491,7 @@ test:do_execsql_test(
         SELECT typeof(sum(x)) FROM t6
     ]], {
         -- <func-18.11>
-        "integer"
+        "decimal"
         -- </func-18.11>
     })
 
@@ -1556,7 +1557,7 @@ test:do_execsql_test(
             SELECT 10 AS x);
     ]], {
         -- <func-18.15.1>
-        9223372036854775817LL
+        dec.new("9223372036854775817")
         -- </func-18.15.1>
     })
 

@@ -23,9 +23,9 @@ g.test_aggregates_of_casts_to_different_types = function()
         local decimal = require('decimal')
         local res = box.execute([[
             SELECT SUM(CAST(c AS INTEGER)), SUM(CAST(c AS DOUBLE)) FROM t;]])
-        t.assert_equals(res.metadata[1].type, 'integer')
+        t.assert_equals(res.metadata[1].type, 'decimal')
         t.assert_equals(res.metadata[2].type, 'double')
-        t.assert_equals(res.rows, {{3, 4}})
+        t.assert_equals(res.rows, {{decimal.new(3), 4}})
 
         res = box.execute([[
             SELECT AVG(CAST(c AS INTEGER)), AVG(CAST(c AS DOUBLE)) FROM t;]])

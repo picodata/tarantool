@@ -766,7 +766,7 @@ box.execute("SELECT sum(i) FROM t;")
 ---
 - metadata:
   - name: COLUMN_1
-    type: integer
+    type: decimal
   rows:
   - [18446744073709551613]
 ...

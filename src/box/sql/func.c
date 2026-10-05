@@ -209,6 +209,21 @@ inverse_sum(struct sql_context *ctx, int argc, const struct Mem *argv)
 
 }
 
+/**
+ * Finalizer for the SUM() function on an integer. Sum on an integer must
+ * return a decimal, as PostgreSQL does. The accumulator is an integer while
+ * the sum fits in one. Thus this makes one conversion for each result, not
+ * one for each row.
+ */
+static int
+fin_sum(struct Mem *mem)
+{
+	assert(mem_is_null(mem) || mem_is_num(mem));
+	if (mem_is_int(mem) && mem_cast_implicit(mem, FIELD_TYPE_DECIMAL) != 0)
+		return -1;
+	return 0;
+}
+
 /** Implementation of the TOTAL() function. */
 static void
 step_total(struct sql_context *ctx, int argc, const struct Mem *argv)
@@ -2351,8 +2366,8 @@ static struct sql_func_definition definitions[] = {
 	 FIELD_TYPE_VARBINARY, func_substr_octets, NULL, NULL, NULL},
 	{"SUM", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DECIMAL, step_sum, NULL,
 	 NULL, inverse_sum},
-	{"SUM", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_INTEGER, step_sum, NULL,
-	 NULL, inverse_sum},
+	{"SUM", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_DECIMAL, step_sum, fin_sum,
+	 fin_sum, inverse_sum},
 	{"SUM", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_sum, NULL,
 	 NULL, inverse_sum},
 	{"TOTAL", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DOUBLE, step_total,
