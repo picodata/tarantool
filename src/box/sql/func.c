@@ -187,7 +187,7 @@ step_sum(struct sql_context *ctx, int argc, const struct Mem *argv)
 	uint64_t count = mem_is_null(mem) ? 0 : mem->n;
 	if (mem_is_null(mem))
 		mem_copy_as_ephemeral(mem, &argv[0]);
-	else if (mem_add(mem, &argv[0], mem) != 0)
+	else if (mem_add_aggregate(mem, &argv[0], mem) != 0)
 		ctx->is_aborted = true;
 	mem->n = count + 1;
 }
@@ -273,7 +273,7 @@ step_avg(struct sql_context *ctx, int argc, const struct Mem *argv)
 	mem = (struct Mem *)ctx->pOut->z;
 	count = (uint64_t *)(mem + 1);
 	++*count;
-	if (mem_add(mem, &argv[0], mem) != 0)
+	if (mem_add_aggregate(mem, &argv[0], mem) != 0)
 		ctx->is_aborted = true;
 }
 

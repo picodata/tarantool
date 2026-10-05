@@ -2313,6 +2313,33 @@ mem_add(const struct Mem *left, const struct Mem *right, struct Mem *result)
 	return -1;
 }
 
+int
+mem_add_aggregate(const struct Mem *left, const struct Mem *right,
+		  struct Mem *result)
+{
+	if (!mem_is_int(left) || !mem_is_int(right))
+		return mem_add(left, right, result);
+	int64_t sum;
+	bool is_neg;
+	if (sql_add_int(left->u.i, left->type == MEM_TYPE_INT, right->u.i,
+			right->type == MEM_TYPE_INT, &sum, &is_neg) == 0) {
+		mem_set_int_with_sign(result, sum, is_neg);
+		return 0;
+	}
+	/* The sum does not fit in 64 bits. Continue the addition in decimal. */
+	decimal_t a;
+	decimal_t b;
+	decimal_t res;
+	mem_get_dec(left, &a);
+	mem_get_dec(right, &b);
+	if (decimal_add(&res, &a, &b) == NULL) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "decimal is overflowed");
+		return -1;
+	}
+	mem_set_dec(result, &res);
+	return 0;
+}
+
 /**
  * Subtract the second MEM from the first MEM and write the result to the third
  * MEM. The first and the second MEMs should be of numeric types. The result is

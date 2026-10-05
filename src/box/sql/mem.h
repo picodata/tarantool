@@ -621,6 +621,17 @@ int
 mem_add(const struct Mem *left, const struct Mem *right, struct Mem *result);
 
 /**
+ * Add the first MEM to the second MEM for an aggregate function. If an
+ * integer sum does not fit in an integer, the addition continues in decimal.
+ * Thus SUM() and AVG() on integers cannot overflow, as in PostgreSQL.
+ * Arithmetic outside an aggregate function still raises an error, because
+ * PostgreSQL also raises an error there. See mem_add().
+ */
+int
+mem_add_aggregate(const struct Mem *left, const struct Mem *right,
+		  struct Mem *result);
+
+/**
  * Subtract the second MEM from the first MEM and write the result to the third
  * MEM.
  */

@@ -1569,7 +1569,7 @@ test:do_catchsql_test(
             UNION ALL SELECT 10 AS x);
     ]], {
     -- <func-18.15.2>
-    1, "Failed to execute SQL statement: integer is overflowed"
+    0, {dec.new("18446744073709551624")}
     -- </func-18.15.2>
 })
 
@@ -1581,7 +1581,7 @@ test:do_catchsql_test(
             SELECT -10 AS x);
     ]], {
         -- <func-18.18>
-        1, "Failed to execute SQL statement: integer is overflowed"
+        0, {dec.new("-9223372036854775817")}
         -- </func-18.18>
     })
 
