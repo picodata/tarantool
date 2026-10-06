@@ -458,7 +458,7 @@ int sqlVdbeExec(Vdbe *p)
 	bool is_analyzed = vdbe_is_analyzed(p);
 	uint8_t mode = is_analyzed ? p->explain_data->opts.analyze_mode : 0;
 	bool is_counted = (mode & EXPLAIN_ANALYZE_HITS) != 0;
-	bool is_sampled = (mode & EXPLAIN_ANALYZE_SAMPLES) != 0;
+	bool is_sampled = (mode & EXPLAIN_ANALYZE_TIMERS) != 0;
 	/* The time when the run of EXPLAIN ANALYZE stops, 0 if never. */
 	int64_t deadline = is_analyzed ? p->explain_data->deadline : 0;
 

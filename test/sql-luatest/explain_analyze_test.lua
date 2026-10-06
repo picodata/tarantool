@@ -81,9 +81,9 @@ g.test_mode = function()
                         {'hits', 'samples'})
         -- 'all' is all the modes, alone and in a list.
         t.assert_equals(_G.measure_columns([[{'mode': 'all'}]]),
-                        {'hits', 'samples'})
+                        {'hits', 'samples', 'wait_samples'})
         t.assert_equals(_G.measure_columns([[{'mode': ['all', 'hits']}]]),
-                        {'hits', 'samples'})
+                        {'hits', 'samples', 'wait_samples'})
     end)
 end
 
@@ -94,7 +94,7 @@ g.test_mode_short = function()
         t.assert_equals(_G.measure_columns([=[['samples', 'hits']]=]),
                         {'hits', 'samples'})
         t.assert_equals(_G.measure_columns([=[['all']]=]),
-                        {'hits', 'samples'})
+                        {'hits', 'samples', 'wait_samples'})
         t.assert_str_contains(_G.measure_columns([=[['kek']]=]),
                               "EXPLAIN option 'mode' must be 'hits'")
         t.assert_str_contains(_G.measure_columns('[]'), 'Syntax error')
@@ -106,7 +106,7 @@ end
 g.test_mode_errors = function()
     g.server:exec(function()
         local msg = "EXPLAIN option 'mode' must be 'hits', 'samples', " ..
-                    "'all' or a list of them"
+                    "'wait_samples', 'all' or a list of them"
         for _, options in ipairs({[[{'mode': 'both'}]], [[{'mode': 5}]],
                                   [[{'mode': ['hits', 'kek']}]]}) do
             t.assert_str_contains(_G.measure_columns(options), msg, false,

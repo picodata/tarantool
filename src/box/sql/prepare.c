@@ -64,6 +64,9 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
 	static const ExplainColumn analyze_samples[] = {
 		{"samples", "text"},
 	};
+	static const ExplainColumn analyze_wait_samples[] = {
+		{"wait_samples", "text"},
+	};
 	static const ExplainColumn graph[] = {
 		{"graph", "text"},
 	};
@@ -80,6 +83,7 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
 		{"from", "integer"}, {"detail", "text"},
 	};
 	static_assert(ArraySize(analyze_hits) + ArraySize(analyze_samples) +
+		      ArraySize(analyze_wait_samples) +
 		      ArraySize(graph) + ArraySize(opcode) +
 		      ArraySize(pseudocode) == EXPLAIN_MAX_COLUMNS,
 		      "EXPLAIN_MAX_COLUMNS must be the number of columns");
@@ -98,6 +102,9 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
 		{analyze_samples, ArraySize(analyze_samples),
 		 is_program && is_analyzed &&
 		 (mode & EXPLAIN_ANALYZE_SAMPLES) != 0},
+		{analyze_wait_samples, ArraySize(analyze_wait_samples),
+		 is_program && is_analyzed &&
+		 (mode & EXPLAIN_ANALYZE_WAIT_SAMPLES) != 0},
 		{graph, ArraySize(graph),
 		 is_program && (facets & EXPLAIN_FACET_GRAPH) != 0},
 		{opcode, ArraySize(opcode),
@@ -262,6 +269,7 @@ sql_explain_add_mode(struct Parse *parse, const struct Token *value)
 	} modes[] = {
 		{"hits", EXPLAIN_ANALYZE_HITS},
 		{"samples", EXPLAIN_ANALYZE_SAMPLES},
+		{"wait_samples", EXPLAIN_ANALYZE_WAIT_SAMPLES},
 		{"all", EXPLAIN_ANALYZE_ALL},
 	};
 	for (int i = 0; i < (int)ArraySize(modes); i++) {
@@ -271,7 +279,7 @@ sql_explain_add_mode(struct Parse *parse, const struct Token *value)
 		}
 	}
 	sql_explain_error(parse, "EXPLAIN option 'mode' must be 'hits', "
-			  "'samples', 'all' or a list of them");
+			  "'samples', 'wait_samples', 'all' or a list of them");
 }
 
 void
@@ -382,7 +390,7 @@ sql_explain_check_facets(struct Parse *parse)
 	if (parse->explain_opts.sample_freq != 0 &&
 	    parse->explain_opts.analyze_mode == EXPLAIN_ANALYZE_HITS) {
 		sql_explain_error(parse, "EXPLAIN option 'freq' needs mode "
-				  "'samples'");
+				  "'samples' or 'wait_samples'");
 	}
 }
 

@@ -411,8 +411,20 @@ struct VdbeSample {
 	/** The fiber that runs the statement. */
 	struct fiber *fiber;
 #ifdef VDBE_HAS_SAMPLES
-	/** The timer that sends the signal for the samples. */
-	timer_t timer;
+	/**
+	 * The timer of the CPU time of the thread, for the samples of
+	 * the instruction that runs. Valid if has_cpu_timer is set.
+	 */
+	timer_t cpu_timer;
+	/**
+	 * The timer of the wall clock, for the samples of the
+	 * instruction that waits. Valid if has_wait_timer is set.
+	 */
+	timer_t wait_timer;
+	/** The sampling has the timer of the CPU time. */
+	bool has_cpu_timer;
+	/** The sampling has the timer of the wall clock. */
+	bool has_wait_timer;
 #endif
 	/** The link in the list of the samplings that run now. */
 	struct rlist link;

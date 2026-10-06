@@ -2145,6 +2145,11 @@ explain_list_row(struct Vdbe *p, Op *ops, int op_count, int addr,
 		mem_set_str0_allocated(mem++,
 				       explain_count_str(count, "samples"));
 	}
+	if ((mode & EXPLAIN_ANALYZE_WAIT_SAMPLES) != 0) {
+		uint64_t count = vdbe_op_perf_stats(p, op)->wait_sample_count;
+		const char *column = "wait_samples";
+		mem_set_str0_allocated(mem++, explain_count_str(count, column));
+	}
 	if (state->graph != NULL) {
 		mem_set_str0_allocated(mem++,
 				       explain_graph_row(state->graph, addr));

@@ -192,7 +192,7 @@ vdbe_explain_analyze(struct Vdbe *p)
 	int rc;
 	VdbeSample sample;
 	bool is_sampled = (p->explain_data->opts.analyze_mode &
-			   EXPLAIN_ANALYZE_SAMPLES) != 0;
+			   EXPLAIN_ANALYZE_TIMERS) != 0;
 	if (is_sampled && vdbe_sample_start(&sample, p) != 0) {
 		/*
 		 * The statement did not start, so its autocommit flag

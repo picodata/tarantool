@@ -2102,8 +2102,16 @@ enum explain_analyze_mode {
 	EXPLAIN_ANALYZE_HITS = 1 << 0,
 	/** Sample the instruction that runs, a number of times a second. */
 	EXPLAIN_ANALYZE_SAMPLES = 1 << 1,
+	/**
+	 * Sample the instruction that waits: the one that the statement
+	 * is in while its fiber does not run.
+	 */
+	EXPLAIN_ANALYZE_WAIT_SAMPLES = 1 << 2,
+	/** The modes that a timer of the sampling measures. */
+	EXPLAIN_ANALYZE_TIMERS = EXPLAIN_ANALYZE_SAMPLES |
+				 EXPLAIN_ANALYZE_WAIT_SAMPLES,
 	/** All the modes. */
-	EXPLAIN_ANALYZE_ALL = EXPLAIN_ANALYZE_HITS | EXPLAIN_ANALYZE_SAMPLES,
+	EXPLAIN_ANALYZE_ALL = EXPLAIN_ANALYZE_HITS | EXPLAIN_ANALYZE_TIMERS,
 };
 
 enum {
@@ -2120,7 +2128,7 @@ enum {
 
 enum {
 	/** The number of columns of EXPLAIN with all the facets. */
-	EXPLAIN_MAX_COLUMNS = 12,
+	EXPLAIN_MAX_COLUMNS = 13,
 };
 
 /**
@@ -2407,9 +2415,9 @@ sql_explain_analyze_forbid(struct Parse *parse, const char *kind);
  * tells that a number has a minus sign. The options are:
  *
  * - 'freq', the number of samples in a second, 99 by default;
- * - 'mode', what to measure: 'hits', 'samples' (the default), or 'all'
- *   for all of them. A list of them is set with
- *   sql_explain_begin_option_list();
+ * - 'mode', what to measure: 'hits', 'samples' (the default),
+ *   'wait_samples', or 'all' for all of them. A list of them is set
+ *   with sql_explain_begin_option_list();
  * - 'timeout', the maximum time of the run in seconds, an integer or a
  *   number with a fraction. 0, the default, is no limit. A run that
  *   stops at the limit keeps the changes that it made;

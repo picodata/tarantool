@@ -132,6 +132,11 @@ struct VdbeOpPerfStats {
 	uint64_t hit_count;
 	/** The number of samples that found the instruction running. */
 	uint64_t sample_count;
+	/**
+	 * The number of samples that found the statement in the
+	 * instruction while the fiber of the statement did not run.
+	 */
+	uint64_t wait_sample_count;
 };
 
 typedef struct VdbeOpPerfStats VdbeOpPerfStats;
