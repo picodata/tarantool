@@ -186,7 +186,8 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 			   (WHERE_ORDERBY_MIN | WHERE_ORDERBY_MAX)) != 0);
 	struct SrcItem *pItem = &pTabList->a[pLevel->iFrom];
 	assert(pItem->zName != NULL || pItem->pSubq != NULL);
-	if (pParse->explain == 0 && !is_search && pItem->fg.disallow_scan &&
+	if (pParse->explain == EXPLAIN_MODE_OFF && !is_search &&
+	    pItem->fg.disallow_scan &&
 	    (pParse->sql_flags & SQL_SeqScan) == 0) {
 		const char *obj = pItem->zName == NULL ? "subselect" :
 				  tt_sprintf("'%s'", pItem->zName);
@@ -197,7 +198,7 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 
 	int ret = 0;
 #if !defined(SQL_DEBUG)
-	if (pParse->explain == 2)
+	if (pParse->explain == EXPLAIN_MODE_QUERY_PLAN)
 #endif
 	{
 		Vdbe *v = pParse->pVdbe;	/* VM being constructed */
@@ -599,7 +600,9 @@ codeAllEqualityTerms(Parse * pParse,	/* Parsing context */
 			sqlVdbeAddOp3(v, OP_Column, iIdxCur,
 					  idx_def->key_def->parts[j].fieldno,
 					  regBase + j);
-			VdbeComment((v, "%s", explainIndexColumnName(idx_def, j)));
+			VdbeSynopsisObjName((v, "%s",
+					     explainIndexColumnName(idx_def,
+								    j)));
 		}
 	}
 
@@ -734,7 +737,7 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		sqlVdbeAddOp3(v, OP_InitCoroutine, regYield, 0,
 			      pTabItem->pSubq->addrFillSub);
 		pLevel->p2 = sqlVdbeAddOp2(v, OP_Yield, regYield, addrBrk);
-		VdbeComment((v, "next row of \"%s\"", pTabItem->space->def->name));
+		VdbeComment((v, "next row of %s", pTabItem->space->def->name));
 		pLevel->op = OP_Goto;
 	} else if (pLoop->wsFlags & WHERE_INDEXED) {
 		/* Case 4: A scan using an index.
@@ -1191,6 +1194,7 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 								fieldno;
 							sqlExprCodeGetColumnToReg
 								(pParse,
+								 space->def,
 								 fieldno,
 								 iCur,
 								 r + iPk);

@@ -2348,7 +2348,6 @@ sqlSetHasNullFlag(Vdbe * v, int iCur, int iCol, int regHasNull)
 	addr1 = sqlVdbeAddOp1(v, OP_Rewind, iCur);
 	sqlVdbeAddOp3(v, OP_Column, iCur, iCol, regHasNull);
 	sqlVdbeChangeP5(v, OPFLAG_TYPEOFARG);
-	VdbeComment((v, "first_entry_in(%d)", iCur));
 	sqlVdbeJumpHere(v, addr1);
 }
 
@@ -2602,7 +2601,6 @@ sqlFindInIndex(Parse * pParse,	/* Parsing context */
 					vdbe_emit_open_cursor(pParse, iTab,
 							      idx->def->iid,
 							      space);
-					VdbeComment((v, "%s", idx->def->name));
 					assert(IN_INDEX_INDEX_DESC ==
 					       IN_INDEX_INDEX_ASC + 1);
 					eType = IN_INDEX_INDEX_ASC +
@@ -2786,7 +2784,7 @@ sqlCodeSubselect(Parse * pParse,	/* Parsing context */
 	 */
 	if (!ExprHasProperty(pExpr, EP_VarSelect))
 		jmpIfDynamic = sqlVdbeAddOp0(v, OP_Once);
-	if (pParse->explain == 2) {
+	if (pParse->explain == EXPLAIN_MODE_QUERY_PLAN) {
 		char *zMsg = sqlMPrintf("EXECUTE %s%s SUBQUERY %d",
 					jmpIfDynamic >= 0 ? "" : "CORRELATED ",
 					pExpr->op == TK_IN ? "LIST" : "SCALAR",
@@ -2953,11 +2951,11 @@ sqlCodeSubselect(Parse * pParse,	/* Parsing context */
 				dest.nSdst = nReg;
 				sqlVdbeAddOp3(v, OP_Null, 0, dest.iSDParm,
 						  dest.iSDParm + nReg - 1);
-				VdbeComment((v, "Init subquery result"));
+				VdbeComment((v, "init subquery result"));
 			} else {
 				dest.eDest = SRT_Exists;
 				sqlVdbeAddOp2(v, OP_Bool, false, dest.iSDParm);
-				VdbeComment((v, "Init EXISTS result"));
+				VdbeComment((v, "init EXISTS result"));
 			}
 			if (pExpr->op == TK_SELECT) {
 				if (pSel->pLimit == NULL) {
@@ -3628,8 +3626,18 @@ sqlExprCachePinRegister(Parse * pParse, int iReg)
 	}
 }
 
+/** Name the space and the field that the last instruction reads. */
+static void
+vdbe_set_field_obj_name(Vdbe *v, const struct space_def *def, int fieldno)
+{
+	if (def != NULL && (uint32_t)fieldno < def->field_count)
+		VdbeSynopsisObjName((v, "%s.%s", def->name,
+				     def->fields[fieldno].name));
+}
+
 int
-sqlExprCodeGetColumn(Parse *pParse, int iColumn, int iTable, int iReg, u8 p5)
+sqlExprCodeGetColumn(Parse *pParse, const struct space_def *def, int iColumn,
+		     int iTable, int iReg, u8 p5)
 {
 	Vdbe *v = pParse->pVdbe;
 	int i;
@@ -3645,6 +3653,7 @@ sqlExprCodeGetColumn(Parse *pParse, int iColumn, int iTable, int iReg, u8 p5)
 	}
 	assert(v != 0);
 	sqlVdbeAddOp3(v, OP_Column, iTable, iColumn, iReg);
+	vdbe_set_field_obj_name(v, def, iColumn);
 	if (p5) {
 		sqlVdbeChangeP5(v, p5);
 	} else {
@@ -3654,10 +3663,10 @@ sqlExprCodeGetColumn(Parse *pParse, int iColumn, int iTable, int iReg, u8 p5)
 }
 
 void
-sqlExprCodeGetColumnToReg(Parse * pParse, int iColumn, int iTable, int iReg)
+sqlExprCodeGetColumnToReg(Parse *pParse, const struct space_def *def,
+			  int iColumn, int iTable, int iReg)
 {
-	int r1 =
-		sqlExprCodeGetColumn(pParse, iColumn, iTable, iReg, 0);
+	int r1 = sqlExprCodeGetColumn(pParse, def, iColumn, iTable, iReg, 0);
 	if (r1 != iReg)
 		sqlVdbeAddOp2(pParse->pVdbe, OP_SCopy, r1, iReg);
 }
@@ -3814,6 +3823,8 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 				sqlVdbeAddOp3(v, OP_Column,
 						  pAggInfo->sortingIdxPTab,
 						  pCol->iSorterColumn, target);
+				vdbe_set_field_obj_name(v, pCol->space_def,
+							pCol->iColumn);
 				return target;
 			}
 			/*
@@ -3844,7 +3855,8 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 					iTab = pParse->iSelfTab;
 				}
 			}
-			return sqlExprCodeGetColumn(pParse, col, iTab, target,
+			return sqlExprCodeGetColumn(pParse, pExpr->y.space_def,
+						    col, iTab, target,
 						    pExpr->op2);
 		}
 	case TK_ID:
@@ -4374,10 +4386,9 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 			assert(p1 >= 0 && p1 < ((int)def->field_count * 2 + 2));
 
 			sqlVdbeAddOp2(v, OP_Param, p1, target);
-			VdbeComment((v, "%s.%s -> $%d",
-				    (pExpr->iTable ? "new" : "old"),
-				    pExpr->y.space_def->fields[
-					pExpr->iColumn].name, target));
+			VdbeComment((v, "r[%d] = %s.%s", target,
+				     pExpr->iTable ? "new" : "old",
+				     def->fields[pExpr->iColumn].name));
 			break;
 		}
 

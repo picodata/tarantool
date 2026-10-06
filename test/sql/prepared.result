@@ -629,7 +629,7 @@ res.metadata
  |     type: text
  |   - name: p5
  |     type: text
- |   - name: comment
+ |   - name: pseudocode
  |     type: text
  | ...
 assert(res.rows ~= nil)

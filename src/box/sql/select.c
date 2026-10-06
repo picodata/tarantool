@@ -1821,7 +1821,7 @@ sql_select_op_name(int id)
 static void
 explainTempTable(Parse * pParse, const char *zUsage)
 {
-	if (pParse->explain == 2) {
+	if (pParse->explain == EXPLAIN_MODE_QUERY_PLAN) {
 		Vdbe *v = pParse->pVdbe;
 		char *zMsg = sqlMPrintf("USE TEMP B-TREE FOR %s", zUsage);
 		sqlVdbeAddOp4(v, OP_Explain, pParse->iSelectId, 0, 0, zMsg,
@@ -1853,7 +1853,7 @@ explainComposite(Parse * pParse,	/* Parse context */
 {
 	assert(op == TK_UNION || op == TK_EXCEPT || op == TK_INTERSECT
 	       || op == TK_ALL);
-	if (pParse->explain == 2) {
+	if (pParse->explain == EXPLAIN_MODE_QUERY_PLAN) {
 		Vdbe *v = pParse->pVdbe;
 		char *zMsg = sqlMPrintf("COMPOUND SUBQUERIES %d AND %d %s(%s)",
 					iSub1, iSub2, bUseTmp ?
@@ -2076,7 +2076,7 @@ generate_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 	Vdbe *v = pParse->pVdbe;
 	int i, j;
 	/* If this is an EXPLAIN, skip this step */
-	if (pParse->explain) {
+	if (pParse->explain != EXPLAIN_MODE_OFF) {
 		return;
 	}
 
@@ -2393,6 +2393,7 @@ computeLimitRegisters(Parse * pParse, Select * p, int iBreak)
 		int halt_label = sqlVdbeMakeLabel(v);
 		sqlExprCode(pParse, p->pLimit, iLimit);
 		sqlVdbeAddOp2(v, OP_MustBeInt, iLimit, halt_label);
+		VdbeComment((v, "LIMIT counter"));
 		/* If LIMIT clause >= 0 continue execution */
 		int r1 = sqlGetTempReg(pParse);
 		sqlVdbeAddOp2(v, OP_Integer, 0, r1);
@@ -2407,7 +2408,6 @@ computeLimitRegisters(Parse * pParse, Select * p, int iBreak)
 		sqlVdbeAddOp1(v, OP_Halt, -1);
 
 		sqlVdbeResolveLabel(v, positive_limit_label);
-		VdbeComment((v, "LIMIT counter"));
 		sqlVdbeAddOp3(v, OP_Eq, r1, iBreak, iLimit);
 		sqlReleaseTempReg(pParse, r1);
 
@@ -2451,6 +2451,7 @@ computeLimitRegisters(Parse * pParse, Select * p, int iBreak)
 			pParse->nMem++;	/* Allocate an extra register for limit+offset */
 			sqlExprCode(pParse, p->pOffset, iOffset);
 			sqlVdbeAddOp2(v, OP_MustBeInt, iOffset, offset_error_label);
+			VdbeComment((v, "OFFSET counter"));
 			/* If OFFSET clause >= 0 continue execution */
             		int r1 = sqlGetTempReg(pParse);
             		sqlVdbeAddOp2(v, OP_Integer, 0, r1);
@@ -2467,10 +2468,9 @@ computeLimitRegisters(Parse * pParse, Select * p, int iBreak)
 
 			sqlVdbeResolveLabel(v, positive_offset_label);
             		sqlReleaseTempReg(pParse, r1);
-			VdbeComment((v, "OFFSET counter"));
 			sqlVdbeAddOp3(v, OP_OffsetLimit, iLimit,
 					  iOffset + 1, iOffset);
-			VdbeComment((v, "LIMIT+OFFSET"));
+			VdbeComment((v, "LIMIT + OFFSET"));
 		}
 	}
 }
@@ -2689,11 +2689,9 @@ generateWithRecursiveQuery(Parse * pParse,	/* Parsing context */
 	sqlVdbeAddOp3(v, OP_OpenPseudo, iCurrent, regCurrent, nCol);
 	struct sql_space_info *info;
 	if (pOrderBy) {
-		VdbeComment((v, "Orderby table"));
 		info = sql_space_info_new_from_order_by(pParse, p, pOrderBy);
 		destQueue.pOrderBy = pOrderBy;
 	} else {
-		VdbeComment((v, "Queue table"));
 		info = sql_space_info_new_from_expr_list(pParse, p->pEList,
 							 true);
 	}
@@ -2703,13 +2701,15 @@ generateWithRecursiveQuery(Parse * pParse,	/* Parsing context */
 	}
 	sqlVdbeAddOp4(v, OP_OpenTEphemeral, reg_queue, 0, 0, (char *)info,
 		      P4_DYNAMIC);
+	VdbeComment((v, "%s", pOrderBy != NULL ? "ORDER BY table" :
+						 "queue table"));
 	sqlVdbeAddOp3(v, OP_IteratorOpen, iQueue, 0, reg_queue);
 	if (iDistinct) {
 		p->addrOpenEphm[0] =
 			sqlVdbeAddOp1(v, OP_OpenTEphemeral, reg_dist);
+		VdbeComment((v, "distinct table"));
 		sqlVdbeAddOp3(v, OP_IteratorOpen, iDistinct, 0, reg_dist);
 		p->selFlags |= SF_UsesEphemeral;
-		VdbeComment((v, "Distinct table"));
 	}
 
 	/* Detach the ORDER BY clause from the compound SELECT */
@@ -2914,8 +2914,9 @@ multiSelect(Parse * pParse,	/* Parsing context */
 		}
 		sqlVdbeAddOp4(v, OP_OpenTEphemeral, dest.reg_eph, 0, 0,
 			      (char *)info, P4_DYNAMIC);
-		sqlVdbeAddOp3(v, OP_IteratorOpen, dest.iSDParm, 0, dest.reg_eph);
-		VdbeComment((v, "Destination temp"));
+		VdbeComment((v, "destination temp"));
+		sqlVdbeAddOp3(v, OP_IteratorOpen, dest.iSDParm, 0,
+			      dest.reg_eph);
 		dest.eDest = SRT_Table;
 	}
 
@@ -3005,8 +3006,8 @@ multiSelect(Parse * pParse,	/* Parsing context */
 					addr = sqlVdbeAddOp3(v, OP_Eq, r1, 0,
 							     p->iLimit);
 					sqlReleaseTempReg(pParse, r1);
-					VdbeComment((v,
-						     "Jump ahead if LIMIT reached"));
+					VdbeComment((v, "IF LIMIT reached "
+						     "THEN jump ahead"));
 					if (p->iOffset) {
 						sqlVdbeAddOp3(v,
 								  OP_OffsetLimit,
@@ -3758,7 +3759,7 @@ multiSelectOrderBy(Parse * pParse,	/* Parsing context */
 	/* Generate a subroutine that outputs the current row of the A
 	 * select as the next output row of the compound select.
 	 */
-	VdbeNoopComment((v, "Output routine for A"));
+	VdbeNoopComment((v, "output routine for A"));
 	addrOutA = generateOutputSubroutine(pParse,
 					    p, &destA, pDest, regOutA,
 					    regPrev, key_info_dup, labelEnd);
@@ -3767,7 +3768,7 @@ multiSelectOrderBy(Parse * pParse,	/* Parsing context */
 	 * select as the next output row of the compound select.
 	 */
 	if (op == TK_ALL || op == TK_UNION) {
-		VdbeNoopComment((v, "Output routine for B"));
+		VdbeNoopComment((v, "output routine for B"));
 		addrOutB = generateOutputSubroutine(pParse,
 						    p, &destB, pDest, regOutB,
 						    regPrev, key_info_dup,
@@ -5035,14 +5036,13 @@ sqlExpandSubquery(Parse *pParse, struct SrcItem *pFrom)
 	assert(pFrom->pSubq != NULL);
 	Select *pSelect = pFrom->pSubq->pSelect;
 
-	const char *name = "subquery_DEADBEAFDEADBEAF";
-	struct space *space =
-		sql_template_space_new(sqlParseToplevel(pParse), name);
 	/*
-	 * Rewrite old name with correct pointer.
+	 * The name is unique in the statement. It has no address in it:
+	 * EXPLAIN shows the name.
 	 */
-	name = tt_sprintf("subquery_%llX", (long long)space);
-	snprintf(space->def->name, strlen(space->def->name) + 1, "%s", name);
+	struct Parse *top = sqlParseToplevel(pParse);
+	const char *name = tt_sprintf("(subquery:%d)", ++top->subquery_count);
+	struct space *space = sql_template_space_new(top, name);
 	while (pSelect->pPrior) {
 		pSelect = pSelect->pPrior;
 	}
@@ -5757,7 +5757,7 @@ updateAccumulator(Parse * pParse, AggInfo * pAggInfo)
 static void
 explain_simple_count(struct Parse *parse_context, const char *table_name)
 {
-	if (parse_context->explain == 2) {
+	if (parse_context->explain == EXPLAIN_MODE_QUERY_PLAN) {
 		char *zEqp = sqlMPrintf("B+tree count %s", table_name);
 		sqlVdbeAddOp4(parse_context->pVdbe, OP_Explain,
 				  parse_context->iSelectId, 0, 0, zEqp,
@@ -6192,9 +6192,9 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		sSort.addrSortIndex =
 			sqlVdbeAddOp4(v, OP_OpenTEphemeral, sSort.reg_eph, 0, 0,
 				      (char *)info, P4_DYNAMIC);
+		VdbeComment((v, "sort table"));
 
 		sqlVdbeAddOp3(v, OP_IteratorOpen, sSort.iECursor, 0, sSort.reg_eph);
-		VdbeComment((v, "Sort table"));
 	} else {
 		sSort.addrSortIndex = -1;
 	}
@@ -6210,10 +6210,10 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		}
 		sqlVdbeAddOp4(v, OP_OpenTEphemeral, pDest->reg_eph, 0, 0,
 			      (char *)info, P4_DYNAMIC);
+		VdbeComment((v, "output table"));
 		sqlVdbeAddOp3(v, OP_IteratorOpen, pDest->iSDParm, 0,
 				  pDest->reg_eph);
 
-		VdbeComment((v, "Output table"));
 		/* NULL-out result columns that will never be used */
 		if ((p->selFlags & SF_NestedFrom) != 0) {
 			for (int ii = 0; ii < pEList->nExpr; ii++) {
@@ -6266,9 +6266,9 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		sDistinct.addrTnct = sqlVdbeAddOp4(v, OP_OpenTEphemeral,
 						   sDistinct.reg_eph, 0, 0,
 						   (char *)info, P4_DYNAMIC);
+		VdbeComment((v, "distinct table"));
 		sqlVdbeAddOp3(v, OP_IteratorOpen, sDistinct.cur_eph, 0,
 				  sDistinct.reg_eph);
-		VdbeComment((v, "Distinct table"));
 		sDistinct.eTnctType = WHERE_DISTINCT_UNORDERED;
 	} else {
 		sDistinct.eTnctType = WHERE_DISTINCT_NOOP;
@@ -6539,7 +6539,8 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					if (pCol->iSorterColumn >= j) {
 						int r1 = j + regBase;
 						sqlExprCodeGetColumnToReg
-						    (pParse, pCol->iColumn,
+						    (pParse, pCol->space_def,
+						     pCol->iColumn,
 						     pCol->iTable, r1);
 						j++;
 					}
@@ -6679,7 +6680,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			sqlVdbeAddOp2(v, OP_IfPos, iUseFlag,
 					  addrOutputRow + 2);
 			VdbeComment((v,
-				     "Groupby result generator entry point"));
+				     "GROUP BY result generator entry point"));
 			sqlVdbeAddOp1(v, OP_Return, regOutputRow);
 			finalizeAggFunctions(pParse, &sAggInfo);
 			sqlExprIfFalse(pParse, pHaving, addrOutputRow + 1,
@@ -6688,7 +6689,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					&sDistinct, pDest, addrOutputRow + 1,
 					addrSetAbort);
 			sqlVdbeAddOp1(v, OP_Return, regOutputRow);
-			VdbeComment((v, "end groupby result generator"));
+			VdbeComment((v, "end GROUP BY result generator"));
 
 			/* Generate a subroutine that will reset the group-by accumulator
 			 */

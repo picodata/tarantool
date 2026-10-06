@@ -568,10 +568,9 @@ codeTriggerProgram(Parse * pParse,	/* The parser context */
 	return 0;
 }
 
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
 /*
  * This function is used to add VdbeComment() annotations to a VDBE
- * program. It is not used in production code, only for debugging.
+ * program.
  */
 static const char *
 onErrorText(int onError)
@@ -592,7 +591,6 @@ onErrorText(int onError)
 	}
 	return "n/a";
 }
-#endif
 
 /**
  * Create and populate a new TriggerPrg object with a sub-program
@@ -651,7 +649,7 @@ sql_row_trigger_program(struct Parse *parser, struct sql_trigger *trigger,
 
 	/* Temporary VM. */
 	struct Vdbe *v = sqlGetVdbe(pSubParse);
-	VdbeComment((v, "Start: %s.%s (%s %s%s%s ON %s)", trigger->zName,
+	VdbeComment((v, "start: %s.%s (%s %s%s%s ON %s)", trigger->zName,
 		     onErrorText(orconf),
 		     (trigger->tr_tm == TRIGGER_BEFORE ? "BEFORE" : "AFTER"),
 		     (trigger->op == TK_UPDATE ? "UPDATE" : ""),
@@ -684,14 +682,18 @@ sql_row_trigger_program(struct Parse *parser, struct sql_trigger *trigger,
 	if (iEndTrigger != 0)
 		sqlVdbeResolveLabel(v, iEndTrigger);
 	sqlVdbeAddOp0(v, OP_Halt);
-	VdbeComment((v, "End: %s.%s", trigger->zName, onErrorText(orconf)));
+	VdbeComment((v, "end: %s.%s", trigger->zName, onErrorText(orconf)));
 
 	if (!parser->is_aborted)
 		parser->is_aborted = pSubParse->is_aborted;
 	pProgram->aOp = sqlVdbeTakeOpArray(v, &pProgram->nOp);
+	pProgram->synopsis_aux = vdbe_take_synopsis_aux(v);
 	pProgram->nMem = pSubParse->nMem;
 	pProgram->nCsr = pSubParse->nTab;
 	pProgram->token = (void *)trigger;
+	/* A program that keeps comments also keeps the name. */
+	if (v->explain_data != NULL && trigger->zName != NULL)
+		pProgram->name = sql_xstrdup(trigger->zName);
 	pPrg->column_mask[0] = pSubParse->oldmask;
 	pPrg->column_mask[1] = pSubParse->newmask;
 	sqlVdbeDelete(v);
@@ -772,7 +774,7 @@ vdbe_code_row_trigger_direct(struct Parse *parser, struct sql_trigger *trigger,
 	sqlVdbeAddOp4(v, OP_Program, reg, ignore_jump,
 			  ++parser->nMem, (const char *)pPrg->pProgram,
 			  P4_SUBPROGRAM);
-	VdbeComment((v, "Call: %s.%s", (trigger->zName ? trigger->zName :
+	VdbeComment((v, "call: %s.%s", (trigger->zName ? trigger->zName :
 					"fk_constraint"),
 		     onErrorText(orconf)));
 

@@ -118,8 +118,10 @@ ecmd ::= SEMI. {
   pParse->is_aborted = true;
 }
 explain ::= .
-explain ::= EXPLAIN.              { pParse->explain = 1; }
-explain ::= EXPLAIN QUERY PLAN.   { pParse->explain = 2; }
+explain ::= EXPLAIN.              { pParse->explain = EXPLAIN_MODE_PROGRAM; }
+explain ::= EXPLAIN QUERY PLAN. {
+  pParse->explain = EXPLAIN_MODE_QUERY_PLAN;
+}
 cmdx ::= cmd.
 
 // Define operator precedence early so that this is the first occurrence

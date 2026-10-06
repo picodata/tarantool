@@ -98,7 +98,8 @@ sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 	if (sParse.is_aborted)
 		rc = -1;
 
-	if (rc == 0 && sParse.pVdbe != NULL && sParse.explain) {
+	if (rc == 0 && sParse.pVdbe != NULL &&
+	    sParse.explain != EXPLAIN_MODE_OFF) {
 		static const char *const azColName[] = {
 			/*  0 */ "addr",
 			/*  1 */ "integer",
@@ -114,7 +115,7 @@ sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 			/* 11 */ "text",
 			/* 12 */ "p5",
 			/* 13 */ "text",
-			/* 14 */ "comment",
+			/* 14 */ "pseudocode",
 			/* 15 */ "text",
 			/* 16 */ "selectid",
 			/* 17 */ "integer",
@@ -127,7 +128,7 @@ sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 		};
 
 		int name_first, name_count;
-		if (sParse.explain == 2) {
+		if (sParse.explain == EXPLAIN_MODE_QUERY_PLAN) {
 			name_first = 16;
 			name_count = 4;
 		} else {

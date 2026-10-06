@@ -45,6 +45,28 @@
 #include "vdbeInt.h"
 #include "tarantoolInt.h"
 #include "box/execute.h"
+#include "box/coll_id_cache.h"
+
+/**
+ * Make the data of EXPLAIN for a new statement. Return NULL if the
+ * statement needs none: it is not under EXPLAIN, and it is not a program
+ * that a debug build traces or lists.
+ */
+static VdbeExplain *
+vdbe_explain_new(const struct Parse *parse)
+{
+	const struct Parse *top = sqlParseToplevel(parse);
+	bool is_needed = top->explain != EXPLAIN_MODE_OFF;
+#ifdef SQL_DEBUG
+	if ((top->sql_flags & (SQL_VdbeListing | SQL_VdbeTrace)) != 0)
+		is_needed = true;
+#endif
+	if (!is_needed)
+		return NULL;
+	VdbeExplain *explain = sql_xmalloc0(sizeof(*explain));
+	explain->mode = top->explain;
+	return explain;
+}
 
 /*
  * Create a new virtual database engine.
@@ -67,6 +89,7 @@ sqlVdbeCreate(Parse * pParse)
 	db->pVdbe = p;
 	p->magic = VDBE_MAGIC_INIT;
 	p->pParse = pParse;
+	p->explain_data = vdbe_explain_new(pParse);
 	p->schema_ver = stmt_cache_schema_version();
 	assert(pParse->aLabel == 0);
 	assert(pParse->nLabel == 0);
@@ -219,9 +242,6 @@ sqlVdbeAddOp3(Vdbe * p, int op, int p1, int p2, int p3)
 	pOp->p3 = p3;
 	pOp->p4.p = 0;
 	pOp->p4type = P4_NOTUSED;
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
-	pOp->zComment = 0;
-#endif
 #ifdef SQL_DEBUG
 	test_addop_breakpoint();
 #endif
@@ -527,6 +547,16 @@ sqlVdbeTakeOpArray(struct Vdbe *p, int *pnOp)
 	return aOp;
 }
 
+VdbeOpSynopsisAux *
+vdbe_take_synopsis_aux(struct Vdbe *p)
+{
+	if (p->explain_data == NULL)
+		return NULL;
+	VdbeOpSynopsisAux *aux = p->explain_data->synopsis_aux;
+	p->explain_data->synopsis_aux = NULL;
+	return aux;
+}
+
 /*
  * Change the value of the opcode, or P1, P2, P3, or P5 operands
  * for a specific instruction.
@@ -613,12 +643,67 @@ vdbeFreeOpArray(struct VdbeOp *aOp, int nOp)
 		for (pOp = aOp; pOp < &aOp[nOp]; pOp++) {
 			if (pOp->p4type)
 				freeP4(pOp->p4type, pOp->p4.p);
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
-			sql_xfree(pOp->zComment);
-#endif
 		}
 	}
 	sql_xfree(aOp);
+}
+
+/** Free the synopsis data of a program, which can be NULL. */
+static void
+vdbe_synopsis_aux_delete(VdbeOpSynopsisAux *aux)
+{
+	if (aux == NULL)
+		return;
+	for (int i = 0; i < aux->count; i++)
+		sql_xfree(aux->items[i].text);
+	sql_xfree(aux);
+}
+
+/**
+ * Set the text of the instruction at an address. Take the string.
+ * capacity is the number of instructions that the program has memory
+ * for: the items grow to it, so *paux can change.
+ */
+static void
+vdbe_synopsis_aux_set(VdbeOpSynopsisAux **paux, int addr, char *text,
+		      bool is_obj_name, int capacity)
+{
+	VdbeOpSynopsisAux *aux = *paux;
+	int old_count = aux != NULL ? aux->count : 0;
+	if (addr >= old_count) {
+		int count = MAX(capacity, addr + 1);
+		size_t size = sizeof(aux->items[0]);
+		aux = sql_xrealloc(aux, sizeof(*aux) + count * size);
+		memset(aux->items + old_count, 0,
+		       (count - old_count) * size);
+		aux->count = count;
+		*paux = aux;
+	}
+	sql_xfree(aux->items[addr].text);
+	aux->items[addr].text = text;
+	aux->items[addr].is_obj_name = is_obj_name;
+}
+
+/** Remove the text of the instruction at an address, if it has one. */
+static void
+vdbe_synopsis_aux_clear(VdbeOpSynopsisAux *aux, int addr)
+{
+	if (aux == NULL || addr >= aux->count)
+		return;
+	sql_xfree(aux->items[addr].text);
+	aux->items[addr].text = NULL;
+	aux->items[addr].is_obj_name = false;
+}
+
+/** Get the text of the instruction at an address, NULL if none. */
+static const char *
+vdbe_synopsis_aux_get(const VdbeOpSynopsisAux *aux, int addr,
+		      bool *is_obj_name)
+{
+	if (aux == NULL || addr >= aux->count)
+		return NULL;
+	*is_obj_name = aux->items[addr].is_obj_name;
+	return aux->items[addr].text;
 }
 
 /*
@@ -646,6 +731,9 @@ sqlVdbeChangeToNoop(Vdbe * p, int addr)
 	pOp->p4type = P4_NOTUSED;
 	pOp->p4.z = 0;
 	pOp->opcode = OP_Noop;
+	/* The comment was for the instruction that is not there now. */
+	if (p->explain_data != NULL)
+		vdbe_synopsis_aux_clear(p->explain_data->synopsis_aux, addr);
 	return 1;
 }
 
@@ -751,47 +839,105 @@ sqlVdbeAppendP4(Vdbe * p, void *pP4, int n)
 	pOp->p4.p = pP4;
 }
 
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
+/**
+ * Check that a program keeps the comments and the object names of its
+ * instructions: EXPLAIN shows them, and a debug build prints them in the
+ * trace and in the listing. EXPLAIN QUERY PLAN does not show them.
+ */
+static bool
+vdbe_has_synopsis_aux(const struct Vdbe *p)
+{
+	return p->explain_data != NULL &&
+	       p->explain_data->mode != EXPLAIN_MODE_QUERY_PLAN;
+}
+
 /*
- * Change the comment on the most recently coded instruction.  Or
- * insert a No-op and add the comment to that new instruction.  This
- * makes the code easier to read during debugging.  None of this happens
- * in a production build.
+ * Change the comment or the object name of the most recently coded
+ * instruction, if the program keeps them.
  */
 static void
-vdbeVComment(Vdbe * p, const char *zFormat, va_list ap)
+vdbeVComment(Vdbe *p, bool is_obj_name, const char *zFormat, va_list ap)
 {
-	assert(p->nOp > 0 || p->aOp == 0);
-	if (p->nOp) {
-		assert(p->aOp);
-		sql_xfree(p->aOp[p->nOp - 1].zComment);
-		p->aOp[p->nOp - 1].zComment = sqlVMPrintf(zFormat, ap);
+	if (p == NULL || p->nOp == 0 || !vdbe_has_synopsis_aux(p))
+		return;
+	assert(p->aOp);
+	vdbe_synopsis_aux_set(&p->explain_data->synopsis_aux, p->nOp - 1,
+			      sqlVMPrintf(zFormat, ap), is_obj_name,
+			      p->pParse->nOpAlloc);
+}
+
+/**
+ * Find the sub-program that has an instruction. Return NULL if none has
+ * it: then the instruction is in the main program.
+ */
+static const struct SubProgram *
+vdbe_op_sub_program(const struct Vdbe *p, const struct VdbeOp *op)
+{
+	for (const struct SubProgram *sub = p->pProgram; sub != NULL;
+	     sub = sub->pNext) {
+		if (op >= sub->aOp && op < sub->aOp + sub->nOp)
+			return sub;
 	}
+	return NULL;
+}
+
+/**
+ * Get the comment or the object name of an instruction of the program or
+ * of one of its sub-programs, NULL if it has none.
+ */
+static const char *
+vdbe_op_synopsis_aux(const struct Vdbe *p, const struct VdbeOp *op,
+		     bool *is_obj_name)
+{
+	/*
+	 * While a sub-program runs, Vdbe.aOp is the array of the
+	 * sub-program, so look in the sub-programs first.
+	 */
+	const struct SubProgram *sub = vdbe_op_sub_program(p, op);
+	if (sub != NULL) {
+		return vdbe_synopsis_aux_get(sub->synopsis_aux,
+					     op - sub->aOp, is_obj_name);
+	}
+	if (p->explain_data == NULL || p->aOp == NULL || op < p->aOp ||
+	    op >= p->aOp + p->nOp)
+		return NULL;
+	return vdbe_synopsis_aux_get(p->explain_data->synopsis_aux,
+				     op - p->aOp, is_obj_name);
 }
 
 void
-sqlVdbeComment(Vdbe * p, const char *zFormat, ...)
+sqlVdbeComment(Vdbe *p, const char *zFormat, ...)
 {
 	va_list ap;
-	if (p) {
-		va_start(ap, zFormat);
-		vdbeVComment(p, zFormat, ap);
-		va_end(ap);
-	}
+	va_start(ap, zFormat);
+	vdbeVComment(p, false, zFormat, ap);
+	va_end(ap);
 }
 
 void
-sqlVdbeNoopComment(Vdbe * p, const char *zFormat, ...)
+sqlVdbeSynopsisObjName(Vdbe *p, const char *zFormat, ...)
 {
 	va_list ap;
-	if (p) {
-		sqlVdbeAddOp0(p, OP_Noop);
-		va_start(ap, zFormat);
-		vdbeVComment(p, zFormat, ap);
-		va_end(ap);
-	}
+	va_start(ap, zFormat);
+	vdbeVComment(p, true, zFormat, ap);
+	va_end(ap);
 }
-#endif				/* NDEBUG */
+
+void
+sqlVdbeNoopComment(Vdbe *p, const char *zFormat, ...)
+{
+	/*
+	 * A program that keeps no comments does not get the instruction:
+	 * it would run and count as a step for nothing.
+	 */
+	if (p == NULL || !vdbe_has_synopsis_aux(p))
+		return;
+	sqlVdbeAddOp0(p, OP_Noop);
+	va_list ap;
+	va_start(ap, zFormat);
+	vdbeVComment(p, false, zFormat, ap);
+	va_end(ap);
+}
 
 /*
  * Return the opcode for a given address.  If the address is -1, then
@@ -808,7 +954,6 @@ sqlVdbeGetOp(Vdbe * p, int addr)
 	return &p->aOp[addr];
 }
 
-#if defined(SQL_ENABLE_EXPLAIN_COMMENTS)
 /*
  * Return an integer value for one of the parameters to the opcode pOp
  * determined by character c.
@@ -827,69 +972,194 @@ translateP(char c, const Op * pOp)
 	return pOp->p5;
 }
 
-/*
- * Compute a string for the "comment" field of a VDBE opcode listing.
- *
- * The Synopsis: field in comments in the vdbe.c source file gets converted
- * to an extra string that is appended to the sqlOpcodeName().  In the
- * absence of other comments, this synopsis becomes the comment on the opcode.
- * Some translation occurs:
- *
- *       "PX"      ->  "r[X]"
- *       "PX@PY"   ->  "r[X..X+Y-1]"  or "r[x]" if y is 0 or 1
- *       "PX@PY+1" ->  "r[X..X+Y]"    or "r[x]" if y is 0
- *       "PY..PY"  ->  "r[X..Y]"      or "r[x]" if y<=x
+/**
+ * Check that a synopsis has an operand at a position: "P1" to "P5", or
+ * "PC", the address of the instruction. Other text, such as the "P" in
+ * a flag name, is written as is.
+ */
+static bool
+isSynopsisOperand(const char *z)
+{
+	return z[0] == 'P' && z[1] != '\0' && strchr("12345C", z[1]) != NULL;
+}
+
+/**
+ * Check that a synopsis has "OBJ_NAME" at a position: the comment of the
+ * instruction, which is the name of an object.
+ */
+static bool
+isSynopsisObjName(const char *z)
+{
+	return strncmp(z, "OBJ_NAME", strlen("OBJ_NAME")) == 0;
+}
+
+/**
+ * Read the offset of an operand in a synopsis: "+N" or "-N" right after
+ * it, without spaces, as in "P3-1". Return the number of characters read,
+ * 0 if there is no offset.
  */
 static int
-displayComment(const Op * pOp,	/* The opcode to be commented */
-	       const char *zP4,	/* Previously obtained value for P4 */
-	       char *zTemp,	/* Write result here */
-	       int nTemp)	/* Space available in zTemp[] */
+synopsisOffset(const char *z, int *offset)
 {
-	const char *zOpName;
-	const char *zSynopsis;
-	int nOpName;
+	if ((z[0] != '+' && z[0] != '-') || !sqlIsdigit(z[1]))
+		return 0;
+	char *end;
+	long n = strtol(z + 1, &end, 10);
+	*offset = z[0] == '+' ? n : -n;
+	return end - z;
+}
+
+/**
+ * Print P4 of an instruction for its synopsis. A function or an aggregate
+ * is its name, without the number of arguments that the column p4 shows.
+ * A trigger program is the name of its trigger alone.
+ */
+static void
+displaySynopsisP4(const Op *pOp, const char *zP4, char *zTemp, int nTemp)
+{
+	const char *name = zP4;
+	if (pOp->p4type == P4_FUNCCTX)
+		name = pOp->p4.pCtx->func->def->name;
+	else if (pOp->p4type == P4_FUNC)
+		name = pOp->p4.func->def->name;
+	else if (pOp->p4type == P4_SUBPROGRAM &&
+		 pOp->p4.pProgram->name != NULL)
+		name = pOp->p4.pProgram->name;
+	sql_snprintf(nTemp, zTemp, "%s", name);
+}
+
+/**
+ * Print an operand of an instruction by the name of what it identifies:
+ * P2 of OP_Cast is a type, and P2 of OP_OpenSpace is the ID of a space.
+ * Return false and print nothing for other operands, and for an ID
+ * without a name.
+ */
+static bool
+displayOperandName(const Op *pOp, char c, char *zTemp, int nTemp)
+{
+	if (c != '2')
+		return false;
+	if (pOp->opcode == OP_Cast && pOp->p2 >= 0 &&
+	    pOp->p2 < field_type_MAX) {
+		sql_snprintf(nTemp, zTemp, "%s", field_type_strs[pOp->p2]);
+		return true;
+	}
+	if (pOp->opcode == OP_OpenSpace) {
+		struct space *space = space_by_id(pOp->p2);
+		if (space == NULL)
+			return false;
+		sql_snprintf(nTemp, zTemp, "'%s'", space->def->name);
+		return true;
+	}
+	return false;
+}
+
+/** Cut an incomplete UTF-8 character from the end of a string. */
+static void
+displayTrimUtf8(char *str)
+{
+	int len = strlen(str);
+	/* Go back over the continuation bytes to the lead byte. */
+	int lead = len - 1;
+	while (lead >= 0 && len - lead < 4 &&
+	       ((unsigned char)str[lead] & 0xC0) == 0x80)
+		lead--;
+	if (lead < 0)
+		return;
+	unsigned char c = str[lead];
+	int size = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+	if (len - lead < size)
+		str[lead] = '\0';
+}
+
+/*
+ * Compute the synopsis of an instruction, which EXPLAIN shows in the
+ * column "pseudocode".
+ *
+ * The Synopsis: fields in comments in the vdbe.c source file get converted
+ * to the sqlOpcodeSynopsis() function, which selects the synopsis of an
+ * instruction by its operands.  In the absence of other comments, this
+ * synopsis becomes the comment on the opcode.  Some translation occurs:
+ *
+ *       "PX@PY"   ->  "r[X..X+Y-1]"  or "r[x]" if y is 0 or 1
+ *       "PX@PY+1" ->  "r[X..X+Y]"    or "r[x]" if y is 0
+ *       "PX@2PY"  ->  "r[X..X+2*Y-1]"
+ *       "PY..PY"  ->  "r[X..Y]"      or "r[x]" if y<=x
+ *       "PX+PY"   ->  "r[X+Y]"
+ *       "PX-1"    ->  "X-1", any number after "+" or "-"
+ *       "PC"      ->  the address of the instruction
+ *       "OBJ_NAME" ->  the comment of the instruction that is a name
+ *
+ * See displayOperandName() for the operands that are written by name.
+ */
+static int
+displaySynopsis(const struct Vdbe *p,	/* The program of the opcode */
+		const Op *pOp,	/* The opcode to be commented */
+		int addr,	/* The address of the opcode */
+		const char *zP4,	/* Previously obtained value for P4 */
+		char *zTemp,	/* Write result here */
+		int nTemp)	/* Space available in zTemp[] */
+{
+	bool is_obj_name = false;
+	const char *zComment = vdbe_op_synopsis_aux(p, pOp, &is_obj_name);
+	bool has_comment = zComment != NULL && zComment[0] != '\0';
+	const char *zSynopsis =
+		sqlOpcodeSynopsis(pOp, has_comment && is_obj_name);
 	int ii, jj;
-	char zAlt[50];
-	zOpName = sqlOpcodeName(pOp->opcode);
-	nOpName = sqlStrlen30(zOpName);
-	if (zOpName[nOpName + 1]) {
+	if (zSynopsis[0] != '\0') {
 		int seenCom = 0;
 		char c;
-		zSynopsis = zOpName += nOpName + 1;
-		if (strncmp(zSynopsis, "IF ", 3) == 0) {
-			if (pOp->p5 & SQL_STOREP2) {
-				sql_snprintf(sizeof(zAlt), zAlt,
-						 "r[P2] = (%s)", zSynopsis + 3);
-			} else {
-				sql_snprintf(sizeof(zAlt), zAlt,
-						 "if %s goto P2",
-						 zSynopsis + 3);
-			}
-			zSynopsis = zAlt;
-		}
 		for (ii = jj = 0; jj < nTemp - 1 && (c = zSynopsis[ii]) != 0;
 		     ii++) {
-			if (c == 'P') {
+			if (isSynopsisObjName(&zSynopsis[ii])) {
+				sql_snprintf(nTemp - jj, zTemp + jj, "%s",
+					     has_comment ? zComment : "");
+				jj += sqlStrlen30(zTemp + jj);
+				seenCom = 1;
+				ii += strlen("OBJ_NAME") - 1;
+			} else if (isSynopsisOperand(&zSynopsis[ii])) {
 				c = zSynopsis[++ii];
 				if (c == '4') {
+					displaySynopsisP4(pOp, zP4, zTemp + jj,
+							  nTemp - jj);
+				} else if (c == 'C') {
 					sql_snprintf(nTemp - jj, zTemp + jj,
-							 "%s", zP4);
-				} else if (c == 'X') {
-					sql_snprintf(nTemp - jj, zTemp + jj,
-							 "%s", pOp->zComment);
-					seenCom = 1;
+						     "%d", addr);
+				} else if (displayOperandName(pOp, c,
+							      zTemp + jj,
+							      nTemp - jj)) {
+					/* Written by its name. */
 				} else {
 					int v1 = translateP(c, pOp);
 					int v2;
-					sql_snprintf(nTemp - jj, zTemp + jj,
-							 "%d", v1);
-					if (strncmp(zSynopsis + ii + 1, "@P", 2)
+					/* A sum of operands: P3+P1. */
+					if (strncmp(zSynopsis + ii + 1, "+P", 2)
 					    == 0) {
 						ii += 3;
+						v1 += translateP(zSynopsis[ii],
+								 pOp);
+					}
+					/* An offset: P3-1. */
+					int offset = 0;
+					ii += synopsisOffset(zSynopsis + ii + 1,
+							     &offset);
+					v1 += offset;
+					sql_snprintf(nTemp - jj, zTemp + jj,
+							 "%d", v1);
+					/* "@2P1" is twice as many as "@P1". */
+					int factor = 0;
+					if (strncmp(zSynopsis + ii + 1, "@P", 2)
+					    == 0)
+						factor = 1;
+					else if (strncmp(zSynopsis + ii + 1,
+							 "@2P", 3) == 0)
+						factor = 2;
+					if (factor != 0) {
+						ii += factor + 2;
 						jj +=
 						    sqlStrlen30(zTemp + jj);
-						v2 = translateP(zSynopsis[ii],
+						v2 = factor *
+						     translateP(zSynopsis[ii],
 								pOp);
 						if (strncmp
 						    (zSynopsis + ii + 1, "+1",
@@ -910,7 +1180,7 @@ displayComment(const Op * pOp,	/* The opcode to be commented */
 					} else
 					    if (strncmp
 						(zSynopsis + ii + 1, "..P3",
-						 4) == 0 && pOp->p3 == 0) {
+						 4) == 0 && pOp->p3 <= v1) {
 						ii += 4;
 					}
 				}
@@ -919,23 +1189,87 @@ displayComment(const Op * pOp,	/* The opcode to be commented */
 				zTemp[jj++] = c;
 			}
 		}
-		if (!seenCom && jj < nTemp - 5 && pOp->zComment) {
-			sql_snprintf(nTemp - jj, zTemp + jj, "; %s",
-					 pOp->zComment);
+		if (!seenCom && jj < nTemp - 5 && has_comment) {
+			sql_snprintf(nTemp - jj, zTemp + jj, "  # %s",
+				     zComment);
 			jj += sqlStrlen30(zTemp + jj);
 		}
 		if (jj < nTemp)
 			zTemp[jj] = 0;
-	} else if (pOp->zComment) {
-		sql_snprintf(nTemp, zTemp, "%s", pOp->zComment);
-		jj = sqlStrlen30(zTemp);
+	} else if (zComment != NULL) {
+		sql_snprintf(nTemp, zTemp, "%s", zComment);
 	} else {
 		zTemp[0] = 0;
-		jj = 0;
 	}
-	return jj;
+	/* The text can be cut at the end of the buffer. */
+	displayTrimUtf8(zTemp);
+	return sqlStrlen30(zTemp);
 }
-#endif				/* SQL_DEBUG */
+
+/**
+ * Describe the P4 of OP_Blob. MsgPack, which is a subtype of the blob and
+ * not a type of P4, is decoded to a readable form. Other data is a hex
+ * literal, which ends with "..." if it is too long for the buffer.
+ */
+static void
+displayP4Blob(const Op *pOp, char *zTemp, int nTemp)
+{
+	assert(nTemp >= 20);
+	zTemp[0] = '\0';
+	if (pOp->p4.z == NULL)
+		return;
+	if (pOp->p3 == SQL_SUBTYPE_MSGPACK) {
+		if (mp_snprint(zTemp, nTemp, pOp->p4.z) >= nTemp)
+			displayTrimUtf8(zTemp);
+		return;
+	}
+	/* The room for "x'", for "'" or "...", and for the end. */
+	static const char digits[] = "0123456789ABCDEF";
+	int count = MIN(pOp->p1, (nTemp - 6) / 2);
+	char *pos = zTemp;
+	*pos++ = 'x';
+	*pos++ = '\'';
+	for (int i = 0; i < count; i++) {
+		unsigned char byte = pOp->p4.z[i];
+		*pos++ = digits[byte >> 4];
+		*pos++ = digits[byte & 0xF];
+	}
+	strlcpy(pos, count < pOp->p1 ? "..." : "'", zTemp + nTemp - pos);
+}
+
+/**
+ * Describe the P4 of an instruction that keeps a structure there, not
+ * a string. Return false if the instruction is not one of them.
+ */
+static bool
+displayP4Struct(const Op *pOp, StrAccum *x)
+{
+	switch (pOp->opcode) {
+	case OP_OpenTEphemeral:
+		sqlXPrintf(x, "%u fields", pOp->p4.space_info->field_count);
+		return true;
+	case OP_ApplyType:
+		for (int i = 0; i < pOp->p2; i++) {
+			/* field_type_MAX is for a value of any type. */
+			enum field_type type = pOp->p4.types[i];
+			if (type >= field_type_MAX)
+				type = FIELD_TYPE_ANY;
+			sqlXPrintf(x, "%s%s", i == 0 ? "" : ",",
+				   field_type_strs[type]);
+		}
+		return true;
+	default:
+		return false;
+	}
+}
+
+/** Get the name of a collation, or its properties if it has no name. */
+static const char *
+collName(const struct coll *coll)
+{
+	struct coll_id *coll_id = coll_by_coll(coll);
+	return coll_id != NULL ? coll_id->name : coll->fingerprint;
+}
 
 /*
  * Compute a string that describes the P4 parameter for an opcode.
@@ -944,19 +1278,18 @@ displayComment(const Op * pOp,	/* The opcode to be commented */
 static char *
 displayP4(Op * pOp, char *zTemp, int nTemp)
 {
-	/*
-	 * Msgpack is subtype, not type of P4, so lets consider
-	 * it as special case. We should decode msgpack to display
-	 * it in a readable form.
-	 */
-	if (pOp->opcode == OP_Blob && pOp->p3 == SQL_SUBTYPE_MSGPACK) {
-		mp_snprint(zTemp, nTemp, pOp->p4.z);
+	if (pOp->opcode == OP_Blob) {
+		displayP4Blob(pOp, zTemp, nTemp);
 		return zTemp;
 	}
 	char *zP4 = zTemp;
 	StrAccum x;
 	assert(nTemp >= 20);
 	sqlStrAccumInit(&x, zTemp, nTemp, 0);
+	if (displayP4Struct(pOp, &x)) {
+		sqlStrAccumFinish(&x);
+		return zTemp;
+	}
 	switch (pOp->p4type) {
 	case P4_KEYINFO:{
 			struct key_def *def = NULL;
@@ -972,7 +1305,7 @@ displayP4(Op * pOp, char *zTemp, int nTemp)
 					if (coll == NULL)
 						coll_str = "B";
 					else
-						coll_str = coll->fingerprint;
+						coll_str = collName(coll);
 					const char *sort_order = "";
 					if (def->parts[j].sort_order ==
 					    SORT_ORDER_DESC) {
@@ -989,8 +1322,7 @@ displayP4(Op * pOp, char *zTemp, int nTemp)
 	case P4_COLLSEQ:{
 			struct coll *pColl = pOp->p4.pColl;
 			if (pColl != NULL)
-				sqlXPrintf(&x, "(%.100s)",
-					       pColl->fingerprint);
+				sqlXPrintf(&x, "(%.100s)", collName(pColl));
 			else
 				sqlXPrintf(&x, "(binary)");
 			break;
@@ -1038,18 +1370,30 @@ displayP4(Op * pOp, char *zTemp, int nTemp)
 	case P4_INTARRAY:{
 			int i;
 			int *ai = pOp->p4.ai;
-			int n = ai[0];	/* The first element of an INTARRAY is always the
-					 * count of the number of elements to follow
-					 */
-			for (i = 1; i < n; i++) {
-				sqlXPrintf(&x, ",%d", ai[i]);
+			/*
+			 * The first element of an INTARRAY is always
+			 * the count of the number of elements to follow.
+			 */
+			int n = ai[0];
+			for (i = 1; i <= n; i++) {
+				sqlXPrintf(&x, "%c%d", i == 1 ? '[' : ',',
+					   ai[i]);
 			}
-			zTemp[0] = '[';
 			sqlStrAccumAppend(&x, "]", 1);
 			break;
 		}
 	case P4_SUBPROGRAM:{
-			sqlXPrintf(&x, "program");
+			/* Each sub-program is the program of a trigger. */
+			const char *name = pOp->p4.pProgram->name;
+			if (name != NULL)
+				sqlXPrintf(&x, "trigger %s", name);
+			else
+				sqlXPrintf(&x, "program");
+			break;
+		}
+	case P4_PTR:{
+			/* An opaque pointer tells nothing. */
+			zTemp[0] = 0;
 			break;
 		}
 	case P4_ADVANCE:{
@@ -1066,6 +1410,9 @@ displayP4(Op * pOp, char *zTemp, int nTemp)
 	}
 	sqlStrAccumFinish(&x);
 	assert(zP4 != 0);
+	/* The text can be cut at the end of the buffer. */
+	if (zP4 == zTemp)
+		displayTrimUtf8(zTemp);
 	return zP4;
 }
 
@@ -1110,7 +1457,7 @@ op_explain_hook_detail(Op *pOp)
  * Print a single opcode.  This routine is used for debugging only.
  */
 void
-sqlVdbePrintOp(FILE * pOut, int pc, Op * pOp)
+sqlVdbePrintOp(FILE *pOut, struct Vdbe *p, int pc, struct VdbeOp *pOp)
 {
 	char *zP4;
 	char zPtr[256];
@@ -1120,11 +1467,7 @@ sqlVdbePrintOp(FILE * pOut, int pc, Op * pOp)
 	if (pOut == 0)
 		pOut = stdout;
 	zP4 = displayP4(pOp, zPtr, sizeof(zPtr));
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
-	displayComment(pOp, zP4, zCom, sizeof(zCom));
-#else
-	zCom[0] = 0;
-#endif
+	displaySynopsis(p, pOp, pc, zP4, zCom, sizeof(zCom));
 	/* NB:  The sqlOpcodeName() function is implemented by code created
 	 * by the mkopcodeh.awk and mkopcodec.awk scripts which extract the
 	 * information from the vdbe.c source text
@@ -1152,6 +1495,16 @@ sqlVdbeFrameDelete(VdbeFrame * p)
 	sql_xfree(p);
 }
 
+/** Free the data of EXPLAIN of a statement, which can be NULL. */
+static void
+vdbe_explain_delete(VdbeExplain *explain)
+{
+	if (explain == NULL)
+		return;
+	vdbe_synopsis_aux_delete(explain->synopsis_aux);
+	sql_xfree(explain);
+}
+
 /*
  * Give a listing of the program in the virtual machine.
  *
@@ -1159,13 +1512,10 @@ sqlVdbeFrameDelete(VdbeFrame * p)
  * running the code, it invokes the callback once for each instruction.
  * This feature is used to implement "EXPLAIN".
  *
- * When p->explain==1, each instruction is listed.  When
- * p->explain==2, only OP_Explain instructions are listed and these
- * are shown in a different format.  p->explain==2 is used to implement
- * EXPLAIN QUERY PLAN.
- *
- * When p->explain==1, first the main program is listed, then each of
- * the trigger subprograms are listed one by one.
+ * In the mode EXPLAIN_MODE_PROGRAM, each instruction is listed: first
+ * the main program, then each of the trigger subprograms one by one.
+ * In the mode EXPLAIN_MODE_QUERY_PLAN, only OP_Explain instructions are
+ * listed and these are shown in a different format.
  */
 int
 sqlVdbeList(Vdbe * p)
@@ -1178,7 +1528,8 @@ sqlVdbeList(Vdbe * p)
 	int rc = 0;	/* Return code */
 	Mem *pMem = &p->aMem[1];	/* First Mem of result set */
 
-	assert(p->explain);
+	ExplainMode mode = vdbe_explain_mode(p);
+	assert(mode != EXPLAIN_MODE_OFF);
 	assert(p->magic == VDBE_MAGIC_RUN);
 
 	/* Even though this opcode does not use dynamic strings for
@@ -1196,7 +1547,7 @@ sqlVdbeList(Vdbe * p)
 	 * encountered, but p->pc will eventually catch up to nRow.
 	 */
 	nRow = p->nOp;
-	if (p->explain == 1) {
+	if (mode == EXPLAIN_MODE_PROGRAM) {
 		/* The first 8 memory cells are used for the result set.  So we will
 		 * commandeer the 9th cell to use as storage for an array of pointers
 		 * to trigger subprograms.  The VDBE is guaranteed to have at least 9
@@ -1218,7 +1569,8 @@ sqlVdbeList(Vdbe * p)
 
 	do {
 		i = p->pc++;
-	} while (i < nRow && p->explain == 2 && p->aOp[i].opcode != OP_Explain);
+	} while (i < nRow && mode == EXPLAIN_MODE_QUERY_PLAN &&
+		 p->aOp[i].opcode != OP_Explain);
 	if (i >= nRow) {
 		rc = SQL_DONE;
 	} else {
@@ -1240,7 +1592,7 @@ sqlVdbeList(Vdbe * p)
 			}
 			pOp = &apSub[j]->aOp[i];
 		}
-		if (p->explain == 1) {
+		if (mode == EXPLAIN_MODE_PROGRAM) {
 			assert(i >= 0);
 			mem_set_uint(pMem, i);
 
@@ -1283,41 +1635,32 @@ sqlVdbeList(Vdbe * p)
 		mem_set_int(pMem, pOp->p3);
 		pMem++;
 
-		char *buf = NULL;
-		if (p->explain == 2 && pOp->opcode == OP_Explain &&
+		char p4_buf[256];
+		if (mode == EXPLAIN_MODE_QUERY_PLAN &&
+		    pOp->opcode == OP_Explain &&
 		    pOp->p4type == P4_PTR) {
 			zP4 = (char *)op_explain_hook_detail(pOp);
 			if (zP4 == NULL)
 				return -1;
 			mem_set_str0_ephemeral(pMem, zP4);
 		} else {
-			buf = sql_xmalloc(256);
-			zP4 = displayP4(pOp, buf, 256);
-			if (zP4 != buf) {
-				sql_xfree(buf);
-				mem_set_str0_ephemeral(pMem, zP4);
-			} else {
-				mem_set_str0_allocated(pMem, zP4);
-			}
+			zP4 = displayP4(pOp, p4_buf, sizeof(p4_buf));
+			mem_copy_str0(pMem, zP4);
 		}
 		pMem++;
 
-		if (p->explain == 1) {
-			buf = sql_xmalloc(4);
+		if (mode == EXPLAIN_MODE_PROGRAM) {
+			char *buf = sql_xmalloc(4);
 			sql_snprintf(3, buf, "%.2x", pOp->p5);
 			mem_set_str0_allocated(pMem, buf);
 			pMem++;
 
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
 			buf = sql_xmalloc(500);
-			displayComment(pOp, zP4, buf, 500);
+			displaySynopsis(p, pOp, i, zP4, buf, 500);
 			mem_set_str0_allocated(pMem, buf);
-#else
-			mem_set_null(pMem);
-#endif
 		}
 
-		p->nResColumn = 8 - 4 * (p->explain - 1);
+		p->nResColumn = mode == EXPLAIN_MODE_PROGRAM ? 8 : 4;
 		p->pResultSet = &p->aMem[1];
 		rc = SQL_ROW;
 	}
@@ -1479,7 +1822,8 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 	assert(EIGHT_BYTE_ALIGNMENT(&x.pSpace[x.nFree]));
 
 	resolveP2Values(p);
-	if (pParse->explain && nMem < 10) {
+	if (pParse->explain != EXPLAIN_MODE_OFF &&
+	    nMem < 10) {
 		nMem = 10;
 	}
 	p->expired = 0;
@@ -1509,7 +1853,7 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 
 	p->pVList = pParse->pVList;
 	pParse->pVList = 0;
-	p->explain = pParse->explain;
+	assert(vdbe_explain_mode(p) == pParse->explain);
 	p->nCursor = nCursor;
 	p->nVar = nVar;
 	for (int i = 0; i < nVar; ++i)
@@ -2016,6 +2360,8 @@ sqlVdbeClearObject(struct Vdbe *p)
 	for (pSub = p->pProgram; pSub; pSub = pNext) {
 		pNext = pSub->pNext;
 		vdbeFreeOpArray(pSub->aOp, pSub->nOp);
+		vdbe_synopsis_aux_delete(pSub->synopsis_aux);
+		sql_xfree(pSub->name);
 		sql_xfree(pSub);
 	}
 	if (p->magic != VDBE_MAGIC_INIT) {
@@ -2024,6 +2370,7 @@ sqlVdbeClearObject(struct Vdbe *p)
 		sql_xfree(p->pFree);
 	}
 	vdbeFreeOpArray(p->aOp, p->nOp);
+	vdbe_explain_delete(p->explain_data);
 	sql_xfree(p->zSql);
 }
 

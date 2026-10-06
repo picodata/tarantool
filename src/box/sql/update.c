@@ -334,7 +334,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 			 * if there are one or more BEFORE triggers that use this value via
 			 * a new.* reference in a trigger program.
 			 */
-			sqlExprCodeGetColumnToReg(pParse, i, pk_cursor,
+			sqlExprCodeGetColumnToReg(pParse, def, i, pk_cursor,
 						  regNew + i);
 		} else {
 			sqlVdbeAddOp2(v, OP_Null, 0, regNew + i);

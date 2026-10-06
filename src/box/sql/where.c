@@ -923,8 +923,8 @@ constructAutomaticIndex(Parse * pParse,			/* The parsing context */
 	int reg_eph = sqlGetTempReg(pParse);
 	sqlVdbeAddOp4(v, OP_OpenTEphemeral, reg_eph, 0, 0, (char *)info,
 		      P4_DYNAMIC);
-	sqlVdbeAddOp3(v, OP_IteratorOpen, pLevel->iIdxCur, 0, reg_eph);
 	VdbeComment((v, "for %s", space->def->name));
+	sqlVdbeAddOp3(v, OP_IteratorOpen, pLevel->iIdxCur, 0, reg_eph);
 
 	/* Fill the automatic index with content */
 	sqlExprCachePush(pParse);
@@ -4502,7 +4502,6 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 			assert(space->index_count > 0);
 			vdbe_emit_open_cursor(pParse, pTabItem->iCursor, 0,
 					      space);
-			VdbeComment((v, "%s", space->def->name));
 			assert(pTabItem->iCursor == pLevel->iTabCur);
 			sqlVdbeChangeP5(v, bFordelete);
 		}
@@ -4578,7 +4577,6 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 					wctrlFlags & WHERE_ORDERBY_MIN) == 0) {
 					sqlVdbeChangeP5(v, OPFLAG_SEEKEQ);	/* Hint to COMDB2 */
 				}
-				VdbeComment((v, "%s", idx_def->name));
 			}
 		}
 	}

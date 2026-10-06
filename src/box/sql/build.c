@@ -852,6 +852,7 @@ vdbe_emit_open_cursor(struct Parse *parse_context, int cursor, int index_id,
 	int reg = ++parse_context->nMem;
 	sqlVdbeAddOp2(vdbe, OP_OpenSpace, reg, space->def->id);
 	sqlVdbeAddOp3(vdbe, OP_IteratorOpen, cursor, index_id, reg);
+	VdbeSynopsisObjName((vdbe, "%s", idx->def->name));
 }
 
 /*
@@ -1134,7 +1135,7 @@ vdbe_emit_ck_constraint_create(struct Parse *parser,
 	sqlVdbeAddOp3(v, OP_MakeRecord, regs, box_func_field_MAX,
 		      regs + box_func_field_MAX);
 	sqlVdbeAddOp2(v, OP_SInsert, BOX_FUNC_ID, regs + box_func_field_MAX);
-	VdbeComment((v, "Create func constraint %s", ck_def->name));
+	VdbeComment((v, "create func constraint %s", ck_def->name));
 	sqlVdbeAddOp4(v, OP_CreateCheck, reg_space_id, regs, ck_def->fieldno,
 		      sql_xstrdup(ck_def->name), P4_DYNAMIC);
 	sqlVdbeChangeP5(v, ck_def->is_field_ck);
@@ -1601,7 +1602,7 @@ vdbe_emit_revoke_object(struct Parse *parser, const char *object_type,
 		sqlVdbeAddOp2(v, OP_SDelete, BOX_PRIV_ID, key_reg + 3);
 	}
 	if (had_grants)
-		VdbeComment((v, "Remove %s grants", object_type));
+		VdbeComment((v, "remove %s grants", object_type));
 	sqlReleaseTempRange(parser, key_reg, 4);
 }
 
@@ -1658,7 +1659,7 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 				  idx_rec_reg);
 		sqlVdbeAddOp2(v, OP_SDelete, BOX_SPACE_SEQUENCE_ID,
 				  idx_rec_reg);
-		VdbeComment((v, "Delete entry from _space_sequence"));
+		VdbeComment((v, "delete entry from _space_sequence"));
 		if (space->sequence->is_generated) {
 			/* Delete entry from _sequence_data. */
 			int sequence_id_reg = ++parse_context->nMem;
@@ -1668,7 +1669,7 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 				      idx_rec_reg);
 			sqlVdbeAddOp2(v, OP_SDelete, BOX_SEQUENCE_DATA_ID,
 				      idx_rec_reg);
-			VdbeComment((v, "Delete entry from _sequence_data"));
+			VdbeComment((v, "delete entry from _sequence_data"));
 			/* Delete entries from _priv */
 		        vdbe_emit_revoke_object(parse_context, "sequence",
 						space->sequence->def->id,
@@ -1678,7 +1679,7 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 				      idx_rec_reg);
 			sqlVdbeAddOp2(v, OP_SDelete, BOX_SEQUENCE_ID,
 				      idx_rec_reg);
-			VdbeComment((v, "Delete entry from _sequence"));
+			VdbeComment((v, "delete entry from _sequence"));
 		}
 	}
 	/*
@@ -1702,7 +1703,7 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 				sqlVdbeAddOp2(v, OP_SDelete, BOX_INDEX_ID,
 						  idx_rec_reg);
 				VdbeComment((v,
-					     "Remove secondary index iid = %u",
+					     "remove secondary index iid = %u",
 					     space->index[i]->def->iid));
 			}
 		}
@@ -1710,17 +1711,17 @@ sql_code_drop_table(struct Parse *parse_context, struct space *space,
 		sqlVdbeAddOp3(v, OP_MakeRecord, space_id_reg, 2,
 				  idx_rec_reg);
 		sqlVdbeAddOp2(v, OP_SDelete, BOX_INDEX_ID, idx_rec_reg);
-		VdbeComment((v, "Remove primary index"));
+		VdbeComment((v, "remove primary index"));
 	}
 	/* Delete records about the space from the _truncate. */
 	sqlVdbeAddOp3(v, OP_MakeRecord, space_id_reg, 1, idx_rec_reg);
 	sqlVdbeAddOp2(v, OP_SDelete, BOX_TRUNCATE_ID, idx_rec_reg);
-	VdbeComment((v, "Delete entry from _truncate"));
+	VdbeComment((v, "delete entry from _truncate"));
 	/* Eventually delete entry from _space. */
 	sqlVdbeAddOp3(v, OP_MakeRecord, space_id_reg, 1, idx_rec_reg);
 	sqlVdbeAddOp2(v, OP_SDelete, BOX_SPACE_ID, idx_rec_reg);
 	sqlVdbeChangeP5(v, OPFLAG_NCHANGE);
-	VdbeComment((v, "Delete entry from _space"));
+	VdbeComment((v, "delete entry from _space"));
 }
 
 /**

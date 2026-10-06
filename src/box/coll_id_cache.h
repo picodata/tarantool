@@ -38,6 +38,7 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+struct coll;
 struct coll_id;
 
 /**
@@ -110,6 +111,14 @@ coll_by_id(uint32_t id);
  */
 struct coll_id *
 coll_by_name(const char *name, uint32_t len);
+
+/**
+ * Find a collation identifier by its collation object. Collations with
+ * the same properties share the object, so the one with the least ID is
+ * returned. Return NULL if there is none.
+ */
+struct coll_id *
+coll_by_coll(const struct coll *coll);
 
 /**
  * Register that there is a `holder` of type `type` that is dependent on

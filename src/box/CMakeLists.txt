@@ -329,7 +329,7 @@ add_custom_command(OUTPUT ${SQL_BIN_DIR}/opcodes.h
     DEPENDS ${SQL_SRC_DIR}/vdbe.c ${EXT_SRC_DIR}/mkopcodeh.sh ${SQL_BIN_DIR}/parse.h)
 
 add_custom_command(OUTPUT ${SQL_BIN_DIR}/opcodes.c
-    COMMAND ${EXT_SRC_DIR}/mkopcodec.sh opcodes.h > opcodes.c
+    COMMAND ${EXT_SRC_DIR}/mkopcodec.sh opcodes.h ${SQL_SRC_DIR}/vdbe.c > opcodes.c
     WORKING_DIRECTORY "${SQL_BIN_DIR}"
     DEPENDS ${SQL_SRC_DIR}/vdbe.c ${EXT_SRC_DIR}/mkopcodec.sh ${SQL_BIN_DIR}/parse.h
         ${SQL_BIN_DIR}/opcodes.h)

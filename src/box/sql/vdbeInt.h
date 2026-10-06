@@ -210,6 +210,23 @@ struct sql_column_metadata {
 	bool is_actoincrement;
 };
 
+/**
+ * The data of a statement under EXPLAIN. A debug build that traces or
+ * lists the program also has it, for the comments of the instructions.
+ * Other statements do not have it.
+ */
+struct VdbeExplain {
+	/** What a step of the statement does. */
+	ExplainMode mode;
+	/**
+	 * The comments and the object names of the instructions in
+	 * Vdbe.aOp, NULL if they have none.
+	 */
+	VdbeOpSynopsisAux *synopsis_aux;
+};
+
+typedef struct VdbeExplain VdbeExplain;
+
 /*
  * An instance of the virtual machine.  This structure contains the complete
  * state of the virtual machine.
@@ -281,7 +298,6 @@ struct Vdbe {
 	u8 errorAction;		/* Recovery action to do in case of an error */
 	bft expired:1;		/* True if the VM needs to be recompiled */
 	bft doingRerun:1;	/* True if rerunning after an auto-reprepare */
-	bft explain:2;		/* True if EXPLAIN present on SQL command */
 	bft changeCntOn:1;	/* True to update the change-counter */
 	bft runOnlyOnce:1;	/* Automatically expire on reset */
 	/**
@@ -296,6 +312,10 @@ struct Vdbe {
 	VdbeFrame *pDelFrame;	/* List of frame objects to free on VM reset */
 	int nFrame;		/* Number of frames in pFrame list */
 	SubProgram *pProgram;	/* Linked list of all sub-programs used by VM */
+
+	/** The data of EXPLAIN, NULL if the statement has none. */
+	VdbeExplain *explain_data;
+
 	/** Parser flags with which this object was built. */
 	uint32_t sql_flags;
 	/** Limit for maximum vdbe opcodes to execute. */
@@ -325,7 +345,12 @@ sqlVdbeFreeCursor(struct VdbeCursor *pCx);
 void sqlVdbePopStack(Vdbe *, int);
 int sqlVdbeCursorRestore(VdbeCursor *);
 #if defined(SQL_DEBUG)
-void sqlVdbePrintOp(FILE *, int, Op *);
+/**
+ * Print an instruction of the program p, or of one of its sub-programs,
+ * for the trace or the listing of a debug build. pc is its address.
+ */
+void
+sqlVdbePrintOp(FILE *out, struct Vdbe *p, int pc, struct VdbeOp *op);
 #endif
 
 int sqlVdbeExec(Vdbe *);
@@ -333,7 +358,22 @@ int sqlVdbeList(Vdbe *);
 
 int sqlVdbeHalt(Vdbe *);
 
+/** Get what a step of a statement does. */
+static inline ExplainMode
+vdbe_explain_mode(const struct Vdbe *p)
+{
+	return p->explain_data != NULL ? p->explain_data->mode :
+	       EXPLAIN_MODE_OFF;
+}
+
 const char *sqlOpcodeName(int);
+/**
+ * Get the synopsis template of an instruction. An opcode can have several
+ * of them, see extra/mkopcodec.sh. has_obj_name tells that the comment of
+ * the instruction is the name of an object.
+ */
+const char *
+sqlOpcodeSynopsis(const struct VdbeOp *pOp, bool has_obj_name);
 int sqlVdbeCloseStatement(Vdbe *, int);
 void sqlVdbeFrameDelete(VdbeFrame *);
 int sqlVdbeFrameRestore(VdbeFrame *);

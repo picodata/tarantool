@@ -1834,8 +1834,8 @@ sqlWindowCodeStep(
 	sqlVdbeAddOp2(v, OP_Goto, 0, lblWhereEnd);
 
 	/* Begin generating SECOND_ROW_CODE */
-	VdbeComment((v, "Begin windowCodeStep.SECOND_ROW"));
 	sqlVdbeJumpHere(v, addrIfNot);
+	VdbeNoopComment((v, "begin windowCodeStep.SECOND_ROW"));
 	if( regPeer ){
 		windowIfNewPeer(pParse, pOrderBy, regNewPeer, regPeer, lblWhereEnd);
 	}
@@ -1860,7 +1860,7 @@ sqlWindowCodeStep(
 			if( regEnd ) sqlVdbeJumpHere(v, addr);
 		}
 	}
-	VdbeComment((v, "End windowCodeStep.SECOND_ROW"));
+	VdbeComment((v, "end windowCodeStep.SECOND_ROW"));
 
 	/* End of the main input loop */
 	sqlVdbeResolveLabel(v, lblWhereEnd);
@@ -1872,8 +1872,8 @@ sqlWindowCodeStep(
 		sqlVdbeJumpHere(v, addrGosubFlush);
 	}
 
-	VdbeComment((v, "Begin windowCodeStep.FLUSH"));
 	addrEmpty = sqlVdbeAddOp1(v, OP_Rewind, csrWrite);
+	VdbeComment((v, "begin windowCodeStep.FLUSH"));
 	if (pMWin->eEnd == TK_PRECEDING) {
 		windowCodeOp(&s, WINDOW_AGGSTEP, regEnd, 0);
 		windowCodeOp(&s, WINDOW_RETURN_ROW, 0, 0);
@@ -1914,7 +1914,7 @@ sqlWindowCodeStep(
 
 	sqlVdbeAddOp1(v, OP_ResetSorter, s.current.csr);
 	sqlVdbeAddOp2(v, OP_Bool, 1, pMWin->regFirst);
-	VdbeComment((v, "End windowCodeStep.FLUSH"));
+	VdbeComment((v, "end windowCodeStep.FLUSH"));
 	if (pMWin->pPartition) {
 		sqlVdbeChangeP1(v, addrInteger, sqlVdbeCurrentAddr(v));
 		sqlVdbeAddOp1(v, OP_Return, regFlushPart);

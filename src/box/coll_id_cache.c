@@ -97,6 +97,20 @@ coll_by_id(uint32_t id)
 	return mh_i32ptr_node(coll_id_cache, pos)->val;
 }
 
+struct coll_id *
+coll_by_coll(const struct coll *coll)
+{
+	struct coll_id *found = NULL;
+	mh_int_t i;
+	mh_foreach(coll_id_cache, i) {
+		struct coll_id *coll_id = mh_i32ptr_node(coll_id_cache, i)->val;
+		if (coll_id->coll == coll &&
+		    (found == NULL || coll_id->id < found->id))
+			found = coll_id;
+	}
+	return found;
+}
+
 /**
  * Find a collation object by its name.
  */

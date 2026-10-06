@@ -1175,22 +1175,14 @@ test:do_execsql2_test(
         -- </select1-6.9.6>
     })
 
-test:do_test(
+test:do_execsql2_test(
     "select1-6.9.7",
-    function()
-        local x = test:execsql2 [[
-            SELECT * FROM test1 a, (select 5, 6) LIMIT 1
-        ]]
-        for i, tmp in ipairs(x) do
-            if type(tmp) == "string" then
-                x[i] = tmp:gsub("subquery_[0-9a-fA-F_]+", "sql_subquery")
-            end
-        end
-        return x
-    end, {
+    [[
+        SELECT * FROM test1 a, (select 5, 6) LIMIT 1
+    ]], {
         -- <select1-6.9.7>
-        "A.F1", 11, "A.F2", 22, "sql_subquery.COLUMN_1", 5,
-        "sql_subquery.COLUMN_2", 6
+        "A.F1", 11, "A.F2", 22, "(subquery:1).COLUMN_1", 5,
+        "(subquery:1).COLUMN_2", 6
         -- </select1-6.9.7>
     })
 

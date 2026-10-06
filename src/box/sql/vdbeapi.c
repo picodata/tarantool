@@ -135,7 +135,7 @@ sqlStep(Vdbe * p)
 		db->nVdbeActive++;
 		p->pc = 0;
 	}
-	if (p->explain) {
+	if (vdbe_explain_mode(p) != EXPLAIN_MODE_OFF) {
 		rc = sqlVdbeList(p);
 	} else {
 		db->nVdbeExec++;

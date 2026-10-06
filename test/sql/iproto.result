@@ -719,7 +719,7 @@ res.metadata
     type: text
   - name: p5
     type: text
-  - name: comment
+  - name: pseudocode
     type: text
 ...
 res = cn:execute("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM t1")

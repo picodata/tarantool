@@ -940,7 +940,7 @@ vdbe_emit_raw_explain_hook(struct Vdbe *v, enum sql_raw_explain_event event)
 {
 	assert(v != NULL);
 	struct Parse *parse = v->pParse;
-	if (parse == NULL || parse->explain != 2)
+	if (parse == NULL || parse->explain != EXPLAIN_MODE_QUERY_PLAN)
 		return;
 	const struct sql_raw_explain_provider *provider =
 		parse->raw_explain_provider;
@@ -1165,7 +1165,6 @@ xferOptimization(Parse * pParse,	/* Parser context */
 	regTupleid = sqlGetTempReg(pParse);
 
 	vdbe_emit_open_cursor(pParse, iDest, 0, dest);
-	VdbeComment((v, "%s", dest->def->name));
 
 	/*
 	 * Xfer optimization is unable to correctly insert data
@@ -1184,7 +1183,6 @@ xferOptimization(Parse * pParse,	/* Parser context */
 	}
 
 	vdbe_emit_open_cursor(pParse, iSrc, 0, src);
-	VdbeComment((v, "%s", src->def->name));
 	int addr_rewind = sqlVdbeAddOp2(v, OP_Rewind, iSrc, 0);
 	int reg = ++pParse->nMem;
 	sqlVdbeAddOp2(v, OP_OpenSpace, reg, dest->def->id);

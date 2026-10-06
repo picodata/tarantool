@@ -193,13 +193,6 @@
 #endif
 
 /*
- * Enable sql_ENABLE_EXPLAIN_COMMENTS if sql_DEBUG is turned on.
- */
-#if !defined(SQL_ENABLE_EXPLAIN_COMMENTS) && defined(SQL_DEBUG)
-#define SQL_ENABLE_EXPLAIN_COMMENTS 1
-#endif
-
-/*
  * Sometimes we need a small amount of code such as a variable initialization
  * to setup for a later assert() statement.  We do not want this code to
  * appear when assert() is disabled.  The following macro is therefore
@@ -2073,6 +2066,18 @@ enum ast_type {
 	ast_type_MAX
 };
 
+/** What a step of a statement does. */
+enum ExplainMode {
+	/** Run the program: the statement is not under EXPLAIN. */
+	EXPLAIN_MODE_OFF = 0,
+	/** List the instructions of the program: EXPLAIN. */
+	EXPLAIN_MODE_PROGRAM = 1,
+	/** List the query plan: EXPLAIN QUERY PLAN. */
+	EXPLAIN_MODE_QUERY_PLAN = 2,
+};
+
+typedef enum ExplainMode ExplainMode;
+
 /*
  * An SQL parser context.  A copy of this structure is passed through
  * the parser and down into all the parser action routine in order to
@@ -2112,6 +2117,8 @@ struct Parse {
 	int nMaxArg;		/* Max args passed to user function by sub-program */
 	int nSelect;		/* Number of SELECT statements seen */
 	int nSelectIndent;	/* How far to indent SELECTTRACE() output */
+	/** The number of FROM subqueries that have got a name. */
+	int subquery_count;
 	Parse *pToplevel;	/* Parse structure for main program (or NULL) */
 	u32 nQueryLoop;		/* Est number of iterations of a query (10*log2(N)) */
 	/* Mask of old.* columns referenced. */
@@ -2160,7 +2167,8 @@ struct Parse {
 	 */
 	int line_pos;
 	ynVar nVar;		/* Number of '?' variables seen in the SQL so far */
-	u8 explain;		/* True if the EXPLAIN flag is found on the query */
+	/** What EXPLAIN does with the statement. */
+	ExplainMode explain;
 	int nHeight;		/* Expression tree height of current sub-select */
 	int iSelectId;		/* ID of current select for EXPLAIN output */
 	int iNextSelectId;	/* Next available select ID for EXPLAIN output */
@@ -3363,6 +3371,8 @@ int sqlWhereOkOnePass(WhereInfo *, int *);
  * stored in any register.  But the result is guaranteed to land
  * in register iReg for GetColumnToReg().
  * @param pParse Parsing and code generating context.
+ * @param def The space of the column, for the EXPLAIN comment of
+ *        OP_Column. Can be NULL.
  * @param iColumn Index of the table column.
  * @param iTable The cursor pointing to the table.
  * @param iReg Store results here.
@@ -3370,19 +3380,23 @@ int sqlWhereOkOnePass(WhereInfo *, int *);
  * @return iReg value.
  */
 int
-sqlExprCodeGetColumn(Parse *, int, int, int, u8);
+sqlExprCodeGetColumn(Parse *pParse, const struct space_def *def, int iColumn,
+		     int iTable, int iReg, u8 p5);
 
 /**
  * Generate code that will extract the iColumn-th column from
  * table defined by space_def and store the column value in
  * a register, copy the result.
  * @param pParse Parsing and code generating context.
+ * @param def The space of the column, for the EXPLAIN comment of
+ *        OP_Column. Can be NULL.
  * @param iColumn Index of the table column.
  * @param iTable The cursor pointing to the table.
  * @param iReg Store results here.
  */
 void
-sqlExprCodeGetColumnToReg(Parse *, int, int, int);
+sqlExprCodeGetColumnToReg(Parse *pParse, const struct space_def *def,
+			  int iColumn, int iTable, int iReg);
 
 void sqlExprCodeMove(Parse *, int, int, int);
 void sqlExprCacheStore(Parse *, int, int, int);

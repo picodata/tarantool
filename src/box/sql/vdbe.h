@@ -105,22 +105,47 @@ struct VdbeOp {
 		/** P4 contains address of decimal. */
 		decimal_t *dec;
 	} p4;
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
-	char *zComment;		/* Comment to improve readability */
-#endif
 };
 typedef struct VdbeOp VdbeOp;
+
+/**
+ * The data that goes with the synopsis of each instruction of a program:
+ * the name of an object in it, or a comment after it.
+ */
+struct VdbeOpSynopsisAux {
+	/* The number of elements. */
+	int count;
+	/* Item per instruction. */
+	struct {
+		/* Is it an object name or unrelated comment? */
+		bool is_obj_name;
+		/* The content itself. */
+		char *text;
+	} items[];
+};
+
+typedef struct VdbeOpSynopsisAux VdbeOpSynopsisAux;
 
 /*
  * A sub-routine used to implement a trigger program.
  */
 struct SubProgram {
-	VdbeOp *aOp;		/* Array of opcodes for sub-program */
-	int nOp;		/* Elements in aOp[] */
-	int nMem;		/* Number of memory cells required */
-	int nCsr;		/* Number of cursors required */
-	void *token;		/* id that may be used to recursive triggers */
-	SubProgram *pNext;	/* Next sub-program already visited */
+	/* Array of opcodes for sub-program */
+	VdbeOp *aOp;
+	/* Number of elements in aOp[] */
+	int nOp;
+	/* Number of memory cells required */
+	int nMem;
+	/* Number of cursors required */
+	int nCsr;
+	/* id that may be used to recursive triggers */
+	void *token;
+	/* Optional name of the sub-program */
+	char *name;
+	/** The synopsis data of the instructions. */
+	VdbeOpSynopsisAux *synopsis_aux;
+	/* Next sub-program already visited */
+	SubProgram *pNext;
 };
 
 /*
@@ -307,16 +332,30 @@ sqlVdbeAllocUnpackedRecord(struct key_def *key_def);
 
 void sqlVdbeLinkSubProgram(Vdbe *, SubProgram *);
 
-/* Use SQL_ENABLE_COMMENTS to enable generation of extra comments on
- * each VDBE opcode.
+/*
+ * Set the comment of the last instruction. VdbeNoopComment() first adds
+ * an OP_Noop to hold the comment. Only a program that EXPLAIN shows, or
+ * that a debug build traces or lists, keeps the comments and the names of
+ * VdbeSynopsisObjName(). Other programs do not get the OP_Noop, so their
+ * addresses can be different from the ones that EXPLAIN shows.
  */
-#ifdef SQL_ENABLE_EXPLAIN_COMMENTS
 void sqlVdbeComment(Vdbe *, const char *, ...);
 #define VdbeComment(X)  sqlVdbeComment X
 void sqlVdbeNoopComment(Vdbe *, const char *, ...);
 #define VdbeNoopComment(X)  sqlVdbeNoopComment X
-#else
-#define VdbeComment(X) (void) 0
-#define VdbeNoopComment(X) (void) 0
-#endif
+
+/**
+ * Set the name of the object that the last instruction reads or opens:
+ * OBJ_NAME in the synopsis of the instruction. It replaces the comment.
+ */
+void
+sqlVdbeSynopsisObjName(Vdbe *p, const char *zFormat, ...);
+#define VdbeSynopsisObjName(X)  sqlVdbeSynopsisObjName X
+
+/**
+ * Take the synopsis data of the instructions from a Vdbe, like
+ * sqlVdbeTakeOpArray() takes the instructions.
+ */
+VdbeOpSynopsisAux *
+vdbe_take_synopsis_aux(struct Vdbe *p);
 #endif				/* SQL_VDBE_H */

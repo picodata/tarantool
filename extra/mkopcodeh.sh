@@ -71,14 +71,6 @@ while read line; do
         eval "ARRAY_paramused_$currentOp=$m"
         ;;
 
-    # Find "** Synopsis: " lines that follow Opcode:
-    ??' Synopsis: '*)
-        if [ -n "$currentOp" ]; then
-            x=${line#??' Synopsis: '}
-            eval "ARRAY_synopsis_$currentOp=\"$x\""
-        fi
-        ;;
-
     # Scan for "case OP_aaaa:" lines in the vdbe.c file
     'case OP_'*)
         IFS=" "
@@ -238,14 +230,6 @@ while [ "$i" -le "$mxTk" ]; do
     eval "sameas=\${ARRAY_sameas_$i:-}"
     if [ -n "$sameas" ]; then
         com="same as $sameas"
-    fi
-    eval "synopsis=\${ARRAY_synopsis_$name:-}"
-    if [ -n "$synopsis" ]; then
-        if [ -z "$com" ]; then
-            com="synopsis: $synopsis"
-        else
-            com="${com}, synopsis: $synopsis"
-        fi
     fi
     if [ -n "$com" ]; then
         printf ' /* %-42s */' "$com"
