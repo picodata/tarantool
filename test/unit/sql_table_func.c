@@ -2,6 +2,7 @@
 #include "coll/coll.h"
 #include "fiber.h"
 #include "box/session.h"
+#include "box/space_cache.h"
 #include "box/box.h"
 #include "box/execute.h"
 #include "box/sql.h"
@@ -116,7 +117,7 @@ main(void)
 	memory_init();
 	fiber_init(fiber_c_invoke);
 	coll_init();
-	plan(34);
+	plan(62);
 	struct sql_table_func_ops saved = ops;
 #define CHECK_REQUIRED(method) do { \
 	ops = saved; \
@@ -132,6 +133,7 @@ main(void)
 	ops = saved;
 	is(sql_table_func_register(defs, 1), 0, "register during startup");
 	box_init();
+	space_cache_init();
 	sql_init();
 	is(sql_table_func_register(defs, 1), -1,
 	   "registry sealed after startup");
@@ -140,8 +142,8 @@ main(void)
 	ops.estimate_rows = estimate_one;
 	execute("SELECT * FROM TEST_ZERO()", 3, false);
 	execute("SELECT * FROM TEST_ZERO() LIMIT 1", 1, false);
-	execute("SELECT t.VALUE FROM TEST_ZERO() g CROSS JOIN "
-		"TEST_ZERO() t", 9, false);
+	execute("SELECT t.VALUE FROM GENERATE_SERIES(1, 2) g CROSS JOIN "
+		"TEST_ZERO() t", 6, false);
 	fail_next = true;
 	execute("SELECT * FROM TEST_ZERO()", 0, true);
 	fail_next = false;
@@ -149,6 +151,31 @@ main(void)
 	execute("SELECT * FROM TEST_ZERO()", 0, true);
 	fail_open = false;
 	execute("SELECT * FROM TEST_ZERO()", 3, false);
+	const char *group = "SELECT t.VALUE FROM GENERATE_SERIES(1, 2) g "
+		"LEFT JOIN (TEST_ZERO() t JOIN GENERATE_SERIES(1, g.VALUE) h "
+		"ON true) ON true";
+	execute(group, 9, false);
+	execute("SELECT t.VALUE FROM GENERATE_SERIES(1, 2) g LEFT JOIN "
+		"(TEST_ZERO() t JOIN GENERATE_SERIES(1, g.VALUE) h ON true) "
+		"ON true LIMIT 1", 1, false);
+	fail_next = true;
+	execute(group, 0, true);
+	fail_next = false;
+	fail_open = true;
+	execute(group, 0, true);
+	fail_open = false;
+	execute(group, 9, false);
+	/* Reset and finalize while a group is suspended at its first row. */
+	sql_stmt *suspended;
+	fail_unless(sql_stmt_compile_wrapper(group, strlen(group),
+					     &suspended) == 0);
+	is(sql_step(suspended), SQL_ROW, "group returns its first row");
+	is(live_contexts, 1, "suspended group keeps its iterator");
+	sql_stmt_reset(suspended);
+	is(live_contexts, 0, "reset closes the suspended group");
+	is(sql_step(suspended), SQL_ROW, "group restarts after reset");
+	sql_stmt_finalize(suspended);
+	is(live_contexts, 0, "finalize closes the suspended group");
 	/* Reach the uint64 boundary without iterating 2^64 rows. */
 	sql_stmt *stmt;
 	const char *query = "SELECT * FROM TEST_ZERO() WITH ORDINALITY";
@@ -165,6 +192,27 @@ main(void)
 	is(sql_step(stmt), -1, "ordinality does not wrap to zero");
 	sql_stmt_finalize(stmt);
 	is(live_contexts, 0, "ordinality error releases the iterator");
+	const struct sql_table_func_def *unnest =
+		sql_table_func_find("UNNEST", 6, false);
+	void *ctx = NULL;
+	static const char args[] = "\x91\x01";
+	is(unnest->ops->open(args, args + 2, &ctx), -1,
+	   "invalid UNNEST argument");
+	is(ctx, NULL, "failed open leaves ctx empty");
+	const struct sql_table_func_def *each =
+		sql_table_func_find("JSON_EACH", 9, false);
+	is(each->ops->open(args, args + 2, &ctx), -1,
+	   "invalid JSON_EACH argument");
+	is(ctx, NULL, "failed JSON_EACH open leaves ctx empty");
+	/* JSON scalars reach the branch which allocates before rejecting. */
+	static const char json_args[] = "\x91\xc7\x01\x14\x01";
+	is(unnest->ops->open(json_args, json_args + 5, &ctx), -1,
+	   "UNNEST rejects a JSON scalar after allocation");
+	is(ctx, NULL, "partial UNNEST state is not transferred");
+	is(each->ops->open(json_args, json_args + 5, &ctx), -1,
+	   "JSON_EACH rejects a JSON scalar after allocation");
+	is(ctx, NULL, "partial JSON_EACH state is not transferred");
 	is(live_contexts, 0, "all iterator contexts released");
+	space_cache_destroy();
 	return check_plan();
 }

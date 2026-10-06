@@ -63,6 +63,575 @@ static struct func_sql_builtin **functions;
 static bool
 sql_builtin_func_is_reserved(const char *name, uint32_t name_len);
 
+/** Derive a common type without changing the values. */
+static enum field_type
+sql_table_func_resolve_type(enum field_type a, enum field_type b)
+{
+	if (field_type1_contains_type2(a, b))
+		return a;
+	if (field_type1_contains_type2(b, a))
+		return b;
+	const enum field_type common[] = {
+		FIELD_TYPE_NUMBER, FIELD_TYPE_SCALAR, FIELD_TYPE_ANY,
+	};
+	for (uint32_t i = 0; i < nelem(common); i++) {
+		if (field_type1_contains_type2(common[i], a) &&
+		    field_type1_contains_type2(common[i], b))
+			return common[i];
+	}
+	unreachable();
+}
+
+/** Infer the element type without converting the array values. */
+static int
+unnest_resolve_schema(struct ExprList *args, struct field_def *fields)
+{
+	struct Expr *arg = sqlExprSkipCollate(args->a[0].pExpr);
+	enum field_type type = FIELD_TYPE_ANY;
+	if (sql_expr_type(arg) == FIELD_TYPE_JSON) {
+		type = FIELD_TYPE_JSON;
+	} else if (arg->op == TK_ARRAY && arg->x.pList != NULL) {
+		bool first = true;
+		for (int i = 0; i < arg->x.pList->nExpr; i++) {
+			struct Expr *elem =
+				sqlExprSkipCollate(arg->x.pList->a[i].pExpr);
+			if (elem->op == TK_NULL)
+				continue;
+			/* Signs keep an uncast parameter's type unknown. */
+			struct Expr *operand = elem;
+			while (operand->op == TK_UPLUS ||
+			       operand->op == TK_UMINUS)
+				operand = sqlExprSkipCollate(operand->pLeft);
+			enum field_type elem_type = operand->op == TK_VARIABLE ?
+				FIELD_TYPE_ANY : sql_expr_type(elem);
+			type = first ? elem_type :
+				sql_table_func_resolve_type(type, elem_type);
+			first = false;
+		}
+	}
+	fields[0].type = type;
+	fields[0].is_nullable = true;
+	return 0;
+}
+
+/** Set the fixed INTEGER column type of a series. */
+static int
+generate_series_resolve_schema(struct ExprList *args, struct field_def *fields)
+{
+	(void)args;
+	fields[0].type = FIELD_TYPE_INTEGER;
+	return 0;
+}
+
+/** Set the fixed key and value types of a JSON object iterator. */
+static int
+json_each_resolve_schema(struct ExprList *args, struct field_def *fields)
+{
+	(void)args;
+	fields[0].type = FIELD_TYPE_STRING;
+	fields[1].type = FIELD_TYPE_JSON;
+	return 0;
+}
+
+/** Read only an integer literal, optionally preceded by a sign. */
+static bool
+expr_read_int(struct Expr *expr, int64_t *value)
+{
+	expr = sqlExprSkipCollate(expr);
+	bool neg = expr->op == TK_UMINUS;
+	if (neg || expr->op == TK_UPLUS)
+		expr = expr->pLeft;
+	if (expr->op != TK_INTEGER)
+		return false;
+	uint64_t magnitude;
+	if (ExprHasProperty(expr, EP_IntValue)) {
+		magnitude = expr->u.iValue;
+	} else {
+		const char *text = expr->u.zToken;
+		if (text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+			char *end;
+			errno = 0;
+			magnitude = strtoull(text, &end, 16);
+			if (errno != 0 || *end != '\0')
+				return false;
+		} else {
+			int64_t parsed;
+			bool sign;
+			if (sql_atoi64(text, &parsed, &sign,
+				       strlen(text)) != 0 ||
+			    sign)
+				return false;
+			magnitude = (uint64_t)parsed;
+		}
+	}
+	if (magnitude > (uint64_t)INT64_MAX + neg)
+		return false;
+	if (neg && magnitude == (uint64_t)INT64_MAX + 1)
+		*value = INT64_MIN;
+	else
+		*value = neg ? -(int64_t)magnitude : (int64_t)magnitude;
+	return true;
+}
+
+/** Estimate a range size from literal bounds without evaluating them. */
+static uint64_t
+generate_series_estimate_rows(struct ExprList *args)
+{
+	struct Expr *start_expr = args->a[0].pExpr;
+	struct Expr *stop_expr = args->a[1].pExpr;
+	if (start_expr->op == TK_NULL || stop_expr->op == TK_NULL)
+		return 0;
+	int64_t start, stop;
+	if (!expr_read_int(start_expr, &start) ||
+	    !expr_read_int(stop_expr, &stop))
+		return 1000;
+	if (start > stop)
+		return 0;
+	uint64_t diff = (uint64_t)stop - (uint64_t)start;
+	return diff == UINT64_MAX ? UINT64_MAX : diff + 1;
+}
+
+/** Count constructor elements, or use the default array size estimate. */
+static uint64_t
+unnest_estimate_rows(struct ExprList *args)
+{
+	struct Expr *arg = sqlExprSkipCollate(args->a[0].pExpr);
+	if (arg->op == TK_NULL)
+		return 0;
+	if (arg->op == TK_ARRAY)
+		return arg->x.pList == NULL ? 0 : arg->x.pList->nExpr;
+	return 100;
+}
+
+/** Estimate object size without evaluating the JSON expression. */
+static uint64_t
+json_each_estimate_rows(struct ExprList *args)
+{
+	return sqlExprSkipCollate(args->a[0].pExpr)->op == TK_NULL ? 0 : 100;
+}
+
+/*
+ * MsgPack fixarray(1) plus the largest encoded int64/uint64 value.
+ */
+#define GENERATE_SERIES_ROW_BUF_SIZE 10
+
+/** Iterator state for generate_series(start, stop). */
+struct generate_series_ctx {
+	/** Value to return in the next row. */
+	int64_t current;
+	/** Inclusive upper bound. */
+	int64_t stop;
+	/** True once the iterator reached EOF. */
+	bool done;
+	/** Reusable MsgPack row buffer. */
+	char row[GENERATE_SERIES_ROW_BUF_SIZE];
+};
+
+/** Read a generate_series integer argument from MsgPack. */
+static int
+generate_series_read_i64(const char **data, int64_t *value, bool *is_null)
+{
+	if (mp_typeof(**data) == MP_NIL) {
+		mp_decode_nil(data);
+		*is_null = true;
+		return 0;
+	}
+	/* The arguments are integers after the implicit cast. */
+	assert(mp_typeof(**data) == MP_UINT || mp_typeof(**data) == MP_INT);
+	if (mp_read_int64(data, value) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "integer is overflowed");
+		return -1;
+	}
+	return 0;
+}
+
+/** Open a generate_series iterator. */
+static int
+generate_series_open(const char *args, const char *args_end, void **ctx)
+{
+	if (args >= args_end || mp_typeof(*args) != MP_ARRAY) {
+		diag_set(ClientError, ER_PROC_C,
+			 "generate_series expects arguments array");
+		return -1;
+	}
+	uint32_t argc = mp_decode_array(&args);
+	if (argc != 2) {
+		diag_set(ClientError, ER_PROC_C,
+			 "generate_series expects 2 arguments");
+		return -1;
+	}
+	int64_t start = 0;
+	int64_t stop = 0;
+	bool has_null_arg = false;
+	if (generate_series_read_i64(&args, &start, &has_null_arg) != 0 ||
+	    generate_series_read_i64(&args, &stop, &has_null_arg) != 0)
+		return -1;
+	if (args != args_end) {
+		diag_set(ClientError, ER_PROC_C,
+			 "generate_series got invalid arguments");
+		return -1;
+	}
+	struct generate_series_ctx *state = xmalloc(sizeof(*state));
+	state->current = start;
+	state->stop = stop;
+	state->done = has_null_arg || start > stop;
+	*ctx = state;
+	return 0;
+}
+
+/** Return the next generate_series row. */
+static int
+generate_series_next(void *ctx, const char **row, const char **row_end)
+{
+	struct generate_series_ctx *state = ctx;
+	if (state->done) {
+		*row = NULL;
+		*row_end = NULL;
+		return 0;
+	}
+	char *pos = state->row;
+	pos = mp_encode_array(pos, 1);
+	if (state->current < 0)
+		pos = mp_encode_int(pos, state->current);
+	else
+		pos = mp_encode_uint(pos, state->current);
+	*row = state->row;
+	*row_end = pos;
+	if (state->current == state->stop || state->current == INT64_MAX)
+		state->done = true;
+	else
+		state->current++;
+	return 0;
+}
+
+/** Close a generate_series iterator. */
+static void
+generate_series_close(void *ctx)
+{
+	free(ctx);
+}
+
+static const struct sql_table_func_ops generate_series_ops = {
+	.resolve_schema = generate_series_resolve_schema,
+	.estimate_rows = generate_series_estimate_rows,
+	.open = generate_series_open,
+	.next = generate_series_next,
+	.close = generate_series_close,
+};
+
+static const struct field_def generate_series_fields[] = {
+	{
+		.type = FIELD_TYPE_INTEGER,
+		.name = (char *)"VALUE",
+		.is_nullable = false,
+		.nullable_action = ON_CONFLICT_ACTION_DEFAULT,
+	},
+};
+
+/** Iterator state for unnest(array). */
+struct unnest_ctx {
+	/** Next array element to return. */
+	const char *next;
+	/** Number of elements left to return. */
+	uint32_t left;
+	/** True if @a next points into a JSON inner array. */
+	bool is_json;
+	/** Reusable MsgPack row buffer. */
+	char *row;
+	/** Allocated size of @a row. */
+	size_t row_capacity;
+};
+
+/** Open an unnest iterator. */
+static int
+unnest_open(const char *args, const char *args_end, void **ctx)
+{
+	if (args >= args_end || mp_typeof(*args) != MP_ARRAY) {
+		diag_set(ClientError, ER_PROC_C,
+			 "unnest expects arguments array");
+		return -1;
+	}
+	uint32_t argc = mp_decode_array(&args);
+	if (argc != 1) {
+		diag_set(ClientError, ER_PROC_C, "unnest expects 1 argument");
+		return -1;
+	}
+	if (args >= args_end) {
+		diag_set(ClientError, ER_PROC_C,
+			 "unnest got invalid arguments");
+		return -1;
+	}
+#ifndef NDEBUG
+	/*
+	 * Arguments are trusted SQL values. Rechecking the whole array on
+	 * every open would visit elements that the query may never read.
+	 */
+	const char *arg_end = args;
+	assert(mp_check(&arg_end, args_end) == 0 && arg_end == args_end);
+#endif
+	enum mp_type type = mp_typeof(*args);
+	if (type != MP_ARRAY && type != MP_NIL && type != MP_EXT) {
+		diag_set(ClientError, ER_PROC_C,
+			 "unnest expects array argument");
+		return -1;
+	}
+	struct unnest_ctx *state = xmalloc(sizeof(*state));
+	state->next = NULL;
+	state->left = 0;
+	state->is_json = false;
+	state->row = NULL;
+	state->row_capacity = 0;
+	if (type == MP_ARRAY) {
+		state->left = mp_decode_array(&args);
+		state->next = args;
+	} else if (type == MP_EXT) {
+		uint32_t len;
+		const char *inner = mp_decode_json(&args, &len);
+		if (inner == NULL ||
+		    mp_typeof(*inner) != MP_ARRAY) {
+			free(state);
+			diag_set(ClientError, ER_PROC_C,
+				 "unnest expects array or json array argument");
+			return -1;
+		}
+		state->left = mp_decode_array(&inner);
+		state->next = inner;
+		state->is_json = true;
+	}
+	*ctx = state;
+	return 0;
+}
+
+/** Return a native SQL element, or wrap a normalized JSON subtree. */
+static int
+unnest_next(void *ctx, const char **row, const char **row_end)
+{
+	struct unnest_ctx *state = ctx;
+	if (state->left == 0) {
+		*row = NULL;
+		*row_end = NULL;
+		return 0;
+	}
+	const char *element = state->next;
+	mp_next(&state->next);
+	uint32_t element_size = state->next - element;
+	size_t value_size = state->is_json ?
+		mp_sizeof_json_len(element_size) : element_size;
+	size_t row_size = mp_sizeof_array(1) + value_size;
+	if (row_size > state->row_capacity) {
+		state->row = xrealloc(state->row, row_size);
+		state->row_capacity = row_size;
+	}
+	char *pos = mp_encode_array(state->row, 1);
+	if (state->is_json) {
+		/* A subtree of a trusted SQL JSON value is normalized.
+		 * See doc/json-perimeter.md#table-function-iterators.
+		 */
+		struct json_norm norm =
+			json_norm_from_trusted(element, element_size);
+		mp_encode_json(pos, norm);
+	} else {
+		memcpy(pos, element, element_size);
+	}
+	*row = state->row;
+	*row_end = state->row + row_size;
+	state->left--;
+	return 0;
+}
+
+/** Close an unnest iterator. */
+static void
+unnest_close(void *ctx)
+{
+	struct unnest_ctx *state = ctx;
+	free(state->row);
+	free(state);
+}
+
+static const struct sql_table_func_ops unnest_ops = {
+	.resolve_schema = unnest_resolve_schema,
+	.estimate_rows = unnest_estimate_rows,
+	.open = unnest_open,
+	.next = unnest_next,
+	.close = unnest_close,
+};
+
+static const struct field_def unnest_fields[] = {
+	{
+		.type = FIELD_TYPE_ANY,
+		.name = (char *)"VALUE",
+		.is_nullable = true,
+		.nullable_action = ON_CONFLICT_ACTION_DEFAULT,
+	},
+};
+
+/** Iterator state for json_each(json_object). */
+struct json_each_ctx {
+	/** Next object key to return. */
+	const char *next;
+	/** Number of key-value pairs left to return. */
+	uint32_t left;
+	/** Reusable MsgPack row buffer. */
+	char *row;
+	/** Allocated size of @a row. */
+	size_t row_capacity;
+};
+
+/** Open a json_each iterator. */
+static int
+json_each_open(const char *args, const char *args_end, void **ctx)
+{
+	if (args >= args_end || mp_typeof(*args) != MP_ARRAY) {
+		diag_set(ClientError, ER_PROC_C,
+			 "json_each expects arguments array");
+		return -1;
+	}
+	uint32_t argc = mp_decode_array(&args);
+	if (argc != 1) {
+		diag_set(ClientError, ER_PROC_C,
+			 "json_each expects 1 argument");
+		return -1;
+	}
+	if (args >= args_end) {
+		diag_set(ClientError, ER_PROC_C,
+			 "json_each got invalid arguments");
+		return -1;
+	}
+	const char *arg_end = args;
+	if (mp_check(&arg_end, args_end) != 0 || arg_end != args_end) {
+		diag_set(ClientError, ER_PROC_C,
+			 "json_each got invalid arguments");
+		return -1;
+	}
+	enum mp_type type = mp_typeof(*args);
+	if (type != MP_EXT && type != MP_NIL) {
+		diag_set(ClientError, ER_PROC_C,
+			 "json_each expects json object argument");
+		return -1;
+	}
+	struct json_each_ctx *state = xmalloc(sizeof(*state));
+	state->next = NULL;
+	state->left = 0;
+	state->row = NULL;
+	state->row_capacity = 0;
+	if (type == MP_EXT) {
+		uint32_t len;
+		const char *inner = mp_decode_json(&args, &len);
+		if (inner == NULL ||
+		    mp_typeof(*inner) != MP_MAP) {
+			free(state);
+			diag_set(ClientError, ER_PROC_C,
+				 "json_each expects json object argument");
+			return -1;
+		}
+		state->left = mp_decode_map(&inner);
+		state->next = inner;
+	}
+	*ctx = state;
+	return 0;
+}
+
+/** Return the next json_each row. */
+static int
+json_each_next(void *ctx, const char **row, const char **row_end)
+{
+	struct json_each_ctx *state = ctx;
+	if (state->left == 0) {
+		*row = NULL;
+		*row_end = NULL;
+		return 0;
+	}
+	uint32_t key_len;
+	const char *key = mp_decode_str(&state->next, &key_len);
+	const char *value = state->next;
+	mp_next(&state->next);
+	size_t value_size = state->next - value;
+	if (value_size > UINT32_MAX) {
+		diag_set(ClientError, ER_PROC_C,
+			 "json_each got too large json value");
+		return -1;
+	}
+	/* A trusted SQL JSON subtree remains in normal form.
+	 * See doc/json-perimeter.md#table-function-iterators.
+	 */
+	struct json_norm norm = json_norm_from_trusted(value, value_size);
+	size_t row_size = mp_sizeof_array(2) + mp_sizeof_str(key_len) +
+			  mp_sizeof_json(norm);
+	if (row_size > state->row_capacity) {
+		state->row = xrealloc(state->row, row_size);
+		state->row_capacity = row_size;
+	}
+	char *pos = mp_encode_array(state->row, 2);
+	pos = mp_encode_str(pos, key, key_len);
+	pos = mp_encode_json(pos, norm);
+	assert(pos == state->row + row_size);
+	*row = state->row;
+	*row_end = state->row + row_size;
+	state->left--;
+	return 0;
+}
+
+/** Close a json_each iterator. */
+static void
+json_each_close(void *ctx)
+{
+	struct json_each_ctx *state = ctx;
+	free(state->row);
+	free(state);
+}
+
+static const struct sql_table_func_ops json_each_ops = {
+	.resolve_schema = json_each_resolve_schema,
+	.estimate_rows = json_each_estimate_rows,
+	.open = json_each_open,
+	.next = json_each_next,
+	.close = json_each_close,
+};
+
+static const struct field_def json_each_fields[] = {
+	{
+		.type = FIELD_TYPE_STRING,
+		.name = (char *)"KEY",
+		.is_nullable = false,
+		.nullable_action = ON_CONFLICT_ACTION_DEFAULT,
+	},
+	{
+		.type = FIELD_TYPE_JSON,
+		.name = (char *)"VALUE",
+		.is_nullable = false,
+		.nullable_action = ON_CONFLICT_ACTION_DEFAULT,
+	},
+};
+
+static const enum field_type generate_series_param_types[] = {
+	FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER,
+};
+
+static const struct sql_table_func_def sql_builtin_table_funcs[] = {
+	{
+		.name = "GENERATE_SERIES",
+		.param_count = 2,
+		.param_types = generate_series_param_types,
+		.fields = generate_series_fields,
+		.field_count = nelem(generate_series_fields),
+		.ops = &generate_series_ops,
+	},
+	{
+		.name = "UNNEST",
+		.param_count = 1,
+		.fields = unnest_fields,
+		.field_count = nelem(unnest_fields),
+		.ops = &unnest_ops,
+	},
+	{
+		.name = "JSON_EACH",
+		.param_count = 1,
+		.fields = json_each_fields,
+		.field_count = nelem(json_each_fields),
+		.ops = &json_each_ops,
+	},
+};
+
 static const struct sql_table_func_def **sql_table_funcs = NULL;
 static uint32_t sql_table_func_count = 0;
 static uint32_t sql_table_func_capacity = 0;
@@ -2839,6 +3408,9 @@ sql_built_in_functions_cache_init(void)
 	struct sql_func_dictionary *dict_original = built_in_func_get(name);
 	dict->count = dict_original->count;
 	dict->functions = dict_original->functions;
+	if (sql_table_func_register(sql_builtin_table_funcs,
+				    nelem(sql_builtin_table_funcs)) != 0)
+		panic("failed to initialize SQL table functions");
 	sql_table_func_registry_sealed = true;
 }
 
