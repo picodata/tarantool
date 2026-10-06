@@ -67,9 +67,9 @@ EXPLAIN QUERY PLAN SELECT a FROM t0 WHERE a = true;
 
 -- Check that ephemeral tables are used with BOOLEAN.
 \set language lua
-result = box.execute('EXPLAIN SELECT * FROM (VALUES(true)), t;')
+result = box.execute('EXPLAIN (opcode) SELECT * FROM (VALUES(true)), t;')
 i = 0
-for _,v in pairs(result.rows) do if (v[2] == 'OpenTEphemeral') then i = i + 1 end end
+for _, v in pairs(result.rows) do i = i + (v[2] == 'OpenTEphemeral' and 1 or 0) end
 i > 0
 \set language sql
 

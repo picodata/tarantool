@@ -28,7 +28,7 @@ test:plan(29)
 --
 local function nEphemeral(sql) -- luacheck: no unused
     local nEph = 0
-    for _, op in ipairs(test:execsql("EXPLAIN "..sql.."")) do
+    for _, op in ipairs(test:execsql("EXPLAIN (opcode) "..sql.."")) do
         if (op == "OpenTEphemeral")
  then
             nEph = nEph + 1
@@ -42,7 +42,7 @@ end
 -- statement is inserted into the start of the returned list.
 --
 local function exec_neph(sql)
-    local res = test:execsql('EXPLAIN '..sql)
+    local res = test:execsql('EXPLAIN (opcode) '..sql)
     local cnt = 0
     for _, v in ipairs(res) do
         if string.find(v, 'OpenTEphemeral') then

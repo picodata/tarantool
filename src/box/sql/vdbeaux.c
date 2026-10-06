@@ -1505,6 +1505,37 @@ vdbe_explain_delete(VdbeExplain *explain)
 	sql_xfree(explain);
 }
 
+/**
+ * Fill the row of EXPLAIN for an instruction with the columns of the
+ * facets of the statement, and set the number of columns.
+ */
+static void
+explain_list_row(struct Vdbe *p, Op *op, int addr, struct Mem *mem)
+{
+	uint8_t mask = p->explain_data->opts.facets;
+	struct Mem *first = mem;
+	char buf[256];
+	const char *p4 = displayP4(op, buf, sizeof(buf));
+	if ((mask & EXPLAIN_FACET_OPCODE) != 0) {
+		mem_set_uint(mem++, addr);
+		mem_set_str0_static(mem++, (char *)sqlOpcodeName(op->opcode));
+		mem_set_int(mem++, op->p1);
+		mem_set_int(mem++, op->p2);
+		mem_set_int(mem++, op->p3);
+		mem_copy_str0(mem++, p4);
+		mem_set_str0_allocated(mem++, sqlMPrintf("%.2x", op->p5));
+	}
+	if ((mask & EXPLAIN_FACET_PSEUDOCODE) != 0) {
+		/* The address again, next to the pseudocode. */
+		mem_set_uint(mem++, addr);
+		char *text = sql_xmalloc(500);
+		displaySynopsis(p, op, addr, p4, text, 500);
+		mem_set_str0_allocated(mem++, text);
+	}
+	assert(mem - first <= EXPLAIN_MAX_COLUMNS);
+	p->nResColumn = mem - first;
+}
+
 /*
  * Give a listing of the program in the virtual machine.
  *
@@ -1536,7 +1567,7 @@ sqlVdbeList(Vdbe * p)
 	 * the result, result columns may become dynamic if the user calls
 	 * sql_column_text16(), causing a translation to UTF-16 encoding.
 	 */
-	releaseMemArray(pMem, 8);
+	releaseMemArray(pMem, EXPLAIN_MAX_COLUMNS);
 	p->pResultSet = 0;
 
 	/* When the number of output rows reaches nRow, that means the
@@ -1548,13 +1579,14 @@ sqlVdbeList(Vdbe * p)
 	 */
 	nRow = p->nOp;
 	if (mode == EXPLAIN_MODE_PROGRAM) {
-		/* The first 8 memory cells are used for the result set.  So we will
-		 * commandeer the 9th cell to use as storage for an array of pointers
-		 * to trigger subprograms.  The VDBE is guaranteed to have at least 9
-		 * cells.
+		/*
+		 * The memory cells from 1 to EXPLAIN_MAX_COLUMNS are used
+		 * for the result set. The next cell holds the array of
+		 * pointers to trigger subprograms. sqlVdbeMakeReady()
+		 * gives the VDBE these cells.
 		 */
-		assert(p->nMem > 9);
-		pSub = &p->aMem[9];
+		assert(p->nMem > EXPLAIN_MAX_COLUMNS + 1);
+		pSub = &p->aMem[EXPLAIN_MAX_COLUMNS + 1];
 		if (mem_is_bin(pSub)) {
 			/* On the first call to sql_step(), pSub will hold a NULL.  It is
 			 * initialized to a BLOB by the P4_SUBPROGRAM processing logic below
@@ -1594,18 +1626,12 @@ sqlVdbeList(Vdbe * p)
 		}
 		if (mode == EXPLAIN_MODE_PROGRAM) {
 			assert(i >= 0);
-			mem_set_uint(pMem, i);
-
-			pMem++;
-
-			char *value = (char *)sqlOpcodeName(pOp->opcode);
-			mem_set_str0_static(pMem, value);
-			pMem++;
-
-			/* When an OP_Program opcode is encounter (the only opcode that has
-			 * a P4_SUBPROGRAM argument), expand the size of the array of subprograms
-			 * kept in p->aMem[9].z to hold the new program - assuming this subprogram
-			 * has not already been seen.
+			/*
+			 * When an OP_Program opcode is encounter (the only
+			 * opcode that has a P4_SUBPROGRAM argument), expand
+			 * the size of the array of subprograms kept in
+			 * pSub->z to hold the new program - assuming this
+			 * subprogram has not already been seen.
 			 */
 			if (pOp->p4type == P4_SUBPROGRAM) {
 				int j;
@@ -1624,43 +1650,35 @@ sqlVdbeList(Vdbe * p)
 						return -1;
 				}
 			}
-		}
-
-		mem_set_int(pMem, pOp->p1);
-		pMem++;
-
-		mem_set_int(pMem, pOp->p2);
-		pMem++;
-
-		mem_set_int(pMem, pOp->p3);
-		pMem++;
-
-		char p4_buf[256];
-		if (mode == EXPLAIN_MODE_QUERY_PLAN &&
-		    pOp->opcode == OP_Explain &&
-		    pOp->p4type == P4_PTR) {
-			zP4 = (char *)op_explain_hook_detail(pOp);
-			if (zP4 == NULL)
-				return -1;
-			mem_set_str0_ephemeral(pMem, zP4);
+			explain_list_row(p, pOp, i, pMem);
 		} else {
-			zP4 = displayP4(pOp, p4_buf, sizeof(p4_buf));
-			mem_copy_str0(pMem, zP4);
-		}
-		pMem++;
-
-		if (mode == EXPLAIN_MODE_PROGRAM) {
-			char *buf = sql_xmalloc(4);
-			sql_snprintf(3, buf, "%.2x", pOp->p5);
-			mem_set_str0_allocated(pMem, buf);
+			mem_set_int(pMem, pOp->p1);
 			pMem++;
 
-			buf = sql_xmalloc(500);
-			displaySynopsis(p, pOp, i, zP4, buf, 500);
-			mem_set_str0_allocated(pMem, buf);
-		}
+			mem_set_int(pMem, pOp->p2);
+			pMem++;
 
-		p->nResColumn = mode == EXPLAIN_MODE_PROGRAM ? 8 : 4;
+			mem_set_int(pMem, pOp->p3);
+			pMem++;
+
+			if (pOp->opcode == OP_Explain &&
+			    pOp->p4type == P4_PTR) {
+				zP4 = (char *)op_explain_hook_detail(pOp);
+				if (zP4 == NULL)
+					return -1;
+				mem_set_str0_ephemeral(pMem, zP4);
+			} else {
+				char *buf = sql_xmalloc(256);
+				zP4 = displayP4(pOp, buf, 256);
+				if (zP4 != buf) {
+					sql_xfree(buf);
+					mem_set_str0_ephemeral(pMem, zP4);
+				} else {
+					mem_set_str0_allocated(pMem, zP4);
+				}
+			}
+			p->nResColumn = 4;
+		}
 		p->pResultSet = &p->aMem[1];
 		rc = SQL_ROW;
 	}
@@ -1823,8 +1841,8 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 
 	resolveP2Values(p);
 	if (pParse->explain != EXPLAIN_MODE_OFF &&
-	    nMem < 10) {
-		nMem = 10;
+	    nMem < EXPLAIN_MAX_COLUMNS + 2) {
+		nMem = EXPLAIN_MAX_COLUMNS + 2;
 	}
 	p->expired = 0;
 
@@ -1854,6 +1872,8 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 	p->pVList = pParse->pVList;
 	pParse->pVList = 0;
 	assert(vdbe_explain_mode(p) == pParse->explain);
+	if (p->explain_data != NULL)
+		p->explain_data->opts = pParse->explain_opts;
 	p->nCursor = nCursor;
 	p->nVar = nVar;
 	for (int i = 0; i < nVar; ++i)

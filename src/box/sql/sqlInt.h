@@ -2078,6 +2078,33 @@ enum ExplainMode {
 
 typedef enum ExplainMode ExplainMode;
 
+/** Facets of EXPLAIN: the groups of columns that it shows. */
+enum explain_facet {
+	/** The address, the opcode and the operands. */
+	EXPLAIN_FACET_OPCODE = 1 << 1,
+	/**
+	 * The address and the pseudocode: the synopsis of the instruction
+	 * with its operands, and the comment of the code generator.
+	 */
+	EXPLAIN_FACET_PSEUDOCODE = 1 << 2,
+};
+
+enum {
+	/** The number of columns of EXPLAIN with all the facets. */
+	EXPLAIN_MAX_COLUMNS = 9,
+};
+
+/**
+ * The options of EXPLAIN (...). The parser fills them in struct Parse,
+ * and the statement keeps them in struct Vdbe.
+ */
+struct ExplainOpts {
+	/** The facets, a mask of enum explain_facet. */
+	uint8_t facets;
+};
+
+typedef struct ExplainOpts ExplainOpts;
+
 /*
  * An SQL parser context.  A copy of this structure is passed through
  * the parser and down into all the parser action routine in order to
@@ -2169,6 +2196,8 @@ struct Parse {
 	ynVar nVar;		/* Number of '?' variables seen in the SQL so far */
 	/** What EXPLAIN does with the statement. */
 	ExplainMode explain;
+	/** The options of EXPLAIN (...). */
+	ExplainOpts explain_opts;
 	int nHeight;		/* Expression tree height of current sub-select */
 	int iSelectId;		/* ID of current select for EXPLAIN output */
 	int iNextSelectId;	/* Next available select ID for EXPLAIN output */
@@ -2243,6 +2272,10 @@ struct Parse {
 		struct sql_trigger *trigger;
 	} parsed_ast;
 };
+
+/** Add a facet of EXPLAIN (...) by its name. */
+void
+sql_explain_add_facet(struct Parse *parse, const struct Token *name);
 
 /*
  * Bitfield flags for P5 value in various opcodes.

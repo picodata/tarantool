@@ -446,7 +446,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-3.42",
     [[
-        EXPLAIN
+        EXPLAIN (opcode)
         SELECT * FROM t3 WHERE x IN (10,11);
     ]], {
         -- <in4-3.42>
@@ -467,7 +467,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-3.44",
     [[
-        EXPLAIN
+        EXPLAIN (opcode)
         SELECT * FROM t3 WHERE x IN (10);
     ]], {
         -- <in4-3.44>
@@ -488,7 +488,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-3.46",
     [[
-        EXPLAIN
+        EXPLAIN (opcode)
         SELECT * FROM t3 WHERE x NOT IN (10,11,99999);
     ]], {
         -- <in4-3.46>
@@ -509,7 +509,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "in4-3.48",
     [[
-        EXPLAIN
+        EXPLAIN (opcode)
         SELECT * FROM t3 WHERE x NOT IN (10);
     ]], {
         -- <in4-3.48>

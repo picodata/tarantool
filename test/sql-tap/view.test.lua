@@ -409,7 +409,7 @@ test:do_execsql_test(
 test:do_test(
     "view-5.3",
     function()
-        return test:lsearch(test:execsql("EXPLAIN SELECT * FROM v5;"),"OpenEphemeral");
+        return test:lsearch(test:execsql("EXPLAIN (opcode) SELECT * FROM v5;"),"OpenEphemeral");
     end, -1)
 
 test:do_execsql_test(
@@ -425,7 +425,7 @@ test:do_execsql_test(
 test:do_test(
     "view-5.5",
     function()
-        return test:lsearch(test:execsql("EXPLAIN SELECT * FROM v5 AS a, t2 AS b WHERE a.w=b.y;"),"OpenEphemeral");
+        return test:lsearch(test:execsql("EXPLAIN (opcode) SELECT * FROM v5 AS a, t2 AS b WHERE a.w=b.y;"),"OpenEphemeral");
     end,-1)
 
 test:do_execsql_test(
@@ -441,7 +441,7 @@ test:do_execsql_test(
 test:do_test(
     "view-5.7",
     function()
-        return test:lsearch(test:execsql("EXPLAIN SELECT * FROM t2 AS b, v5 AS a WHERE a.w=b.y;"),"OpenEphemeral");
+        return test:lsearch(test:execsql("EXPLAIN (opcode) SELECT * FROM t2 AS b, v5 AS a WHERE a.w=b.y;"),"OpenEphemeral");
     end, -1)
 
 test:do_execsql_test(
@@ -457,7 +457,7 @@ test:do_execsql_test(
 test:do_test(
     "view-5.9",
     function()
-        local r = test:execsql("EXPLAIN SELECT * FROM t1 AS a, v5 AS b, t2 AS c WHERE a.x=b.v AND b.w=c.y;")
+        local r = test:execsql("EXPLAIN (opcode) SELECT * FROM t1 AS a, v5 AS b, t2 AS c WHERE a.x=b.v AND b.w=c.y;")
         return test:lsearch(r,"OpenEphemeral");
     end, -1)
 

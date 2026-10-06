@@ -661,7 +661,7 @@ test:do_execsql2_test(
 
 local json = require("json")
 local function is_flat(sql)
-    local r = test:execsql("EXPLAIN "..sql)
+    local r = test:execsql("EXPLAIN (opcode) "..sql)
     r = json.encode(r)
     local i = string.find(r,"OpenEphemeral")
     -- return 1 if there is no OpenEphemeral in r

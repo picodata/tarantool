@@ -617,18 +617,6 @@ res.metadata
  | ---
  | - - name: addr
  |     type: integer
- |   - name: opcode
- |     type: text
- |   - name: p1
- |     type: integer
- |   - name: p2
- |     type: integer
- |   - name: p3
- |     type: integer
- |   - name: p4
- |     type: text
- |   - name: p5
- |     type: text
  |   - name: pseudocode
  |     type: text
  | ...
@@ -659,6 +647,60 @@ assert(res.rows ~= nil)
  | - true
  | ...
 
+-- The facets of EXPLAIN select its columns.
+--
+s3 = prepare("EXPLAIN (opcode) SELECT 1;")
+ | ---
+ | ...
+s3.metadata
+ | ---
+ | - - name: addr
+ |     type: integer
+ |   - name: opcode
+ |     type: text
+ |   - name: p1
+ |     type: integer
+ |   - name: p2
+ |     type: integer
+ |   - name: p3
+ |     type: integer
+ |   - name: p4
+ |     type: text
+ |   - name: p5
+ |     type: text
+ | ...
+res = execute(s3.stmt_id)
+ | ---
+ | ...
+res.metadata
+ | ---
+ | - - name: addr
+ |     type: integer
+ |   - name: opcode
+ |     type: text
+ |   - name: p1
+ |     type: integer
+ |   - name: p2
+ |     type: integer
+ |   - name: p3
+ |     type: integer
+ |   - name: p4
+ |     type: text
+ |   - name: p5
+ |     type: text
+ | ...
+res.rows
+ | ---
+ | - - [0, 'Init', 0, 1, 0, '', '00']
+ |   - [1, 'Integer', 1, 1, 0, '', '00']
+ |   - [2, 'ResultRow', 1, 1, 0, '', '00']
+ |   - [3, 'Halt', 0, 0, 0, '', '00']
+ | ...
+
+unprepare(s3.stmt_id)
+ | ---
+ | - null
+ | ...
 unprepare(s2.stmt_id)
  | ---
  | - null

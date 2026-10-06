@@ -30,14 +30,15 @@ test:plan(21)
 -- keyset queries on real-world schemas.
 
 -- Helper: test:execsql() flattens the result of EXPLAIN into a single
--- sequence of 8 elements per opcode (addr, opcode, p1, p2, p3, p4, p5,
--- comment). Walk the sequence, find every multi-column seek, and
--- report the maximum P4 (key column count) seen across them. Without
--- the fix this is 1 for the queries below; with the fix it equals the
--- number of leading index columns the predicate can pin down.
+-- sequence of 7 elements per opcode (addr, opcode, p1, p2, p3, p4, p5)
+-- for the facet "opcode". Walk the sequence, find every multi-column
+-- seek, and report the maximum P4 (key column count) seen across them.
+-- Without the fix this is 1 for the queries below; with the fix it
+-- equals the number of leading index columns the predicate can pin
+-- down.
 local function max_seek_key_len(explain_rows)
     local best = 0
-    for i = 1, #explain_rows, 8 do
+    for i = 1, #explain_rows, 7 do
         local opcode = explain_rows[i + 1]
         local p4 = explain_rows[i + 5]
         if (opcode == 'SeekGE' or opcode == 'SeekGT' or
@@ -116,7 +117,7 @@ test:do_test(
     "rowvalue-1.3",
     function()
         return max_seek_key_len(test:execsql([[
-            EXPLAIN
+            EXPLAIN (opcode)
             SELECT a, b, c FROM t1 WHERE (a, b, c) > (1, 1, 1)
         ]]))
     end,
@@ -126,7 +127,7 @@ test:do_test(
     "rowvalue-1.4",
     function()
         return max_seek_key_len(test:execsql([[
-            EXPLAIN
+            EXPLAIN (opcode)
             SELECT a FROM t2 WHERE (a, b, c) > (
                 CAST(1 AS INTEGER),
                 CAST('2024-08-28 00:00:00.0 +00:00:00' AS DATETIME),
@@ -215,7 +216,7 @@ test:do_test(
     "rowvalue-2.5",
     function()
         return max_seek_key_len(test:execsql([[
-            EXPLAIN
+            EXPLAIN (opcode)
             SELECT a FROM t3 WHERE (a, b, c, d) > (1, 1, 1, 2)
         ]]))
     end,
@@ -225,7 +226,7 @@ test:do_test(
     "rowvalue-2.6",
     function()
         return max_seek_key_len(test:execsql([[
-            EXPLAIN
+            EXPLAIN (opcode)
             SELECT a FROM t3 WHERE (a, b, c, d) >= (2, 1, 1, 1)
         ]]))
     end,
@@ -297,7 +298,7 @@ test:do_test(
     "rowvalue-3.2",
     function()
         return max_seek_key_len(test:execsql([[
-            EXPLAIN
+            EXPLAIN (opcode)
             SELECT c1 FROM t4
             WHERE (c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11)
                 > (CAST(11 AS INT),
@@ -358,7 +359,7 @@ test:do_test(
     "rowvalue-4.2",
     function()
         return max_seek_key_len(test:execsql([[
-            EXPLAIN
+            EXPLAIN (opcode)
             SELECT a FROM t5 WHERE a = 1 AND (b, c, d) > (1, 1, 1)
         ]]))
     end,

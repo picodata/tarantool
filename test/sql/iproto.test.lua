@@ -218,6 +218,12 @@ res.metadata
 -- EXPLAIN
 res = cn:execute("EXPLAIN SELECT 1")
 res.metadata
+-- The facets of EXPLAIN select its columns.
+res = cn:execute("EXPLAIN (opcode) SELECT 1")
+res.metadata
+res.rows
+res = cn:execute("EXPLAIN (opcode, pseudocode) SELECT 1")
+res.metadata
 res = cn:execute("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM t1")
 res.metadata
 

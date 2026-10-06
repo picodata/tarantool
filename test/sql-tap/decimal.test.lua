@@ -152,7 +152,7 @@ test:do_execsql_test(
 test:do_execsql_test(
     "dec-4",
     [[
-        EXPLAIN SELECT * from (VALUES(1)), t2;
+        EXPLAIN (opcode) SELECT * from (VALUES(1)), t2;
     ]], {
         "/OpenTEphemeral/"
     })

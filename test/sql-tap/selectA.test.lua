@@ -2447,9 +2447,9 @@ local function strip_rnd(explain)
 end
 
 local function do_same_test(tn, q1, args)
-    local r2 = strip_rnd(test:execsql("EXPLAIN "..q1))
+    local r2 = strip_rnd(test:execsql("EXPLAIN (opcode) "..q1))
     for i, q in ipairs(args) do
-        local tst = strip_rnd(test:execsql("EXPLAIN "..q))
+        local tst = strip_rnd(test:execsql("EXPLAIN (opcode) "..q))
         test:do_test(
             tn.."."..i,
             function()

@@ -146,7 +146,7 @@ test:do_catchsql_test(
 test:do_execsql_test(
     "uuid-4",
     [[
-        EXPLAIN SELECT * from (VALUES(1)), t2;
+        EXPLAIN (opcode) SELECT * from (VALUES(1)), t2;
     ]], {
         "/OpenTEphemeral/"
     })

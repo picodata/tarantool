@@ -39,6 +39,102 @@
 #include "box/space.h"
 #include "box/session.h"
 
+/** A column of the result of EXPLAIN: its name and type. */
+struct ExplainColumn {
+	/** The name of the column. */
+	const char *name;
+	/** The type of the column. */
+	const char *type;
+};
+
+typedef struct ExplainColumn ExplainColumn;
+
+/**
+ * Set the names and types of the columns of EXPLAIN. For EXPLAIN without
+ * QUERY PLAN they depend on the facets.
+ */
+static void
+sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
+{
+	static const ExplainColumn opcode[] = {
+		{"addr", "integer"}, {"opcode", "text"}, {"p1", "integer"},
+		{"p2", "integer"}, {"p3", "integer"}, {"p4", "text"},
+		{"p5", "text"},
+	};
+	static const ExplainColumn pseudocode[] = {
+		{"addr", "integer"}, {"pseudocode", "text"},
+	};
+	static const ExplainColumn plan[] = {
+		{"selectid", "integer"}, {"order", "integer"},
+		{"from", "integer"}, {"detail", "text"},
+	};
+	static_assert(ArraySize(opcode) + ArraySize(pseudocode) ==
+		      EXPLAIN_MAX_COLUMNS,
+		      "EXPLAIN_MAX_COLUMNS must be the number of columns");
+	bool is_program = explain == EXPLAIN_MODE_PROGRAM;
+	/* The groups of columns, in the order of the result. */
+	const struct {
+		const ExplainColumn *columns;
+		int count;
+		bool is_shown;
+	} groups[] = {
+		{plan, ArraySize(plan), explain == EXPLAIN_MODE_QUERY_PLAN},
+		{opcode, ArraySize(opcode),
+		 is_program && (facets & EXPLAIN_FACET_OPCODE) != 0},
+		{pseudocode, ArraySize(pseudocode),
+		 is_program && (facets & EXPLAIN_FACET_PSEUDOCODE) != 0},
+	};
+	int count = 0;
+	for (int i = 0; i < ArraySize(groups); i++) {
+		if (groups[i].is_shown)
+			count += groups[i].count;
+	}
+	sqlVdbeSetNumCols(v, count);
+	int column = 0;
+	for (int i = 0; i < ArraySize(groups); i++) {
+		if (!groups[i].is_shown)
+			continue;
+		for (int j = 0; j < groups[i].count; j++, column++) {
+			vdbe_metadata_set_col_name(v, column,
+						   groups[i].columns[j].name);
+			vdbe_metadata_set_col_type(v, column,
+						   groups[i].columns[j].type);
+		}
+	}
+}
+
+/** Fail the parse with an error about EXPLAIN (...). */
+static void
+sql_explain_error(struct Parse *parse, const char *message)
+{
+	diag_set(ClientError, ER_SQL_PARSER_GENERIC_WITH_POS, parse->line_count,
+		 parse->line_pos, message);
+	parse->is_aborted = true;
+}
+
+void
+sql_explain_add_facet(struct Parse *parse, const struct Token *name)
+{
+	static const struct {
+		const char *name;
+		enum explain_facet facet;
+	} facets[] = {
+		{"opcode", EXPLAIN_FACET_OPCODE},
+		{"pseudocode", EXPLAIN_FACET_PSEUDOCODE},
+	};
+	if (parse->is_aborted)
+		return;
+	for (int i = 0; i < ArraySize(facets); i++) {
+		if (name->n != strlen(facets[i].name) ||
+		    strncasecmp(name->z, facets[i].name, name->n) != 0)
+			continue;
+		parse->explain_opts.facets |= facets[i].facet;
+		return;
+	}
+	sql_explain_error(parse, tt_sprintf("Unknown EXPLAIN facet '%.*s'",
+					    (int)name->n, name->z));
+}
+
 /**
  * Compile an SQL statement with an optional RAW EXPLAIN hook provider.
  */
@@ -100,49 +196,8 @@ sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 
 	if (rc == 0 && sParse.pVdbe != NULL &&
 	    sParse.explain != EXPLAIN_MODE_OFF) {
-		static const char *const azColName[] = {
-			/*  0 */ "addr",
-			/*  1 */ "integer",
-			/*  2 */ "opcode",
-			/*  3 */ "text",
-			/*  4 */ "p1",
-			/*  5 */ "integer",
-			/*  6 */ "p2",
-			/*  7 */ "integer",
-			/*  8 */ "p3",
-			/*  9 */ "integer",
-			/* 10 */ "p4",
-			/* 11 */ "text",
-			/* 12 */ "p5",
-			/* 13 */ "text",
-			/* 14 */ "pseudocode",
-			/* 15 */ "text",
-			/* 16 */ "selectid",
-			/* 17 */ "integer",
-			/* 18 */ "order",
-			/* 19 */ "integer",
-			/* 20 */ "from",
-			/* 21 */ "integer",
-			/* 22 */ "detail",
-			/* 23 */ "text",
-		};
-
-		int name_first, name_count;
-		if (sParse.explain == EXPLAIN_MODE_QUERY_PLAN) {
-			name_first = 16;
-			name_count = 4;
-		} else {
-			name_first = 0;
-			name_count = 8;
-		}
-		sqlVdbeSetNumCols(sParse.pVdbe, name_count);
-		for (int i = 0; i < name_count; i++) {
-			int name_index = 2 * i + name_first;
-			vdbe_metadata_set_col_name(sParse.pVdbe, i,
-						   azColName[name_index]);
-			vdbe_metadata_set_col_type(sParse.pVdbe, i,
-						   azColName[name_index + 1]);
-		}
+		sql_explain_set_columns(sParse.pVdbe, sParse.explain,
+					sParse.explain_opts.facets);
 	}
 
 	if (sql_get()->init.busy == 0) {

@@ -109,7 +109,7 @@ for _, zIndex in ipairs(queries) do
 
 end
 local function uses_op_count(sql)
-    if test:lsearch(test:execsql("EXPLAIN "..sql), "Count")>0 then
+    if test:lsearch(test:execsql("EXPLAIN (opcode) "..sql), "Count")>0 then
         return 1
     end
         return 0

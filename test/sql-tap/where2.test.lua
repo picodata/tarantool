@@ -217,7 +217,7 @@ test:do_execsql_test(
     "where2-2.5",
     [[
         -- random() is not optimized out
-        EXPLAIN SELECT * FROM x1, x2 WHERE x=1 ORDER BY random();
+        EXPLAIN (opcode) SELECT * FROM x1, x2 WHERE x=1 ORDER BY random();
     ]], {
         -- <where2-2.5>
         "/RANDOM/"
@@ -228,7 +228,7 @@ test:do_execsql_test(
     "where2-2.5b",
     [[
         -- random() is not optimized out
-        EXPLAIN SELECT * FROM x1, x2 WHERE x=1 ORDER BY random();
+        EXPLAIN (opcode) SELECT * FROM x1, x2 WHERE x=1 ORDER BY random();
     ]], {
         -- <where2-2.5b>
         "/SorterOpen/"
@@ -240,7 +240,7 @@ test:do_execsql_test(
     "where2-2.6",
     [[
         -- other constant functions are optimized out
-        EXPLAIN SELECT * FROM x1, x2 WHERE x=1 ORDER BY abs(5);
+        EXPLAIN (opcode) SELECT * FROM x1, x2 WHERE x=1 ORDER BY abs(5);
     ]], {
         -- <where2-2.6>
         "~/ABS/"
@@ -251,7 +251,7 @@ test:do_execsql_test(
     "where2-2.6b",
     [[
         -- other constant functions are optimized out
-        EXPLAIN SELECT * FROM x1, x2 WHERE x=1 ORDER BY abs(5);
+        EXPLAIN (opcode) SELECT * FROM x1, x2 WHERE x=1 ORDER BY abs(5);
     ]], {
         -- <where2-2.6b>
         "~/SorterOpen/"

@@ -14,7 +14,7 @@ g.before_all(function()
         -- Returns the result of EXPLAIN with the opcodes and the
         -- pseudocode.
         rawset(_G, 'explain', function(sql)
-            return box.execute('EXPLAIN ' .. sql)
+            return box.execute('EXPLAIN (opcode, pseudocode) ' .. sql)
         end)
         -- Returns "opcode: pseudocode" for each instruction. Only Debug
         -- builds put OP_Explain into EXPLAIN, so it is left out. It

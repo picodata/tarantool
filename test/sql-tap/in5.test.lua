@@ -93,7 +93,7 @@ test:do_test(
     "in5-2.3",
     function()
         local nEph = 0
-        for _, op in ipairs(test:execsql("EXPLAIN SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
+        for _, op in ipairs(test:execsql("EXPLAIN (opcode) SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
             if (string.find(op, "OpenEphemeral"))
             then
                 nEph = nEph + 1
@@ -160,7 +160,7 @@ test:do_test(
     "in5-3.3",
     function()
         local nEph = 0
-        for _, op in ipairs(test:execsql("EXPLAIN SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
+        for _, op in ipairs(test:execsql("EXPLAIN (opcode) SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
             if (string.find(op, "OpenEphemeral"))
             then
                 nEph = nEph + 1
@@ -200,7 +200,7 @@ test:do_test(
     "in5-4.3",
     function()
         local nEph = 0
-        for _, op in ipairs(test:execsql("EXPLAIN SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
+        for _, op in ipairs(test:execsql("EXPLAIN (opcode) SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
             if (string.find(op, "OpenEphemeral"))
             then
                 nEph = nEph + 1
@@ -240,7 +240,7 @@ test:do_test(
     "in5-5.3",
     function()
         local nEph = 0
-        for _, op in ipairs(test:execsql("EXPLAIN SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
+        for _, op in ipairs(test:execsql("EXPLAIN (opcode) SELECT d FROM t2 WHERE a IN t1x AND b IN t1y AND c IN t1z")) do
             if (string.find(op, "OpenEphemeral"))
             then
                 nEph = nEph + 1

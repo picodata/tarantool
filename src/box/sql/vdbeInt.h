@@ -218,6 +218,8 @@ struct sql_column_metadata {
 struct VdbeExplain {
 	/** What a step of the statement does. */
 	ExplainMode mode;
+	/** The options of EXPLAIN (...). */
+	ExplainOpts opts;
 	/**
 	 * The comments and the object names of the instructions in
 	 * Vdbe.aOp, NULL if they have none.

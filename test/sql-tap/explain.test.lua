@@ -21,22 +21,23 @@ test:do_execsql_test(
 test:do_test(
     "explain-1.1",
     function()
-        local opcodes = test:execsql("EXPLAIN SELECT * FROM t1;")
+        local opcodes = test:execsql("EXPLAIN (opcode, pseudocode) SELECT * FROM t1;")
         return opcodes[1]
     end,
         -- <explain-1.1>
-        0, 'Init', 0, 1, 0, '', '00', 'Start at 1'
+        0, 'Init', 0, 1, 0, '', '00', 0, 'START AT 1'
         -- </explain-1.1>
     )
 
 test:do_test(
     "explain-1.2",
     function()
-        local opcodes = test:execsql("EXPLAIN SELECT a + 1 FROM t1 WHERE id = 4 OR id = 5;")
+        local opcodes = test:execsql([[EXPLAIN (opcode, pseudocode)
+            SELECT a + 1 FROM t1 WHERE id = 4 OR id = 5;]])
         return opcodes[1]
     end,
         -- <explain-1.2>
-        0, 'Init', 0, 1, 0, '', '00', 'Start at 1'
+        0, 'Init', 0, 1, 0, '', '00', 0, 'START AT 1'
         -- </explain-1.2>
     )
 

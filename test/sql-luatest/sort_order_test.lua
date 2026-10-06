@@ -89,7 +89,7 @@ g.test_desc_index_satisfies_order = function()
         -- True if the plan materializes a sort instead of reading in
         -- index order.
         local function uses_sort(sql)
-            local exp = box.execute('EXPLAIN ' .. sql)
+            local exp = box.execute('EXPLAIN (opcode) ' .. sql)
             for _, row in ipairs(exp.rows) do
                 if row[2] == 'SorterOpen' or row[2] == 'OpenTEphemeral' then
                     return true
@@ -137,7 +137,8 @@ g.test_min_max_desc_index = function()
     g.server:exec(function()
         local function plan(sql)
             local ops = ''
-            for _, row in ipairs(box.execute('EXPLAIN ' .. sql).rows) do
+            sql = 'EXPLAIN (opcode) ' .. sql
+            for _, row in ipairs(box.execute(sql).rows) do
                 ops = ops .. row[2] .. ' '
             end
             return ops
@@ -164,7 +165,7 @@ g.test_mixed_index_satisfies_order = function()
         -- True if the plan materializes a sort instead of reading in
         -- index order.
         local function uses_sort(sql)
-            local exp = box.execute('EXPLAIN ' .. sql)
+            local exp = box.execute('EXPLAIN (opcode) ' .. sql)
             for _, row in ipairs(exp.rows) do
                 if row[2] == 'SorterOpen' or row[2] == 'OpenTEphemeral' then
                     return true

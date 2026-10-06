@@ -302,8 +302,8 @@ test.catchsql2 = catchsql2
 -- opcode at the beginning.  This procedure can be used to prove
 -- that different SQL statements generate exactly the same VDBE code.
 local function explain_no_trace(self, sql)
-    local tr = execsql(self, "EXPLAIN "..sql)
-    for _=1,8 do
+    local tr = execsql(self, "EXPLAIN (opcode) "..sql)
+    for _=1,7 do
         table.remove(tr,1)
     end
     return tr

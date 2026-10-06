@@ -118,7 +118,10 @@ ecmd ::= SEMI. {
   pParse->is_aborted = true;
 }
 explain ::= .
-explain ::= EXPLAIN.              { pParse->explain = EXPLAIN_MODE_PROGRAM; }
+explain ::= EXPLAIN. {
+  pParse->explain = EXPLAIN_MODE_PROGRAM;
+  pParse->explain_opts.facets = EXPLAIN_FACET_PSEUDOCODE;
+}
 explain ::= EXPLAIN QUERY PLAN. {
   pParse->explain = EXPLAIN_MODE_QUERY_PLAN;
 }
@@ -1945,3 +1948,13 @@ over_opt(A) ::= filter_opt(W) OVER nm(Z). {
 %destructor filter_opt {sql_expr_delete($$);}
 filter_opt(A) ::= .                            { A = 0; }
 filter_opt(A) ::= FILTER LP WHERE expr(X) RP.  { A = X.pExpr; }
+
+//////////////////////// EXPLAIN (facet, ...) /////////////////////////////
+//
+// These rules are at the end of the file: Lemon numbers the tokens in the
+// order they first appear, and some opcodes depend on these numbers.
+//
+explain ::= EXPLAIN LP explain_facets RP. { pParse->explain = EXPLAIN_MODE_PROGRAM; }
+explain_facets ::= explain_facet.
+explain_facets ::= explain_facets COMMA explain_facet.
+explain_facet ::= nm(X). { sql_explain_add_facet(pParse, &X); }

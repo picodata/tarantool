@@ -227,6 +227,15 @@ res = execute(s2.stmt_id)
 res.metadata
 assert(res.rows ~= nil)
 
+-- The facets of EXPLAIN select its columns.
+--
+s3 = prepare("EXPLAIN (opcode) SELECT 1;")
+s3.metadata
+res = execute(s3.stmt_id)
+res.metadata
+res.rows
+
+unprepare(s3.stmt_id)
 unprepare(s2.stmt_id)
 unprepare(s1.stmt_id)
 

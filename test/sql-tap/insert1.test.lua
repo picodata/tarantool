@@ -307,7 +307,7 @@ test:do_execsql_test("insert-4.7", [[
     test:do_test("insert-5.3", function()
       -- verify that a temporary table is used to copy t4 to t4
       local x = test:execsql [[
-        EXPLAIN INSERT INTO t4 SELECT x+2 FROM t4;
+        EXPLAIN (opcode) INSERT INTO t4 SELECT x+2 FROM t4;
       ]]
       return {test:lsearch(x, 'OpenTEphemeral') > 0} -- X(264, "X!cmd", [=[["expr","[lsearch $x OpenEphemeral]>0"]]=])
     end, {
@@ -342,7 +342,7 @@ test:do_execsql_test("insert-4.7", [[
     test:do_test("insert-5.7", function()
       -- verify that no temporary table is used to copy test1 to t4
       local x = test:execsql [[
-        EXPLAIN INSERT INTO t4 SELECT one FROM test1;
+        EXPLAIN (opcode) INSERT INTO t4 SELECT one FROM test1;
       ]]
       return {test:lsearch(x, 'OpenTemp') > 0} -- X(298, "X!cmd", [=[["expr","[lsearch $x OpenTemp]>0"]]=])
     end, {
