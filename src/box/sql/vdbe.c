@@ -2729,7 +2729,7 @@ case OP_SorterOpen: {
  * to P2. Regardless of whether or not the jump is taken, increment the
  * the sequence value.
  */
-case OP_SequenceTest: {
+case OP_SequenceTest: {      /* jump */
 	VdbeCursor *pC;
 	assert(pOp->p1>=0 && pOp->p1<p->nCursor);
 	pC = p->apCsr[pOp->p1];
@@ -3322,7 +3322,7 @@ case OP_ResetCount: {
  * Fall through to next instruction if the two records compare equal to
  * each other.  Jump to P2 if they are different.
  */
-case OP_SorterCompare: {
+case OP_SorterCompare: {     /* jump */
 			VdbeCursor *pC;
 			int res;
 			int nKeyCol;

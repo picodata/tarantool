@@ -56,6 +56,9 @@ typedef struct ExplainColumn ExplainColumn;
 static void
 sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
 {
+	static const ExplainColumn graph[] = {
+		{"graph", "text"},
+	};
 	static const ExplainColumn opcode[] = {
 		{"addr", "integer"}, {"opcode", "text"}, {"p1", "integer"},
 		{"p2", "integer"}, {"p3", "integer"}, {"p4", "text"},
@@ -68,8 +71,8 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
 		{"selectid", "integer"}, {"order", "integer"},
 		{"from", "integer"}, {"detail", "text"},
 	};
-	static_assert(ArraySize(opcode) + ArraySize(pseudocode) ==
-		      EXPLAIN_MAX_COLUMNS,
+	static_assert(ArraySize(graph) + ArraySize(opcode) +
+		      ArraySize(pseudocode) == EXPLAIN_MAX_COLUMNS,
 		      "EXPLAIN_MAX_COLUMNS must be the number of columns");
 	bool is_program = explain == EXPLAIN_MODE_PROGRAM;
 	/* The groups of columns, in the order of the result. */
@@ -79,6 +82,8 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
 		bool is_shown;
 	} groups[] = {
 		{plan, ArraySize(plan), explain == EXPLAIN_MODE_QUERY_PLAN},
+		{graph, ArraySize(graph),
+		 is_program && (facets & EXPLAIN_FACET_GRAPH) != 0},
 		{opcode, ArraySize(opcode),
 		 is_program && (facets & EXPLAIN_FACET_OPCODE) != 0},
 		{pseudocode, ArraySize(pseudocode),
@@ -113,12 +118,14 @@ sql_explain_error(struct Parse *parse, const char *message)
 }
 
 void
-sql_explain_add_facet(struct Parse *parse, const struct Token *name)
+sql_explain_add_facet(struct Parse *parse, const struct Token *name,
+		      bool has_lines)
 {
 	static const struct {
 		const char *name;
 		enum explain_facet facet;
 	} facets[] = {
+		{"graph", EXPLAIN_FACET_GRAPH},
 		{"opcode", EXPLAIN_FACET_OPCODE},
 		{"pseudocode", EXPLAIN_FACET_PSEUDOCODE},
 	};
@@ -128,11 +135,54 @@ sql_explain_add_facet(struct Parse *parse, const struct Token *name)
 		if (name->n != strlen(facets[i].name) ||
 		    strncasecmp(name->z, facets[i].name, name->n) != 0)
 			continue;
+		if (has_lines && facets[i].facet != EXPLAIN_FACET_GRAPH) {
+			sql_explain_error(parse, tt_sprintf(
+				"EXPLAIN facet '%s' takes no lines",
+				facets[i].name));
+			return;
+		}
+		/* The lines of a list that is not empty are added now. */
+		if (has_lines && parse->explain_opts.graph_filter_count == 0)
+			parse->explain_opts.graph_filter_count = -1;
 		parse->explain_opts.facets |= facets[i].facet;
 		return;
 	}
 	sql_explain_error(parse, tt_sprintf("Unknown EXPLAIN facet '%.*s'",
 					    (int)name->n, name->z));
+}
+
+void
+sql_explain_add_line(struct Parse *parse, const struct Token *number)
+{
+	int line;
+	if (parse->is_aborted)
+		return;
+	if (sqlGetInt32(number->z, &line) == 0) {
+		sql_explain_error(parse, tt_sprintf(
+			"EXPLAIN line %.*s is too big", (int)number->n,
+			number->z));
+		return;
+	}
+	ExplainOpts *opts = &parse->explain_opts;
+	/* A list that is not empty comes after an empty one. */
+	if (opts->graph_filter_count < 0)
+		opts->graph_filter_count = 0;
+	int i;
+	opts->graph_filter = sqlArrayAllocate(opts->graph_filter, sizeof(int),
+					      &opts->graph_filter_count, &i);
+	opts->graph_filter[i] = line;
+}
+
+void
+sql_explain_check_facets(struct Parse *parse)
+{
+	if (parse->is_aborted)
+		return;
+	uint8_t columns = EXPLAIN_FACET_OPCODE | EXPLAIN_FACET_PSEUDOCODE;
+	/* The graph alone says nothing: show the pseudocode next to it. */
+	ExplainOpts *opts = &parse->explain_opts;
+	if ((columns & opts->facets) == 0)
+		opts->facets |= EXPLAIN_FACET_PSEUDOCODE;
 }
 
 /**
@@ -287,6 +337,7 @@ sql_parser_destroy(Parse *parser)
 	assert(parser != NULL);
 	assert(!parser->parse_only || parser->pVdbe == NULL);
 	sql_xfree(parser->aLabel);
+	sql_xfree(parser->explain_opts.graph_filter);
 	sql_expr_list_delete(parser->pConstExpr);
 	struct create_fk_constraint_parse_def *create_fk_constraint_parse_def =
 		&parser->create_fk_constraint_parse_def;

@@ -1495,13 +1495,554 @@ sqlVdbeFrameDelete(VdbeFrame * p)
 	sql_xfree(p);
 }
 
+/* Box-drawing characters, named as in Unicode. */
+#define BOX_HORIZONTAL "\u2500"
+#define BOX_VERTICAL "\u2502"
+#define BOX_VERTICAL_AND_RIGHT "\u251c"
+#define BOX_DOWN_AND_HORIZONTAL "\u252c"
+#define BOX_UP_AND_HORIZONTAL "\u2534"
+#define BOX_VERTICAL_AND_HORIZONTAL "\u253c"
+#define BOX_ARC_DOWN_AND_RIGHT "\u256d"
+#define BOX_ARC_UP_AND_RIGHT "\u2570"
+
+/** The arrow of a jump source that is also a jump target. */
+#define GRAPH_ARROW_BOTH "X"
+
+/** The dot of backward jumps: U+00B7 MIDDLE DOT, from Latin-1. */
+#define GRAPH_DOT "\u00b7"
+
+/** Bits of a cell in a row of the EXPLAIN jump graph. */
+enum {
+	/** The lane of the cell goes up from the cell. */
+	GRAPH_UP = 1 << 0,
+	/** The lane of the cell goes down from the cell. */
+	GRAPH_DOWN = 1 << 1,
+	/** The lane of the cell goes right to the instruction. */
+	GRAPH_LINK = 1 << 2,
+	/** The cell is below the target of its lane: a backward jump. */
+	GRAPH_BACK = 1 << 3,
+	/**
+	 * The cell links to the instruction by a backward jump: the
+	 * instruction is below the target of the lane, or it is the target
+	 * of a lane without forward jumps.
+	 */
+	GRAPH_BACK_LINK = 1 << 4,
+};
+
+/** A vertical line of the EXPLAIN jump graph. */
+struct ExplainLane {
+	/** The address that all jumps of the lane go to. */
+	int target;
+	/** The first address of the lane. */
+	int first;
+	/** The last address of the lane. */
+	int last;
+	/** The column of the lane, 0 is next to the addresses. */
+	int column;
+};
+
+typedef struct ExplainLane ExplainLane;
+
+/**
+ * The jump graph of one program, the first column of EXPLAIN.
+ * All jumps to one address share a lane. Shorter lanes are nearer
+ * to the addresses.
+ */
+struct ExplainGraph {
+	/** The instructions of the program. */
+	const struct VdbeOp *ops;
+	/** The number of instructions. */
+	int op_count;
+	/** The lanes, sorted by length. */
+	ExplainLane *lanes;
+	/** The number of lanes. */
+	int lane_count;
+	/** The lane of each address, -1 if no jump goes there. */
+	int *lane_of;
+	/** The number of columns. */
+	int column_count;
+	/**
+	 * The lane in each column at each address, -1 if none. The lane
+	 * at address a in column c is grid[c * op_count + a].
+	 */
+	int *grid;
+	/**
+	 * The addresses whose jumps are shown: a jump is shown if it
+	 * starts or ends on one of them.
+	 */
+	const int *filter;
+	/**
+	 * The number of addresses in filter. 0 to show all jumps, -1 to
+	 * show no jumps.
+	 */
+	int filter_count;
+	/**
+	 * True for each address that starts or ends a jump that is not
+	 * shown: because of the lines, or because the target of the jump
+	 * is not known before the run.
+	 */
+	bool *is_hidden;
+	/** True if one address or more is hidden. */
+	bool has_hidden;
+};
+
+/**
+ * Check that an instruction is a comparison that stores its result in
+ * the register P2 and does not jump to the address P2.
+ */
+static bool
+explain_is_stored_comparison(const struct VdbeOp *op)
+{
+	switch (op->opcode) {
+	case OP_Eq:
+	case OP_Ne:
+	case OP_Lt:
+	case OP_Le:
+	case OP_Gt:
+	case OP_Ge:
+		return (op->p5 & SQL_STOREP2) != 0;
+	default:
+		return false;
+	}
+}
+
+/**
+ * Check that a seek skips the instruction after it when it finds a row.
+ * OP_SeekGE and OP_SeekLE do this if their cursor was opened for a seek
+ * by equality: the next instruction, OP_IdxGT or OP_IdxLT, is then only
+ * for the next iterations of the loop.
+ */
+static bool
+explain_is_seek_with_skip(const struct VdbeOp *ops, int op_count, int addr)
+{
+	const struct VdbeOp *op = &ops[addr];
+	if (op->opcode != OP_SeekGE && op->opcode != OP_SeekLE)
+		return false;
+	if (addr + 1 >= op_count || (ops[addr + 1].opcode != OP_IdxGT &&
+				     ops[addr + 1].opcode != OP_IdxLT))
+		return false;
+	/*
+	 * The hint is on the instruction that opens the cursor. It can be
+	 * at any address, and more than one instruction can open the
+	 * cursor: then the skip is possible if one of them has the hint.
+	 */
+	for (int i = 0; i < op_count; i++) {
+		if (ops[i].opcode == OP_IteratorOpen && ops[i].p1 == op->p1 &&
+		    (ops[i].p5 & OPFLAG_SEEKEQ) != 0)
+			return true;
+	}
+	return false;
+}
+
+/**
+ * Get the jump targets of an instruction to draw. Address 0 is not
+ * a target: OP_Init is there, and some opcodes use 0 to tell that they
+ * do not jump. A jump to the next instruction is not drawn.
+ */
+static int
+explain_jump_targets(const struct VdbeOp *ops, int op_count, int addr,
+		     int targets[3])
+{
+	const struct VdbeOp *op = &ops[addr];
+	if ((sqlOpcodeProperty[op->opcode] & OPFLG_JUMP) == 0 ||
+	    explain_is_stored_comparison(op))
+		return 0;
+	int addrs[3] = {op->p2, op->p1, op->p3};
+	int addr_count = op->opcode == OP_Jump ? 3 : 1;
+	if (explain_is_seek_with_skip(ops, op_count, addr)) {
+		addrs[1] = addr + 2;
+		addr_count = 2;
+	}
+	int count = 0;
+	for (int i = 0; i < addr_count; i++) {
+		if (addrs[i] > 0 && addrs[i] < op_count &&
+		    addrs[i] != addr + 1)
+			targets[count++] = addrs[i];
+	}
+	return count;
+}
+
+/** Check that a line of the graph is one of the given lines. */
+static bool
+explain_graph_has_line(const ExplainGraph *graph, int addr)
+{
+	for (int i = 0; i < graph->filter_count; i++) {
+		if (graph->filter[i] == addr)
+			return true;
+	}
+	return false;
+}
+
+/**
+ * Check that the graph shows a jump: with lines given, only a jump that
+ * starts or ends on one of them.
+ */
+static bool
+explain_graph_shows(const ExplainGraph *graph, int addr, int target)
+{
+	return graph->filter_count == 0 ||
+	       explain_graph_has_line(graph, addr) ||
+	       explain_graph_has_line(graph, target);
+}
+
+/** Get the jump targets of an instruction that the graph shows. */
+static int
+explain_graph_targets(const ExplainGraph *graph, int addr,
+		      int targets[3])
+{
+	int count = explain_jump_targets(graph->ops, graph->op_count, addr,
+					 targets);
+	int shown = 0;
+	for (int i = 0; i < count; i++) {
+		if (explain_graph_shows(graph, addr, targets[i]))
+			targets[shown++] = targets[i];
+	}
+	return shown;
+}
+
+/**
+ * Check that an instruction jumps to an address that it takes from a
+ * register, so the target is not known before the run.
+ */
+static bool
+explain_is_computed_jump(const struct VdbeOp *op)
+{
+	return op->opcode == OP_Yield || op->opcode == OP_Return ||
+	       op->opcode == OP_EndCoroutine;
+}
+
+/** Compare the lanes by length, then by the first address. */
+static int
+explain_lane_cmp(const void *a, const void *b)
+{
+	const ExplainLane *lane_a = a;
+	const ExplainLane *lane_b = b;
+	int length_a = lane_a->last - lane_a->first;
+	int length_b = lane_b->last - lane_b->first;
+	if (length_a != length_b)
+		return length_a < length_b ? -1 : 1;
+	if (lane_a->first != lane_b->first)
+		return lane_a->first < lane_b->first ? -1 : 1;
+	return lane_a->target < lane_b->target ? -1 :
+	       lane_a->target > lane_b->target;
+}
+
+/**
+ * Make a lane for each jump target and sort the lanes by length. Mark
+ * as hidden the two ends of each jump that the graph does not show, and
+ * each instruction that jumps to an address that is not known before the
+ * run.
+ */
+static void
+explain_graph_add_lanes(ExplainGraph *graph)
+{
+	for (int addr = 0; addr < graph->op_count; addr++) {
+		if (explain_is_computed_jump(&graph->ops[addr])) {
+			graph->is_hidden[addr] = true;
+			graph->has_hidden = true;
+		}
+		int targets[3];
+		int count = explain_jump_targets(graph->ops, graph->op_count,
+						 addr, targets);
+		for (int i = 0; i < count; i++) {
+			int target = targets[i];
+			if (!explain_graph_shows(graph, addr, target)) {
+				graph->is_hidden[addr] = true;
+				graph->is_hidden[target] = true;
+				graph->has_hidden = true;
+				continue;
+			}
+			if (graph->lane_of[target] < 0) {
+				graph->lane_of[target] = graph->lane_count;
+				graph->lanes[graph->lane_count++] =
+					(ExplainLane){
+						.target = target,
+						.first = target,
+						.last = target,
+					};
+			}
+			ExplainLane *lane =
+				&graph->lanes[graph->lane_of[target]];
+			lane->first = MIN(lane->first, addr);
+			lane->last = MAX(lane->last, addr);
+		}
+	}
+	qsort(graph->lanes, graph->lane_count, sizeof(graph->lanes[0]),
+	      explain_lane_cmp);
+	for (int i = 0; i < graph->lane_count; i++)
+		graph->lane_of[graph->lanes[i].target] = i;
+}
+
+/** Check that no lane in a column touches the addresses of a lane. */
+static bool
+explain_column_is_free(const ExplainGraph *graph, int column,
+		       const ExplainLane *lane)
+{
+	const int *cells = &graph->grid[column * graph->op_count];
+	for (int addr = lane->first; addr <= lane->last; addr++) {
+		if (cells[addr] >= 0)
+			return false;
+	}
+	return true;
+}
+
+/**
+ * Put each lane in the column nearest to the addresses where it does
+ * not touch other lanes.
+ */
+static void
+explain_graph_set_columns(ExplainGraph *graph)
+{
+	int op_count = graph->op_count;
+	for (int i = 0; i < graph->lane_count; i++) {
+		ExplainLane *lane = &graph->lanes[i];
+		int column = 0;
+		while (column < graph->column_count &&
+		       !explain_column_is_free(graph, column, lane))
+			column++;
+		if (column == graph->column_count) {
+			graph->column_count++;
+			size_t size = graph->column_count * op_count *
+				      sizeof(graph->grid[0]);
+			graph->grid = sql_xrealloc(graph->grid, size);
+			for (int addr = 0; addr < op_count; addr++)
+				graph->grid[column * op_count + addr] = -1;
+		}
+		for (int addr = lane->first; addr <= lane->last; addr++)
+			graph->grid[column * op_count + addr] = i;
+		lane->column = column;
+	}
+}
+
+/**
+ * Check that an instruction jumps back to the start of a loop. The rules
+ * are the ones that the SQLite shell uses to indent EXPLAIN: a backward
+ * jump of Next, Prev or SorterNext, or a backward Goto to an instruction
+ * that starts a loop. Other backward jumps, such as the Goto back to the
+ * start of the program after the transaction begins, run once.
+ */
+static bool
+explain_is_loop_end(const struct VdbeOp *ops, int addr)
+{
+	const struct VdbeOp *op = &ops[addr];
+	if (op->p2 <= 0 || op->p2 >= addr)
+		return false;
+	switch (op->opcode) {
+	case OP_Next:
+	case OP_Prev:
+	case OP_NextIfOpen:
+	case OP_PrevIfOpen:
+	case OP_SorterNext:
+		return true;
+	case OP_Goto:
+		switch (ops[op->p2].opcode) {
+		case OP_Yield:
+		case OP_SeekLT:
+		case OP_SeekGT:
+		case OP_Rewind:
+			return true;
+		default:
+			return op->p1 != 0;
+		}
+	default:
+		return false;
+	}
+}
+
+/**
+ * Count the loops around each address of a program. A loop takes the
+ * addresses from the target of its backward jump to the address before
+ * the jump. The result is a new array.
+ */
+static int *
+explain_loop_depth_new(const struct VdbeOp *ops, int op_count)
+{
+	int *depth = sql_xmalloc0(op_count * sizeof(depth[0]));
+	/* First mark the loop bounds, then sum them up. */
+	for (int addr = 0; addr < op_count; addr++) {
+		if (!explain_is_loop_end(ops, addr))
+			continue;
+		depth[ops[addr].p2]++;
+		depth[addr]--;
+	}
+	for (int addr = 1; addr < op_count; addr++)
+		depth[addr] += depth[addr - 1];
+	return depth;
+}
+
+/**
+ * Make the jump graph of a program. The filter selects the jumps that it
+ * shows, see ExplainGraph.
+ */
+static ExplainGraph *
+explain_graph_new(const struct VdbeOp *ops, int op_count, const int *filter,
+		  int filter_count)
+{
+	ExplainGraph *graph = sql_xmalloc0(sizeof(*graph));
+	graph->ops = ops;
+	graph->op_count = op_count;
+	graph->filter = filter;
+	graph->filter_count = filter_count;
+	graph->lanes = sql_xmalloc(op_count * sizeof(graph->lanes[0]));
+	graph->lane_of = sql_xmalloc(op_count * sizeof(graph->lane_of[0]));
+	for (int addr = 0; addr < op_count; addr++)
+		graph->lane_of[addr] = -1;
+	graph->is_hidden = sql_xmalloc0(op_count * sizeof(graph->is_hidden[0]));
+	explain_graph_add_lanes(graph);
+	explain_graph_set_columns(graph);
+	return graph;
+}
+
+static void
+explain_graph_delete(ExplainGraph *graph)
+{
+	if (graph == NULL)
+		return;
+	sql_xfree(graph->lanes);
+	sql_xfree(graph->lane_of);
+	sql_xfree(graph->grid);
+	sql_xfree(graph->is_hidden);
+	sql_xfree(graph);
+}
+
+/**
+ * Get the glyph of a cell that links to the instruction. A backward jump
+ * is drawn with dots, as in the ASCII mode of radare2: "." at its target,
+ * "`" at its source, and "+" at a source between the two ends of a lane.
+ * Other links are box-drawing characters with round corners.
+ */
+static const char *
+explain_graph_link_glyph(uint8_t cell, bool has_left)
+{
+	/* Indexed by GRAPH_UP | GRAPH_DOWN. */
+	static const char *const back_glyphs[] = {GRAPH_DOT, "`", ".", "+"};
+	/* Indexed by GRAPH_UP | GRAPH_DOWN | has_left << 2. */
+	static const char *const link_glyphs[] = {
+		BOX_HORIZONTAL, BOX_ARC_UP_AND_RIGHT, BOX_ARC_DOWN_AND_RIGHT,
+		BOX_VERTICAL_AND_RIGHT, BOX_HORIZONTAL, BOX_UP_AND_HORIZONTAL,
+		BOX_DOWN_AND_HORIZONTAL, BOX_VERTICAL_AND_HORIZONTAL,
+	};
+	if ((cell & GRAPH_BACK_LINK) != 0)
+		return back_glyphs[cell & (GRAPH_UP | GRAPH_DOWN)];
+	return link_glyphs[(cell & (GRAPH_UP | GRAPH_DOWN)) |
+			   (has_left ? 4 : 0)];
+}
+
+/** Get the bits of the cell of a column at an address. */
+static uint8_t
+explain_graph_cell(const ExplainGraph *graph, int column, int addr,
+		   const int *links, int link_count)
+{
+	int i = graph->grid[column * graph->op_count + addr];
+	if (i < 0)
+		return 0;
+	const ExplainLane *lane = &graph->lanes[i];
+	uint8_t cell = 0;
+	if (lane->first < addr)
+		cell |= GRAPH_UP;
+	if (lane->last > addr)
+		cell |= GRAPH_DOWN;
+	if (lane->target < addr)
+		cell |= GRAPH_BACK;
+	for (int j = 0; j < link_count; j++) {
+		if (links[j] != i)
+			continue;
+		cell |= GRAPH_LINK;
+		/* A lane that starts at its target has no forward jumps. */
+		if (lane->target < addr || lane->first == lane->target)
+			cell |= GRAPH_BACK_LINK;
+		break;
+	}
+	return cell;
+}
+
+/**
+ * Make the row of the jump graph for an instruction. A jump source ends
+ * with "<", a jump target with ">", and an instruction that is both with
+ * GRAPH_ARROW_BOTH. The horizontal line from the leftmost link to the
+ * instruction goes over the lanes that do not link to it, and each part
+ * of it has the style of the nearest link on its left. A lane below its
+ * target is ":": only backward jumps go there. An instruction without an
+ * arrow that has a hidden jump ends with GRAPH_DOT, see
+ * explain_graph_add_lanes().
+ */
+static char *
+explain_graph_row(const ExplainGraph *graph, int addr)
+{
+	/* The lanes that link to the instruction. */
+	int links[4];
+	int link_count = explain_graph_targets(graph, addr, links);
+	bool is_source = link_count > 0;
+	bool is_target = graph->lane_of[addr] >= 0;
+	if (is_target)
+		links[link_count++] = addr;
+	/* The leftmost column that links to the instruction. */
+	int outer = -1;
+	for (int i = 0; i < link_count; i++) {
+		links[i] = graph->lane_of[links[i]];
+		outer = MAX(outer, graph->lanes[links[i]].column);
+	}
+	StrAccum row;
+	char buf[64];
+	sqlStrAccumInit(&row, buf, sizeof(buf), SQL_MAX_LENGTH);
+	/* The horizontal line from the last link. */
+	const char *line = BOX_HORIZONTAL;
+	for (int column = graph->column_count - 1; column >= 0; column--) {
+		uint8_t cell = explain_graph_cell(graph, column, addr, links,
+						  link_count);
+		const char *glyph;
+		if ((cell & GRAPH_LINK) != 0) {
+			glyph = explain_graph_link_glyph(cell, column < outer);
+			/* The line of a backward jump is dotted. */
+			line = (cell & GRAPH_BACK_LINK) != 0 ?
+			       GRAPH_DOT : BOX_HORIZONTAL;
+		} else if (column < outer) {
+			glyph = line;
+		} else if ((cell & GRAPH_UP) == 0) {
+			glyph = " ";
+		} else {
+			glyph = (cell & GRAPH_BACK) != 0 ? ":" : BOX_VERTICAL;
+		}
+		sqlStrAccumAppendAll(&row, glyph);
+	}
+	if (outer < 0) {
+		if (graph->is_hidden[addr]) {
+			sqlStrAccumAppendAll(&row, " " GRAPH_DOT);
+		} else if (graph->column_count > 0 ||
+			   graph->filter_count != 0 || graph->has_hidden) {
+			sqlStrAccumAppendAll(&row, "  ");
+		}
+		/* A program without jumps has an empty graph. */
+		return sqlStrAccumFinish(&row);
+	}
+	sqlStrAccumAppendAll(&row, line);
+	if (is_target && is_source)
+		sqlStrAccumAppendAll(&row, GRAPH_ARROW_BOTH);
+	else
+		sqlStrAccumAppend(&row, is_target ? ">" : "<", 1);
+	return sqlStrAccumFinish(&row);
+}
+
+/** Free the state of the listing of a program. */
+static void
+vdbe_explain_reset_listing(VdbeExplain *explain)
+{
+	explain_graph_delete(explain->graph);
+	sql_xfree(explain->loop_depth);
+	explain->graph = NULL;
+	explain->loop_depth = NULL;
+	explain->ops = NULL;
+}
+
 /** Free the data of EXPLAIN of a statement, which can be NULL. */
 static void
 vdbe_explain_delete(VdbeExplain *explain)
 {
 	if (explain == NULL)
 		return;
+	vdbe_explain_reset_listing(explain);
 	vdbe_synopsis_aux_delete(explain->synopsis_aux);
+	sql_xfree(explain->opts.graph_filter);
 	sql_xfree(explain);
 }
 
@@ -1510,10 +2051,39 @@ vdbe_explain_delete(VdbeExplain *explain)
  * facets of the statement, and set the number of columns.
  */
 static void
-explain_list_row(struct Vdbe *p, Op *op, int addr, struct Mem *mem)
+explain_list_row(struct Vdbe *p, Op *ops, int op_count, int addr,
+		 struct Mem *mem)
 {
-	uint8_t mask = p->explain_data->opts.facets;
+	VdbeExplain *state = p->explain_data;
+	const ExplainOpts *opts = &state->opts;
+	uint8_t mask = opts->facets;
+	if (state->loop_depth == NULL || state->ops != ops) {
+		/* A new program is listed: the main one or a trigger. */
+		vdbe_explain_reset_listing(state);
+		state->ops = ops;
+		state->loop_depth = explain_loop_depth_new(ops, op_count);
+		if ((mask & EXPLAIN_FACET_GRAPH) != 0) {
+			/*
+			 * The filter has addresses of the main program. No
+			 * address is in a trigger program: with a filter,
+			 * such a program shows no jumps.
+			 */
+			int count = opts->graph_filter_count;
+			if (ops != p->aOp && count != 0)
+				count = -1;
+			state->graph = explain_graph_new(ops, op_count,
+							 opts->graph_filter,
+							 count);
+		}
+	}
+	/* The pseudocode gets 2 spaces for each loop. */
+	int indent = 2 * state->loop_depth[addr];
+	Op *op = &ops[addr];
 	struct Mem *first = mem;
+	if (state->graph != NULL) {
+		mem_set_str0_allocated(mem++,
+				       explain_graph_row(state->graph, addr));
+	}
 	char buf[256];
 	const char *p4 = displayP4(op, buf, sizeof(buf));
 	if ((mask & EXPLAIN_FACET_OPCODE) != 0) {
@@ -1528,8 +2098,10 @@ explain_list_row(struct Vdbe *p, Op *op, int addr, struct Mem *mem)
 	if ((mask & EXPLAIN_FACET_PSEUDOCODE) != 0) {
 		/* The address again, next to the pseudocode. */
 		mem_set_uint(mem++, addr);
-		char *text = sql_xmalloc(500);
-		displaySynopsis(p, op, addr, p4, text, 500);
+		char *text = sql_xmalloc(indent + 500);
+		memset(text, ' ', indent);
+		if (displaySynopsis(p, op, addr, p4, text + indent, 500) == 0)
+			text[0] = '\0';
 		mem_set_str0_allocated(mem++, text);
 	}
 	assert(mem - first <= EXPLAIN_MAX_COLUMNS);
@@ -1604,10 +2176,13 @@ sqlVdbeList(Vdbe * p)
 	} while (i < nRow && mode == EXPLAIN_MODE_QUERY_PLAN &&
 		 p->aOp[i].opcode != OP_Explain);
 	if (i >= nRow) {
+		vdbe_explain_reset_listing(p->explain_data);
 		rc = SQL_DONE;
 	} else {
 		char *zP4;
 		Op *pOp;
+		Op *aOp = p->aOp;
+		int nOp = p->nOp;
 		if (i < p->nOp) {
 			/* The output line number is small enough that we are still in the
 			 * main program.
@@ -1622,7 +2197,9 @@ sqlVdbeList(Vdbe * p)
 			for (j = 0; i >= apSub[j]->nOp; j++) {
 				i -= apSub[j]->nOp;
 			}
-			pOp = &apSub[j]->aOp[i];
+			aOp = apSub[j]->aOp;
+			nOp = apSub[j]->nOp;
+			pOp = &aOp[i];
 		}
 		if (mode == EXPLAIN_MODE_PROGRAM) {
 			assert(i >= 0);
@@ -1650,7 +2227,7 @@ sqlVdbeList(Vdbe * p)
 						return -1;
 				}
 			}
-			explain_list_row(p, pOp, i, pMem);
+			explain_list_row(p, aOp, nOp, i, pMem);
 		} else {
 			mem_set_int(pMem, pOp->p1);
 			pMem++;
@@ -1872,8 +2449,12 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 	p->pVList = pParse->pVList;
 	pParse->pVList = 0;
 	assert(vdbe_explain_mode(p) == pParse->explain);
-	if (p->explain_data != NULL)
+	if (p->explain_data != NULL) {
+		/* The statement takes the filter of the graph. */
 		p->explain_data->opts = pParse->explain_opts;
+		pParse->explain_opts.graph_filter = NULL;
+		pParse->explain_opts.graph_filter_count = 0;
+	}
 	p->nCursor = nCursor;
 	p->nVar = nVar;
 	for (int i = 0; i < nVar; ++i)

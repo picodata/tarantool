@@ -47,6 +47,7 @@
 typedef struct VdbeOp Op;
 
 struct func;
+typedef struct ExplainGraph ExplainGraph;
 
 /*
  * Boolean values
@@ -225,6 +226,21 @@ struct VdbeExplain {
 	 * Vdbe.aOp, NULL if they have none.
 	 */
 	VdbeOpSynopsisAux *synopsis_aux;
+	/**
+	 * The program that the listing shows now, the main one or a
+	 * trigger program: its instructions.
+	 */
+	const struct VdbeOp *ops;
+	/**
+	 * The number of loops around each instruction of that program. It
+	 * is the indent of the instruction in the listing.
+	 */
+	int *loop_depth;
+	/**
+	 * The jump graph of that program, NULL if the statement does not
+	 * have the facet 'graph'.
+	 */
+	ExplainGraph *graph;
 };
 
 typedef struct VdbeExplain VdbeExplain;

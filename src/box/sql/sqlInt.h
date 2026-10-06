@@ -2080,6 +2080,8 @@ typedef enum ExplainMode ExplainMode;
 
 /** Facets of EXPLAIN: the groups of columns that it shows. */
 enum explain_facet {
+	/** The jump graph. */
+	EXPLAIN_FACET_GRAPH = 1 << 0,
 	/** The address, the opcode and the operands. */
 	EXPLAIN_FACET_OPCODE = 1 << 1,
 	/**
@@ -2091,7 +2093,7 @@ enum explain_facet {
 
 enum {
 	/** The number of columns of EXPLAIN with all the facets. */
-	EXPLAIN_MAX_COLUMNS = 9,
+	EXPLAIN_MAX_COLUMNS = 10,
 };
 
 /**
@@ -2101,6 +2103,19 @@ enum {
 struct ExplainOpts {
 	/** The facets, a mask of enum explain_facet. */
 	uint8_t facets;
+	/**
+	 * E.g. `EXPLAIN (graph [1, 2, 3])`; only show graph
+	 * arrows starting or ending at these lines.
+	 */
+	int *graph_filter;
+	/**
+	 * The number of addresses in graph_filter:
+	 *
+	 * - 0: no list is given, the graph shows all jumps;
+	 * - -1: the list is empty, graph []: the graph shows no jumps;
+	 * - N > 0: the graph shows the jumps of N addresses.
+	 */
+	int graph_filter_count;
 };
 
 typedef struct ExplainOpts ExplainOpts;
@@ -2273,9 +2288,24 @@ struct Parse {
 	} parsed_ast;
 };
 
-/** Add a facet of EXPLAIN (...) by its name. */
+/**
+ * Add a facet of EXPLAIN (...) by its name. has_lines tells that a list
+ * of lines follows the name, which only "graph" takes.
+ */
 void
-sql_explain_add_facet(struct Parse *parse, const struct Token *name);
+sql_explain_add_facet(struct Parse *parse, const struct Token *name,
+		      bool has_lines);
+
+/** Add a line of EXPLAIN (graph [...]). */
+void
+sql_explain_add_line(struct Parse *parse, const struct Token *number);
+
+/**
+ * Complete the facets of EXPLAIN (...) after the list is parsed: a list
+ * without "opcode" and "pseudocode" gets "pseudocode".
+ */
+void
+sql_explain_check_facets(struct Parse *parse);
 
 /*
  * Bitfield flags for P5 value in various opcodes.

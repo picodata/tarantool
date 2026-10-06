@@ -120,7 +120,7 @@ ecmd ::= SEMI. {
 explain ::= .
 explain ::= EXPLAIN. {
   pParse->explain = EXPLAIN_MODE_PROGRAM;
-  pParse->explain_opts.facets = EXPLAIN_FACET_PSEUDOCODE;
+  sql_explain_check_facets(pParse);
 }
 explain ::= EXPLAIN QUERY PLAN. {
   pParse->explain = EXPLAIN_MODE_QUERY_PLAN;
@@ -1954,7 +1954,17 @@ filter_opt(A) ::= FILTER LP WHERE expr(X) RP.  { A = X.pExpr; }
 // These rules are at the end of the file: Lemon numbers the tokens in the
 // order they first appear, and some opcodes depend on these numbers.
 //
-explain ::= EXPLAIN LP explain_facets RP. { pParse->explain = EXPLAIN_MODE_PROGRAM; }
+explain ::= EXPLAIN LP explain_facets RP. {
+  pParse->explain = EXPLAIN_MODE_PROGRAM;
+  sql_explain_check_facets(pParse);
+}
 explain_facets ::= explain_facet.
 explain_facets ::= explain_facets COMMA explain_facet.
-explain_facet ::= nm(X). { sql_explain_add_facet(pParse, &X); }
+explain_facet ::= nm(X). { sql_explain_add_facet(pParse, &X, false); }
+explain_facet ::= nm(X) LB explain_lines RB. {
+  sql_explain_add_facet(pParse, &X, true);
+}
+explain_facet ::= nm(X) LB RB. { sql_explain_add_facet(pParse, &X, true); }
+explain_lines ::= explain_line.
+explain_lines ::= explain_lines COMMA explain_line.
+explain_line ::= INTEGER(X). { sql_explain_add_line(pParse, &X); }
