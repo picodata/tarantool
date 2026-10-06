@@ -2185,6 +2185,11 @@ struct ExplainOpts {
 	 * Parse it is 0 if the number is not given.
 	 */
 	int runs;
+	/**
+	 * The option 'round' is FALSE: the measurements are exact
+	 * integers, not short texts that are rounded down.
+	 */
+	bool is_exact;
 };
 
 typedef struct ExplainOpts ExplainOpts;
@@ -2426,7 +2431,10 @@ sql_explain_analyze_forbid(struct Parse *parse, const char *kind);
  *   transaction of the user;
  * - 'runs', the number of times to run the statement, 1 by default. The
  *   measurements are the sums of all runs. The timeout and the rollback
- *   are for each run.
+ *   are for each run;
+ * - 'round', TRUE (the default) or FALSE. If TRUE, the measurements are
+ *   short texts, rounded down and aligned to the right, like '12.3k'. If
+ *   FALSE, they are exact integers.
  */
 void
 sql_explain_set_option(struct Parse *parse, const struct Token *name,

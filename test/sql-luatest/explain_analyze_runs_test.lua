@@ -56,7 +56,8 @@ g.test_runs_value = function()
         local _, err = box.execute([[EXPLAIN (ANALYZE {'kek': 1})
                                      SELECT 1;]])
         t.assert_str_contains(err.message, "the options are 'freq', " ..
-                              "'mode', 'rollback_stmt', 'runs', 'timeout'")
+                              "'mode', 'rollback_stmt', 'round', 'runs', " ..
+                              "'timeout'")
     end)
 end
 

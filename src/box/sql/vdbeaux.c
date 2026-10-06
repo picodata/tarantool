@@ -2085,6 +2085,21 @@ explain_count_str(uint64_t count, const char *column)
 }
 
 /**
+ * Set a column of EXPLAIN ANALYZE to a measurement: the exact integer, or
+ * the text of explain_count_str().
+ */
+static void
+explain_set_count(struct Mem *mem, uint64_t count, const char *column,
+		  bool is_exact)
+{
+	if (is_exact) {
+		mem_set_uint(mem, count);
+		return;
+	}
+	mem_set_str0_allocated(mem, explain_count_str(count, column));
+}
+
+/**
  * Get the performance counters of an instruction of the program or of
  * one of its sub-programs. No sub-program runs when the program is
  * listed, thus Vdbe.aOp is the main program.
@@ -2135,20 +2150,18 @@ explain_list_row(struct Vdbe *p, Op *ops, int op_count, int addr,
 	struct Mem *first = mem;
 	uint8_t mode = (mask & EXPLAIN_FACET_ANALYZE) != 0 ?
 		       opts->analyze_mode : 0;
+	bool is_exact = opts->is_exact;
 	if ((mode & EXPLAIN_ANALYZE_HITS) != 0) {
 		uint64_t count = vdbe_op_perf_stats(p, op)->hit_count;
-		mem_set_str0_allocated(mem++,
-				       explain_count_str(count, "hits"));
+		explain_set_count(mem++, count, "hits", is_exact);
 	}
 	if ((mode & EXPLAIN_ANALYZE_SAMPLES) != 0) {
 		uint64_t count = vdbe_op_perf_stats(p, op)->sample_count;
-		mem_set_str0_allocated(mem++,
-				       explain_count_str(count, "samples"));
+		explain_set_count(mem++, count, "samples", is_exact);
 	}
 	if ((mode & EXPLAIN_ANALYZE_WAIT_SAMPLES) != 0) {
 		uint64_t count = vdbe_op_perf_stats(p, op)->wait_sample_count;
-		const char *column = "wait_samples";
-		mem_set_str0_allocated(mem++, explain_count_str(count, column));
+		explain_set_count(mem++, count, "wait_samples", is_exact);
 	}
 	if (state->graph != NULL) {
 		mem_set_str0_allocated(mem++,

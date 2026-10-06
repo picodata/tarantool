@@ -52,11 +52,12 @@ typedef struct ExplainColumn ExplainColumn;
 
 /**
  * Set the names and types of the columns of EXPLAIN. For EXPLAIN without
- * QUERY PLAN they depend on the facets and on the mode of ANALYZE.
+ * QUERY PLAN they depend on the facets and on the mode of ANALYZE. The
+ * measurements of ANALYZE are texts, or integers if they are exact.
  */
 static void
 sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
-			uint8_t mode)
+			uint8_t mode, bool is_exact)
 {
 	static const ExplainColumn analyze_hits[] = {
 		{"hits", "text"},
@@ -94,23 +95,26 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
 		const ExplainColumn *columns;
 		int count;
 		bool is_shown;
+		/** The group is a measurement of ANALYZE. */
+		bool is_measurement;
 	} groups[] = {
-		{plan, ArraySize(plan), explain == EXPLAIN_MODE_QUERY_PLAN},
+		{plan, ArraySize(plan), explain == EXPLAIN_MODE_QUERY_PLAN, false},
 		{analyze_hits, ArraySize(analyze_hits),
 		 is_program && is_analyzed &&
-		 (mode & EXPLAIN_ANALYZE_HITS) != 0},
+		 (mode & EXPLAIN_ANALYZE_HITS) != 0, true},
 		{analyze_samples, ArraySize(analyze_samples),
 		 is_program && is_analyzed &&
-		 (mode & EXPLAIN_ANALYZE_SAMPLES) != 0},
+		 (mode & EXPLAIN_ANALYZE_SAMPLES) != 0, true},
 		{analyze_wait_samples, ArraySize(analyze_wait_samples),
 		 is_program && is_analyzed &&
-		 (mode & EXPLAIN_ANALYZE_WAIT_SAMPLES) != 0},
+		 (mode & EXPLAIN_ANALYZE_WAIT_SAMPLES) != 0, true},
 		{graph, ArraySize(graph),
-		 is_program && (facets & EXPLAIN_FACET_GRAPH) != 0},
+		 is_program && (facets & EXPLAIN_FACET_GRAPH) != 0, false},
 		{opcode, ArraySize(opcode),
-		 is_program && (facets & EXPLAIN_FACET_OPCODE) != 0},
+		 is_program && (facets & EXPLAIN_FACET_OPCODE) != 0, false},
 		{pseudocode, ArraySize(pseudocode),
-		 is_program && (facets & EXPLAIN_FACET_PSEUDOCODE) != 0},
+		 is_program && (facets & EXPLAIN_FACET_PSEUDOCODE) != 0,
+		 false},
 	};
 	int count = 0;
 	for (int i = 0; i < ArraySize(groups); i++) {
@@ -122,11 +126,12 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
 	for (int i = 0; i < ArraySize(groups); i++) {
 		if (!groups[i].is_shown)
 			continue;
+		bool is_integer = groups[i].is_measurement && is_exact;
 		for (int j = 0; j < groups[i].count; j++, column++) {
-			vdbe_metadata_set_col_name(v, column,
-						   groups[i].columns[j].name);
-			vdbe_metadata_set_col_type(v, column,
-						   groups[i].columns[j].type);
+			const ExplainColumn *def = &groups[i].columns[j];
+			vdbe_metadata_set_col_name(v, column, def->name);
+			vdbe_metadata_set_col_type(v, column, is_integer ?
+						   "integer" : def->type);
 		}
 	}
 }
@@ -222,6 +227,7 @@ static const char *const explain_options[] = {
 	"freq",
 	"mode",
 	"rollback_stmt",
+	"round",
 	"runs",
 	"timeout",
 };
@@ -354,6 +360,15 @@ sql_explain_set_option(struct Parse *parse, const struct Token *name,
 		parse->explain_opts.timeout = timeout;
 		return;
 	}
+	if (sql_explain_token_is(name, "round")) {
+		if (type != TK_TRUE && type != TK_FALSE) {
+			sql_explain_error(parse, "EXPLAIN option 'round' must "
+					  "be TRUE or FALSE");
+			return;
+		}
+		parse->explain_opts.is_exact = type == TK_FALSE;
+		return;
+	}
 	if (sql_explain_token_is(name, "runs")) {
 		int runs;
 		if (type != TK_INTEGER || is_negative ||
@@ -457,7 +472,8 @@ sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 	    sParse.explain != EXPLAIN_MODE_OFF) {
 		sql_explain_set_columns(sParse.pVdbe, sParse.explain,
 					sParse.explain_opts.facets,
-					sql_explain_analyze_mode(&sParse));
+					sql_explain_analyze_mode(&sParse),
+					sParse.explain_opts.is_exact);
 	}
 
 	if (sql_get()->init.busy == 0) {
