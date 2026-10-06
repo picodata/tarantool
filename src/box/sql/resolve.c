@@ -140,6 +140,150 @@ resolveAlias(struct ExprList *pEList, int iCol, struct Expr *pExpr,
 	sql_xfree(pDup);
 }
 
+/** Context used to validate table function arguments. */
+struct table_func_arg_check {
+	/** Contexts contain only the visible prefixes of their source lists. */
+	struct NameContext *name_ctx;
+	/** True if an argument reads a preceding source. */
+	bool has_references;
+};
+
+/** Report a table function argument validation error. */
+static int
+table_func_arg_report_error(Walker *walker, const char *msg)
+{
+	diag_set(ClientError, ER_SQL_PARSER_GENERIC, msg);
+	walker->pParse->is_aborted = true;
+	return WRC_Abort;
+}
+
+/** Validate one expression node used in a table function argument. */
+static int
+table_func_arg_check_expr(Walker *walker, Expr *expr)
+{
+	if (ExprHasProperty(expr, EP_xIsSelect)) {
+		if (!ExprHasProperty(expr, EP_VarSelect)) {
+			if (expr->op == TK_IN && expr->pLeft != NULL &&
+			    sqlWalkExpr(walker, expr->pLeft) != WRC_Continue)
+				return WRC_Abort;
+			return WRC_Prune;
+		}
+		return table_func_arg_report_error(
+			walker, "correlated subqueries are not supported in "
+			"table function arguments");
+	}
+	if (ExprHasProperty(expr, EP_WinFunc))
+		goto aggregate;
+	switch (expr->op) {
+	case TK_COLUMN_REF: {
+		struct table_func_arg_check *ctx = walker->u.pArg;
+		for (NameContext *nc = ctx->name_ctx; nc != NULL;) {
+			struct SrcList *src = nc->pSrcList;
+			for (int i = 0; src != NULL && i < src->nSrc; i++) {
+				if (src->a[i].iCursor == expr->iTable) {
+					ctx->has_references = true;
+					return WRC_Continue;
+				}
+			}
+			/* Only grouping parentheses preserve this scope. */
+			if (nc->pWinSelect == NULL ||
+			    (nc->pWinSelect->selFlags & SF_NestedFrom) == 0)
+				break;
+			nc = nc->pNext;
+		}
+		/* A column of an outer query. */
+		return WRC_Continue;
+	}
+	case TK_AGG_FUNCTION:
+	case TK_WIN_COLUMN:
+	case TK_AGG_COLUMN:
+		goto aggregate;
+	default:
+		return WRC_Continue;
+	}
+aggregate:
+	return table_func_arg_report_error(
+		walker, "table function arguments cannot "
+		"contain aggregate or window functions");
+}
+
+/** Validate table function arguments after name resolution. */
+static int
+sql_table_func_validate_args(NameContext *name_ctx, struct SrcItem *item)
+{
+	assert(item->fg.isTabFunc);
+	ExprList *args = item->u1.pFuncArg;
+	if (args == NULL)
+		return 0;
+	struct table_func_arg_check check = {
+		.name_ctx = name_ctx,
+		.has_references = false,
+	};
+	Walker walker;
+	memset(&walker, 0, sizeof(walker));
+	walker.pParse = name_ctx->pParse;
+	walker.xExprCallback = table_func_arg_check_expr;
+	walker.u.pArg = &check;
+	if (sqlWalkExprList(&walker, args) != WRC_Continue)
+		return -1;
+	item->fg.isCorrelated = check.has_references;
+	return 0;
+}
+
+/**
+ * Resolve the names in table function arguments. The arguments can read the
+ * columns of outer queries, but not their output aliases: hide the aliases
+ * of each outer name context for the time of the resolution.
+ */
+static int
+table_func_resolve_arg_names(NameContext *args_ctx, NameContext *outer,
+			     struct ExprList *args)
+{
+	if (outer == NULL)
+		return sqlResolveExprListNames(args_ctx, args);
+	int has_aliases = outer->ncFlags & NC_UEList;
+	outer->ncFlags &= ~NC_UEList;
+	int rc = table_func_resolve_arg_names(args_ctx, outer->pNext, args);
+	outer->ncFlags |= has_aliases;
+	return rc;
+}
+
+/**
+ * Resolve names in table function arguments against preceding FROM items
+ * and outer queries.
+ */
+static int
+sql_table_func_resolve_args(NameContext *name_ctx, struct SrcList *src_list,
+			    int src_idx)
+{
+	assert(src_idx >= 0 && src_idx < src_list->nSrc);
+	struct SrcItem *item = &src_list->a[src_idx];
+	assert(item->fg.isTabFunc);
+	NameContext args_ctx = *name_ctx;
+	args_ctx.uNC.pEList = NULL;
+	args_ctx.ncFlags &= ~(NC_UEList | NC_AllowAgg | NC_AllowWin);
+	args_ctx.pSrcList = src_list;
+	int src_count = src_list->nSrc;
+	src_list->nSrc = src_idx;
+	int rc = table_func_resolve_arg_names(&args_ctx, args_ctx.pNext,
+					      item->u1.pFuncArg);
+	if (rc == WRC_Continue)
+		rc = sql_table_func_validate_args(&args_ctx, item);
+	src_list->nSrc = src_count;
+	if (rc != 0)
+		return -1;
+	const struct sql_table_func_def *func =
+		sql_table_func_find(item->zName, strlen(item->zName), false);
+	assert(func != NULL);
+	if (sql_table_func_check_arg_types(func, item->u1.pFuncArg) != 0 ||
+	    func->ops->resolve_schema(item->u1.pFuncArg,
+				      item->space->def->fields) != 0) {
+		name_ctx->pParse->is_aborted = true;
+		return -1;
+	}
+	return 0;
+}
+
 /*
  * Return TRUE if the name zCol occurs anywhere in the USING clause.
  *
@@ -1360,6 +1504,11 @@ resolveOrderGroupBy(NameContext * pNC,	/* The name context of the SELECT stateme
 	return sqlResolveOrderGroupBy(pParse, pSelect, pOrderBy, zType);
 }
 
+/** Resolve a SELECT with separate contexts for table function arguments. */
+static void
+sql_select_resolve_names(Parse *parse, Select *select, NameContext *outer,
+			 NameContext *table_func_ctx);
+
 /*
  * Resolve names in the SELECT statement p and all of its descendants.
  */
@@ -1441,12 +1590,26 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			p->pOrderBy = 0;
 		}
 
-		/* Recursively resolve names in all subqueries
-		 */
+		/* Resolve source schemas from left to right. */
+		sNC.pSrcList = p->pSrc;
+		sNC.pNext = pOuterNC;
+		NameContext table_func_ctx;
+		memset(&table_func_ctx, 0, sizeof(table_func_ctx));
+		table_func_ctx.pParse = pParse;
+		table_func_ctx.pSrcList = p->pSrc;
+		table_func_ctx.pWinSelect = p;
+		if (p->selFlags & SF_NestedFrom)
+			table_func_ctx.pNext = pWalker->table_func_ctx;
+		else
+			table_func_ctx.pNext = pOuterNC;
 		if (pOuterNC != NULL)
 			pOuterNC->nNestedSelect++;
 		for (i = 0; i < p->pSrc->nSrc; i++) {
 			struct SrcItem *pItem = &p->pSrc->a[i];
+			if (pItem->fg.isTabFunc &&
+			    sql_table_func_resolve_args(&table_func_ctx,
+							p->pSrc, i) != 0)
+				return WRC_Abort;
 			struct Subquery *subq = pItem->pSubq;
 			if (pItem->fg.isRecursive) {
 				/*
@@ -1462,20 +1625,19 @@ resolveSelectStep(Walker * pWalker, Select * p)
 			}
 			if (subq != NULL &&
 			    (subq->pSelect->selFlags & SF_Resolved) == 0) {
-				NameContext *pNC;	/* Used to iterate name contexts */
-				int nRef = 0;	/* Refcount for pOuterNC and outer contexts */
-
-				/* Count the total number of references to pOuterNC and all of its
-				 * parent contexts. After resolving references to expressions in
-				 * pItem->pSelect, check if this value has changed. If so, then
-				 * SELECT statement pItem->pSelect must be correlated. Set the
-				 * pItem->fg.isCorrelated flag if this is the case.
-				 */
-				for (pNC = pOuterNC; pNC; pNC = pNC->pNext)
-					nRef += pNC->nRef;
-
-				sqlResolveSelectNames(pParse, subq->pSelect,
-						      pOuterNC);
+				bool nested = (subq->pSelect->selFlags &
+					       SF_NestedFrom) != 0;
+				int count = p->pSrc->nSrc;
+				if (nested)
+					p->pSrc->nSrc = i;
+				int nRef = table_func_ctx.nRef;
+				for (NameContext *nc = pOuterNC; nc;
+				     nc = nc->pNext)
+					nRef += nc->nRef;
+				sql_select_resolve_names(
+					pParse, subq->pSelect, pOuterNC,
+					nested ? &table_func_ctx : NULL);
+				p->pSrc->nSrc = count;
 				if (pParse->is_aborted)
 					return WRC_Abort;
 				/*
@@ -1495,12 +1657,11 @@ resolveSelectStep(Walker * pWalker, Select * p)
 						pParse, pItem->space->def,
 						pLeft);
 				}
-
-				for (pNC = pOuterNC; pNC; pNC = pNC->pNext)
-					nRef -= pNC->nRef;
-				assert(pItem->fg.isCorrelated == 0
-				       && nRef <= 0);
-				pItem->fg.isCorrelated = (nRef != 0);
+				nRef -= table_func_ctx.nRef;
+				for (NameContext *nc = pOuterNC; nc;
+				     nc = nc->pNext)
+					nRef -= nc->nRef;
+				pItem->fg.isCorrelated = nRef != 0;
 			}
 		}
 		if (pOuterNC != NULL)
@@ -1513,6 +1674,7 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		sNC.ncFlags = NC_AllowAgg | NC_AllowWin;
 		sNC.pSrcList = p->pSrc;
 		sNC.pNext = pOuterNC;
+
 		struct ExprList_item *item = p->pEList->a;
 		/* Resolve names in the result set. */
 		for (i = 0; i < p->pEList->nExpr; ++i, ++item) {
@@ -1604,17 +1766,6 @@ resolveSelectStep(Walker * pWalker, Select * p)
 		}
 		if (sqlResolveExprNames(&sNC, p->pWhere))
 			return WRC_Abort;
-
-		/* Resolve names in table-valued-function arguments */
-		for (i = 0; i < p->pSrc->nSrc; i++) {
-			struct SrcItem *pItem = &p->pSrc->a[i];
-			if (pItem->fg.isTabFunc
-			    && sqlResolveExprListNames(&sNC,
-							   pItem->u1.pFuncArg)
-			    ) {
-				return WRC_Abort;
-			}
-		}
 
 		sNC.ncFlags |= NC_AllowAgg | NC_AllowWin;
 
@@ -1769,6 +1920,7 @@ sqlResolveExprNames(NameContext * pNC,	/* Namespace to resolve expressions in. *
 	w.xSelectCallback = resolveSelectStep;
 	w.xSelectCallback2 = 0;
 	w.u.pNC = pNC;
+	w.table_func_ctx = NULL;
 #if SQL_MAX_EXPR_DEPTH > 0
 	w.pParse->nHeight += pExpr->nHeight;
 	if (sqlExprCheckHeight(w.pParse, w.pParse->nHeight))
@@ -1806,6 +1958,7 @@ sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions i
 	w.xSelectCallback = resolveSelectStep;
 	w.xSelectCallback2 = 0;
 	w.u.pNC = pNC;
+	w.table_func_ctx = NULL;
 	savedHasAgg = pNC->ncFlags & (NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
 	pNC->ncFlags &= ~(NC_HasAgg | NC_MinMaxAgg | NC_HasWin);
 	for (int i = 0; i < pList->nExpr; i++) {
@@ -1847,21 +2000,26 @@ sqlResolveExprListNames(NameContext * pNC,	/* Namespace to resolve expressions i
  * All SELECT statements should have been expanded using
  * sqlSelectExpand() prior to invoking this routine.
  */
-void
-sqlResolveSelectNames(Parse * pParse,	/* The parser context */
-			  Select * p,	/* The SELECT statement being coded. */
-			  NameContext * pOuterNC	/* Name context for parent SELECT statement */
-    )
+static void
+sql_select_resolve_names(Parse *parse, Select *select, NameContext *outer,
+			 NameContext *table_func_ctx)
 {
 	Walker w;
 
-	assert(p != 0);
+	assert(select != NULL);
 	w.xExprCallback = resolveExprStep;
 	w.xSelectCallback = resolveSelectStep;
 	w.xSelectCallback2 = NULL;
-	w.pParse = pParse;
-	w.u.pNC = pOuterNC;
-	sqlWalkSelect(&w, p);
+	w.pParse = parse;
+	w.u.pNC = outer;
+	w.table_func_ctx = table_func_ctx;
+	sqlWalkSelect(&w, select);
+}
+
+void
+sqlResolveSelectNames(Parse *parse, Select *select, NameContext *outer)
+{
+	sql_select_resolve_names(parse, select, outer, NULL);
 }
 
 void

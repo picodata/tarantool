@@ -57,6 +57,7 @@ typedef struct ExplainGraph ExplainGraph;
 #define VDBE_HAS_SAMPLES 1
 #include <time.h>
 #endif
+struct sql_table_func_def;
 
 /*
  * Boolean values
@@ -70,6 +71,33 @@ typedef struct VdbeSorter VdbeSorter;
 #define CURTYPE_TARANTOOL   0
 #define CURTYPE_SORTER      1
 #define CURTYPE_PSEUDO      2
+#define CURTYPE_TABLEFUNC   3
+
+/** Runtime state of a table function cursor. */
+struct VdbeTableFuncCursor {
+	/** Schema owned by the instruction that opened this cursor. */
+	const struct sql_table_func_call *call;
+	/** Registered table function descriptor. */
+	const struct sql_table_func_def *func;
+	/** Opaque iterator context returned by func->ops->open(). */
+	void *ctx;
+	/** True if ctx currently owns an open iterator. */
+	bool is_open;
+	/** True if VDBE must append an ordinality column. */
+	bool has_ordinality;
+	/** Next ordinality value to append. */
+	uint64_t ordinality;
+	/** MsgPack-encoded argument array copied at OP_TFuncOpen. */
+	char *args;
+	/** Size of args in bytes. */
+	uint32_t args_size;
+	/** MsgPack-encoded current result row. */
+	char *row;
+	/** Allocated size of row in bytes. */
+	size_t row_capacity;
+	/** Size of row in bytes. */
+	uint32_t row_size;
+};
 
 /*
  * A VdbeCursor is an superclass (a wrapper) for various cursor objects:
@@ -109,6 +137,7 @@ struct VdbeCursor {
 		BtCursor *pCursor;	/* CURTYPE_TARANTOOL */
 		int pseudoTableReg;	/* CURTYPE_PSEUDO. Reg holding content. */
 		VdbeSorter *pSorter;	/* CURTYPE_SORTER. Sorter object */
+		struct VdbeTableFuncCursor *pTFunc; /* CURTYPE_TABLEFUNC */
 	} uc;
 	/** Info about keys needed by index cursors. */
 	struct key_def *key_def;

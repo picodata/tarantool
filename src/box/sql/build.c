@@ -3011,7 +3011,8 @@ sqlSrcListIndexedBy(struct SrcList *p, struct Token *pIndexedBy)
  * table-valued-function.
  */
 void
-sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList)
+sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList,
+		   bool has_ordinality)
 {
 	if (p) {
 		struct SrcItem *pItem = &p->a[p->nSrc - 1];
@@ -3020,6 +3021,7 @@ sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList)
 		assert(pItem->fg.isTabFunc == 0);
 		pItem->u1.pFuncArg = pList;
 		pItem->fg.isTabFunc = 1;
+		pItem->fg.hasOrdinality = has_ordinality;
 	} else {
 		sql_expr_list_delete(pList);
 	}

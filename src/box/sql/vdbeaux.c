@@ -619,6 +619,7 @@ freeP4(int p4type, void *p4)
 			break;
 		}
 	case P4_DEC:
+	case P4_TABLE_FUNC:
 	case P4_DYNAMIC:
 	case P4_INTARRAY:{
 			sql_xfree(p4);
@@ -1291,6 +1292,11 @@ displayP4(Op * pOp, char *zTemp, int nTemp)
 		return zTemp;
 	}
 	switch (pOp->p4type) {
+	case P4_TABLE_FUNC: {
+		struct sql_table_func_call *call = pOp->p4.p;
+		sqlXPrintf(&x, "%s", call->func->name);
+		break;
+	}
 	case P4_KEYINFO:{
 			struct key_def *def = NULL;
 			if (pOp->p4.key_info != NULL)
@@ -1817,8 +1823,8 @@ explain_graph_set_columns(ExplainGraph *graph)
 /**
  * Check that an instruction jumps back to the start of a loop. The rules
  * are the ones that the SQLite shell uses to indent EXPLAIN: a backward
- * jump of Next, Prev or SorterNext, or a backward Goto to an instruction
- * that starts a loop. Other backward jumps, such as the Goto back to the
+ * jump of Next, Prev, SorterNext or TFuncNext, or a backward Goto to a loop
+ * start. Other backward jumps, such as the Goto back to the
  * start of the program after the transaction begins, run once.
  */
 static bool
@@ -1833,6 +1839,7 @@ explain_is_loop_end(const struct VdbeOp *ops, int addr)
 	case OP_NextIfOpen:
 	case OP_PrevIfOpen:
 	case OP_SorterNext:
+	case OP_TFuncNext:
 		return true;
 	case OP_Goto:
 		switch (ops[op->p2].opcode) {
@@ -1840,6 +1847,7 @@ explain_is_loop_end(const struct VdbeOp *ops, int addr)
 		case OP_SeekLT:
 		case OP_SeekGT:
 		case OP_Rewind:
+		case OP_TFuncRewind:
 			return true;
 		default:
 			return op->p1 != 0;
@@ -2618,6 +2626,13 @@ sqlVdbeFreeCursor(struct VdbeCursor *pCx)
 		sql_cursor_close(pCx->uc.pCursor);
 			break;
 		}
+	case CURTYPE_TABLEFUNC:{
+		if (pCx->uc.pTFunc->is_open)
+			pCx->uc.pTFunc->func->ops->close(pCx->uc.pTFunc->ctx);
+		free(pCx->uc.pTFunc->args);
+		free(pCx->uc.pTFunc->row);
+		break;
+	}
 	}
 }
 

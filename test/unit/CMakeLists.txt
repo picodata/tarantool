@@ -674,3 +674,13 @@ create_unit_test(PREFIX lua_tweaks
                            ${LIBYAML_LIBRARIES}
                            ${READLINE_LIBRARIES}
 )
+
+create_unit_test(PREFIX sql_table_func
+                 SOURCES sql_table_func.c box_test_utils.c
+                 LIBRARIES unit box core
+)
+target_include_directories(sql_table_func.test PRIVATE
+                           ${PROJECT_BINARY_DIR}/src/box/sql)
+# Match the layout of internal SQL structures in libbox.
+target_compile_definitions(sql_table_func.test PRIVATE
+                           SQL_TEST=1 $<$<CONFIG:Debug>:SQL_DEBUG=1>)

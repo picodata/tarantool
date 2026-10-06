@@ -1105,6 +1105,9 @@ sqlLogEst(u64 x)
 u64
 sqlLogEstToInt(LogEst x)
 {
+	/* Large generator ranges and join estimates can exceed uint64. */
+	if (x >= 640)
+		return UINT64_MAX;
 	u64 n;
 	n = x % 10;
 	x /= 10;
@@ -1112,10 +1115,7 @@ sqlLogEstToInt(LogEst x)
 		n -= 2;
 	else if (n >= 1)
 		n -= 1;
-	/* The largest input possible to this routine is 310,
-	 * resulting in a maximum x of 31
-	 */
-	assert(x <= 60);
+	assert(x <= 63);
 	return x >= 3 ? (n + 8) << (x - 3) : (n + 8) >> (3 - x);
 }
 

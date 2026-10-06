@@ -58,6 +58,8 @@
 #include "box/sequence.h"
 #include "box/session_settings.h"
 
+#include <stdlib.h>
+
 #ifdef SQL_DEBUG
 
 /*
@@ -244,7 +246,9 @@ allocateCursor(
 	VdbeCursor *pCx = 0;
 	int bt_offset = ROUND8(sizeof(VdbeCursor) + sizeof(uint32_t) * nField);
 	int nByte = bt_offset +
-		(eCurType==CURTYPE_TARANTOOL ? ROUND8(sizeof(BtCursor)) : 0);
+		(eCurType == CURTYPE_TARANTOOL ? ROUND8(sizeof(BtCursor)) : 0) +
+		(eCurType == CURTYPE_TABLEFUNC ?
+		 ROUND8(sizeof(struct VdbeTableFuncCursor)) : 0);
 
 	assert(iCur>=0 && iCur<p->nCursor);
 	if (p->apCsr[iCur]) { /*OPTIMIZATION-IF-FALSE*/
@@ -261,8 +265,166 @@ allocateCursor(
 	if (eCurType == CURTYPE_TARANTOOL) {
 		pCx->uc.pCursor = (struct BtCursor *)&pMem->z[bt_offset];
 		sqlCursorZero(pCx->uc.pCursor);
+	} else if (eCurType == CURTYPE_TABLEFUNC) {
+		pCx->uc.pTFunc = (struct VdbeTableFuncCursor *)
+			&pMem->z[bt_offset];
+		memset(pCx->uc.pTFunc, 0, sizeof(*pCx->uc.pTFunc));
 	}
 	return pCx;
+}
+
+/** Close an open table function iterator if any. */
+static void
+vdbe_table_func_close(VdbeCursor *cursor)
+{
+	assert(cursor->eCurType == CURTYPE_TABLEFUNC);
+	struct VdbeTableFuncCursor *tfunc = cursor->uc.pTFunc;
+	if (!tfunc->is_open)
+		return;
+	tfunc->func->ops->close(tfunc->ctx);
+	tfunc->ctx = NULL;
+	tfunc->is_open = false;
+}
+
+/** Open a table function iterator using saved argument data. */
+static int
+vdbe_table_func_open(VdbeCursor *cursor)
+{
+	assert(cursor->eCurType == CURTYPE_TABLEFUNC);
+	struct VdbeTableFuncCursor *tfunc = cursor->uc.pTFunc;
+	void *ctx = NULL;
+	struct diag *diag = &fiber()->diag;
+	struct error *last_error = diag_last_error(diag);
+	if (tfunc->func->ops->open(tfunc->args,
+				   tfunc->args + tfunc->args_size,
+				   &ctx) != 0) {
+		/* An unsuccessful open owns and releases its partial state. */
+		assert(ctx == NULL);
+		struct error *error = diag_last_error(diag);
+		if (error == NULL || error == last_error)
+			diag_set(ClientError, ER_PROC_C, "unknown error");
+		return -1;
+	}
+	tfunc->ctx = ctx;
+	tfunc->is_open = true;
+	tfunc->ordinality = 1;
+	return 0;
+}
+
+/** Validate values against the schema resolved for this particular call. */
+static int
+vdbe_table_func_validate_row(const struct sql_table_func_call *call,
+			     const char *row, const char *row_end)
+{
+	const char *pos = row;
+	if (row_end <= row || mp_typeof(*row) != MP_ARRAY ||
+	    mp_check_exact(&pos, row_end) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "table function returned an invalid row");
+		return -1;
+	}
+	pos = row;
+	uint32_t count = mp_decode_array(&pos);
+	if (count != call->func->field_count) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "table function returned an invalid column count");
+		return -1;
+	}
+	for (uint32_t i = 0; i < count; i++) {
+		const struct field_def *field = &call->fields[i];
+		if (!field_mp_type_is_compatible(field->type, pos,
+						 field->is_nullable)) {
+			diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
+				 mp_type_strs[mp_typeof(*pos)],
+				 field_type_strs[field->type]);
+			return -1;
+		}
+		mp_next(&pos);
+	}
+	return 0;
+}
+
+/** Read the next row from a table function iterator. */
+static int
+vdbe_table_func_next(VdbeCursor *cursor, int *eof)
+{
+	assert(cursor->eCurType == CURTYPE_TABLEFUNC);
+	struct VdbeTableFuncCursor *tfunc = cursor->uc.pTFunc;
+	const char *row;
+	const char *row_end;
+	struct diag *diag = &fiber()->diag;
+	struct error *last_error = diag_last_error(diag);
+	if (tfunc->func->ops->next(tfunc->ctx, &row, &row_end) != 0) {
+		struct error *error = diag_last_error(diag);
+		if (error == NULL || error == last_error)
+			diag_set(ClientError, ER_PROC_C, "unknown error");
+		return -1;
+	}
+	if (row == NULL) {
+		*eof = 1;
+		cursor->nullRow = 1;
+		cursor->cacheStatus = CACHE_STALE;
+		return 0;
+	}
+	if (vdbe_table_func_validate_row(tfunc->call, row, row_end) != 0)
+		return -1;
+	if (tfunc->has_ordinality && tfunc->ordinality == 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "table function ordinality overflow");
+		return -1;
+	}
+	const char *pos = row;
+	uint32_t field_count = mp_decode_array(&pos);
+	assert(field_count == tfunc->func->field_count);
+	const char *payload = pos;
+	size_t row_size;
+	if (!tfunc->has_ordinality) {
+		row_size = row_end - row;
+	} else {
+		row_size = mp_sizeof_array(field_count + 1) +
+			   (row_end - payload) +
+			   mp_sizeof_uint(tfunc->ordinality);
+	}
+	if (row_size > UINT32_MAX) {
+		diag_set(ClientError, ER_PROC_C,
+			 "table function returned too large row");
+		return -1;
+	}
+	char *copy = tfunc->row;
+	if (row_size > tfunc->row_capacity) {
+		copy = xrealloc(copy, row_size);
+		tfunc->row = copy;
+		tfunc->row_capacity = row_size;
+	}
+	if (!tfunc->has_ordinality) {
+		memcpy(copy, row, row_size);
+	} else {
+		char *out = mp_encode_array(copy, field_count + 1);
+		size_t payload_size = row_end - payload;
+		memcpy(out, payload, payload_size);
+		out += payload_size;
+		out = mp_encode_uint(out, tfunc->ordinality++);
+		assert(out == copy + row_size);
+	}
+	tfunc->row_size = (uint32_t)row_size;
+	cursor->nullRow = 0;
+	cursor->cacheStatus = CACHE_STALE;
+	*eof = 0;
+	return 0;
+}
+
+/** Reopen a table function iterator and read its first row. */
+static int
+vdbe_table_func_rewind(VdbeCursor *cursor, int *eof)
+{
+	assert(cursor->eCurType == CURTYPE_TABLEFUNC);
+	vdbe_table_func_close(cursor);
+	cursor->nullRow = 1;
+	cursor->cacheStatus = CACHE_STALE;
+
+	if (vdbe_table_func_open(cursor) != 0)
+		return -1;
+	return vdbe_table_func_next(cursor, eof);
 }
 
 struct space *
@@ -2181,6 +2343,11 @@ case OP_Column: {
 			} else {
 				goto op_column_out;
 			}
+		} else if (pC->eCurType == CURTYPE_TABLEFUNC) {
+			assert(pC->uc.pTFunc->row != NULL);
+			vdbe_field_ref_prepare_data(&pC->field_ref,
+						    pC->uc.pTFunc->row,
+						    pC->uc.pTFunc->row_size);
 		} else {
 			pCrsr = pC->uc.pCursor;
 			assert(pC->eCurType==CURTYPE_TARANTOOL);
@@ -2194,7 +2361,8 @@ case OP_Column: {
 		pC->cacheStatus = p->cacheCtr;
 	}
 	assert(pC->eCurType == CURTYPE_TARANTOOL ||
-	       pC->eCurType == CURTYPE_PSEUDO);
+	       pC->eCurType == CURTYPE_PSEUDO ||
+	       pC->eCurType == CURTYPE_TABLEFUNC);
 	struct Mem *default_val_mem =
 		pOp->p4type == P4_MEM ? pOp->p4.pMem : NULL;
 	if (vdbe_field_ref_fetch(&pC->field_ref, p2, pDest) != 0)
@@ -2213,6 +2381,19 @@ case OP_Column: {
 		if (sql_cursor_validate(pC->uc.pCursor) != 0)
 			goto abort_due_to_error;
 		field_type = pC->uc.pCursor->space->def->fields[p2].type;
+	} else if (pC->eCurType == CURTYPE_TABLEFUNC) {
+		struct VdbeTableFuncCursor *tfunc = pC->uc.pTFunc;
+		assert(tfunc != NULL && tfunc->func != NULL);
+		uint32_t fieldno = (uint32_t)p2;
+		assert(fieldno < tfunc->func->field_count +
+		       tfunc->has_ordinality);
+		if (fieldno < tfunc->func->field_count) {
+			field_type = tfunc->call->fields[fieldno].type;
+		} else {
+			assert(tfunc->has_ordinality &&
+			       fieldno == tfunc->func->field_count);
+			field_type = FIELD_TYPE_UNSIGNED;
+		}
 	}
 	if (field_type == FIELD_TYPE_ANY)
 		pDest->flags |= MEM_Any;
@@ -2695,6 +2876,43 @@ case OP_IteratorOpen: {
 	bt_cur->hints = pOp->p5;
 	/* Key info still contains sorter order and collation. */
 	cur->key_def = index->def->key_def;
+	cur->nullRow = 1;
+	break;
+}
+
+/* Opcode: TFuncOpen P1 P2 P3 P4 *
+ * Synopsis: c[P1] = P4(r[P2@P3])
+ *
+ * Open a table function cursor P1. P4 owns the per-call schema. P2 is the first
+ * argument register and P3 is the number of arguments.
+ */
+case OP_TFuncOpen: {
+	assert(pOp->p1 >= 0 && pOp->p2 >= 0 && pOp->p3 >= 0);
+	assert(pOp->p4type == P4_TABLE_FUNC);
+	const struct sql_table_func_call *call = pOp->p4.p;
+	struct VdbeCursor *cur = allocateCursor(p, pOp->p1, call->field_count,
+						CURTYPE_TABLEFUNC);
+	struct VdbeTableFuncCursor *tfunc = cur->uc.pTFunc;
+	tfunc->call = call;
+	tfunc->func = call->func;
+	tfunc->has_ordinality = call->has_ordinality;
+	struct port args;
+	struct sql_value *arg_mem = pOp->p3 > 0 ?
+				    (struct sql_value *)&aMem[pOp->p2] :
+				    (struct sql_value *)aMem;
+	port_vdbemem_create(&args, arg_mem, pOp->p3);
+	struct region *region = &fiber()->gc;
+	size_t region_svp = region_used(region);
+	uint32_t args_size;
+	const char *args_data = port_get_msgpack(&args, &args_size);
+	if (args_data == NULL) {
+		region_truncate(region, region_svp);
+		goto abort_due_to_error;
+	}
+	tfunc->args = xmalloc(args_size);
+	memcpy(tfunc->args, args_data, args_size);
+	tfunc->args_size = args_size;
+	region_truncate(region, region_svp);
 	cur->nullRow = 1;
 	break;
 }
@@ -3623,6 +3841,49 @@ case OP_Rewind: {        /* jump */
 	pC->nullRow = (u8)res;
 	if (pOp->p2 > 0 && res) {
 		assert(pOp->p2 < p->nOp);
+		goto jump_to_p2;
+	}
+	break;
+}
+
+/* Opcode: TFuncRewind P1 P2 * * *
+ * Synopsis: c[P1].first(); IF empty THEN GOTO P2 END
+ *
+ * Read the first row from table function cursor P1. Jump to P2 if the table
+ * function is empty.
+ */
+case OP_TFuncRewind: {        /* jump */
+	assert(pOp->p1 >= 0 && pOp->p1 < p->nCursor);
+	VdbeCursor *pC = p->apCsr[pOp->p1];
+	assert(pC != NULL);
+	assert(pC->eCurType == CURTYPE_TABLEFUNC);
+	int eof;
+	if (vdbe_table_func_rewind(pC, &eof) != 0)
+		goto abort_due_to_error;
+	if (pOp->p2 > 0 && eof) {
+		assert(pOp->p2 < p->nOp);
+		goto jump_to_p2;
+	}
+	break;
+}
+
+/* Opcode: TFuncNext P1 P2 * * P5
+ * Synopsis: c[P1].next(); IF found THEN GOTO P2 END
+ *
+ * Read the next row from table function cursor P1. If the read was
+ * successful, jump to P2. Otherwise execution continues.
+ */
+case OP_TFuncNext: {        /* jump */
+	assert(pOp->p1 >= 0 && pOp->p1 < p->nCursor);
+	assert(pOp->p5 < ArraySize(p->aCounter));
+	VdbeCursor *pC = p->apCsr[pOp->p1];
+	assert(pC != NULL);
+	assert(pC->eCurType == CURTYPE_TABLEFUNC);
+	int eof;
+	if (vdbe_table_func_next(pC, &eof) != 0)
+		goto abort_due_to_error;
+	if (!eof) {
+		p->aCounter[pOp->p5]++;
 		goto jump_to_p2;
 	}
 	break;

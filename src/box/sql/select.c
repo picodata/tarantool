@@ -516,7 +516,8 @@ select_collect_table_names(struct Walker *walker, struct Select *select)
 	assert(walker != NULL);
 	assert(select != NULL);
 	for (int i = 0; i < select->pSrc->nSrc; ++i) {
-		if (select->pSrc->a[i].zName == NULL)
+		if (select->pSrc->a[i].zName == NULL ||
+		    select->pSrc->a[i].fg.isTabFunc)
 			continue;
 		walker->u.pSrcList =
 			src_list_append_unique(walker->u.pSrcList,
@@ -4001,6 +4002,49 @@ substSelect(Parse * pParse,	/* Report errors here */
 	} while (doPrior && (p = p->pPrior) != 0);
 }
 
+/** Keep sources of table-function arguments as separate subqueries. */
+static int
+table_func_arg_check_dependency(Walker *walker, Expr *expr)
+{
+	int cursor = *(int *)walker->u.pArg;
+	return expr->op == TK_COLUMN_REF && expr->iTable == cursor ?
+		WRC_Abort : WRC_Continue;
+}
+
+/** Check table function arguments in one SELECT before flattening. */
+static int
+select_check_table_func_dependencies(Walker *walker, Select *p)
+{
+	SrcList *src_list = p->pSrc;
+	if (src_list == NULL)
+		return WRC_Continue;
+	for (int i = 0; i < src_list->nSrc; i++) {
+		struct SrcItem *item = &src_list->a[i];
+		if (!item->fg.isTabFunc)
+			continue;
+		Walker arg_walker;
+		memset(&arg_walker, 0, sizeof(arg_walker));
+		arg_walker.xExprCallback = table_func_arg_check_dependency;
+		arg_walker.u.pArg = walker->u.pArg;
+		if (sqlWalkExprList(&arg_walker, item->u1.pFuncArg) ==
+		    WRC_Abort)
+			return WRC_Abort;
+	}
+	return WRC_Continue;
+}
+
+/** Return true if any table-function argument reads this subquery. */
+static bool
+select_has_table_func_dependency(Select *select, int cursor)
+{
+	Walker walker;
+	memset(&walker, 0, sizeof(walker));
+	walker.xExprCallback = sqlExprWalkNoop;
+	walker.xSelectCallback = select_check_table_func_dependencies;
+	walker.u.pArg = &cursor;
+	return sqlWalkSelect(&walker, select) == WRC_Abort;
+}
+
 /*
  * This routine attempts to flatten subqueries as a performance optimization.
  * This routine returns 1 if it makes changes and 0 if no flattening occurs.
@@ -4176,6 +4220,10 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 	assert(pSubitem->pSubq != NULL);
 	pSub = pSubitem->pSubq->pSelect;
 	assert(pSub != 0);
+	/* Keep the per-left-row evaluation boundary of a grouped join. */
+	if (pSubitem->fg.isCorrelated && (pSub->selFlags & SF_NestedFrom) &&
+	    sql_select_has_from_dependency(pSub, pSrc))
+		return 0;
 	if (p->pWin || pSub->pWin)
 		return 0;	/* Restrictions (25) */
 	if (subqueryIsAgg) {
@@ -4303,6 +4351,8 @@ flattenSubquery(Parse * pParse,		/* Parsing context */
 			}
 		}
 	}
+	if (select_has_table_func_dependency(p, iParent))
+		return 0;
 
 	/***** If we reach this point, flattening is permitted. *****/
 	SELECTTRACE(1, pParse, p, ("flatten %s.%p from term %d\n",
@@ -4683,7 +4733,8 @@ is_simple_count(struct Select *select, struct AggInfo *agg_info)
 {
 	assert(select->pGroupBy == NULL);
 	if (select->pWhere != NULL || select->pEList->nExpr != 1 ||
-	    select->pSrc->nSrc != 1 || select->pSrc->a[0].pSubq != NULL) {
+	    select->pSrc->nSrc != 1 || select->pSrc->a[0].pSubq != NULL ||
+	    select->pSrc->a[0].fg.isTabFunc) {
 		return NULL;
 	}
 	struct space *space = select->pSrc->a[0].space;
@@ -4951,7 +5002,8 @@ withExpand(struct Walker *pWalker, struct SrcItem *pFrom)
 			SrcList *pSrc = pSel->pSrc;
 			for (i = 0; i < pSrc->nSrc; i++) {
 				struct SrcItem *pItem = &pSrc->a[i];
-				if (pItem->zName != NULL &&
+				if (!pItem->fg.isTabFunc &&
+				    pItem->zName != NULL &&
 				    strcmp(pItem->zName, pCte->zName) == 0) {
 					pItem->space = pFrom->space;
 					pItem->fg.isRecursive = 1;
@@ -5062,6 +5114,58 @@ sqlExpandSubquery(Parse *pParse, struct SrcItem *pFrom)
 	}
 	sqlColumnsFromExprList(pParse, pSelect->pEList, space->def);
 	pFrom->space = space;
+}
+
+/** Expand a table function FROM item into a template SQL space. */
+static int
+sql_table_func_expand(Parse *parse, struct SrcItem *from)
+{
+	assert(from->fg.isTabFunc);
+	assert(from->zName != NULL);
+	const struct sql_table_func_def *table_func =
+		sql_table_func_find(from->zName, strlen(from->zName), false);
+	if (table_func == NULL) {
+		parse->is_aborted = true;
+		return -1;
+	}
+
+	int argc = from->u1.pFuncArg != NULL ? from->u1.pFuncArg->nExpr : 0;
+	if (table_func->param_count != -1 && table_func->param_count != argc) {
+		diag_set(ClientError, ER_FUNC_WRONG_ARG_COUNT, from->zName,
+			 tt_sprintf("%d", table_func->param_count), argc);
+		parse->is_aborted = true;
+		return -1;
+	}
+
+	struct space *space = sql_template_space_new(parse, from->zName);
+	struct space_def *def = space->def;
+	uint32_t base_count = table_func->field_count;
+	uint32_t count = base_count + (from->fg.hasOrdinality ? 1 : 0);
+	def->fields = xregion_alloc_array(&parse->region, struct field_def,
+					  count);
+	def->field_count = count;
+	def->exact_field_count = count;
+	for (uint32_t i = 0; i < base_count; i++) {
+		def->fields[i] = table_func->fields[i];
+		size_t name_len = strlen(table_func->fields[i].name);
+		def->fields[i].name =
+			xregion_alloc(&parse->region, name_len + 1);
+		memcpy(def->fields[i].name, table_func->fields[i].name,
+		       name_len + 1);
+	}
+	if (from->fg.hasOrdinality) {
+		struct field_def *field = &def->fields[base_count];
+		memset(field, 0, sizeof(*field));
+		field->type = FIELD_TYPE_UNSIGNED;
+		field->is_nullable = false;
+		field->nullable_action = ON_CONFLICT_ACTION_DEFAULT;
+		const char *name = "ORDINALITY";
+		size_t name_len = strlen(name);
+		field->name = xregion_alloc(&parse->region, name_len + 1);
+		memcpy(field->name, name, name_len + 1);
+	}
+	from->space = space;
+	return 0;
 }
 
 /**
@@ -5190,7 +5294,7 @@ selectExpander(Walker * pWalker, Select * p)
 			continue;
 		assert(pFrom->space == NULL);
 
-		if (withExpand(pWalker, pFrom))
+		if (!pFrom->fg.isTabFunc && withExpand(pWalker, pFrom))
 			return WRC_Abort;
 		if (pFrom->space != NULL) {
 		} else
@@ -5204,6 +5308,9 @@ selectExpander(Walker * pWalker, Select * p)
 			if (sqlWalkSelect(pWalker, pSel))
 				return WRC_Abort;
 			sqlExpandSubquery(pParse, pFrom);
+		} else if (pFrom->fg.isTabFunc) {
+			if (sql_table_func_expand(pParse, pFrom) != 0)
+				return WRC_Abort;
 		} else {
 			/*
 			 * An ordinary table or view name in the
@@ -5212,15 +5319,6 @@ selectExpander(Walker * pWalker, Select * p)
 			struct space *space = sql_lookup_space(pParse, pFrom);
 			if (space == NULL)
 				return WRC_Abort;
-			if (pFrom->fg.isTabFunc) {
-				const char *err =
-					tt_sprintf("'%s' is not a function",
-						   pFrom->zName);
-				diag_set(ClientError, ER_SQL_PARSER_GENERIC,
-					 err);
-				pParse->is_aborted = true;
-				return WRC_Abort;
-			}
 			if (space->def->opts.is_view) {
 				struct Select *select =
 					sql_view_compile(space->def->opts.sql);
@@ -5779,6 +5877,74 @@ explain_simple_count(struct Parse *parse_context, const char *table_name)
 	}
 }
 
+bool
+sql_src_list_has_table_func(const SrcList *sources)
+{
+	for (int i = 0; i < sources->nSrc; ++i) {
+		const struct SrcItem *item = &sources->a[i];
+		if (item->fg.isTabFunc)
+			return true;
+		if (item->pSubq == NULL)
+			continue;
+		for (Select *p = item->pSubq->pSelect; p != NULL;
+		     p = p->pPrior) {
+			if (sql_src_list_has_table_func(p->pSrc))
+				return true;
+		}
+	}
+	return false;
+}
+
+void
+sql_table_func_emit_arg_init(Parse *parse, struct SrcItem *item)
+{
+	assert(item->fg.isTabFunc && !item->fg.isCorrelated);
+	assert(parse->table_func_init_entry > 0);
+	if (item->table_func_init_entry == parse->table_func_init_entry)
+		return;
+	item->table_func_init_entry = parse->table_func_init_entry;
+	Vdbe *v = parse->pVdbe;
+	/* Normal execution, including group rescans, skips this block. */
+	int skip = sqlVdbeAddOp0(v, OP_Goto);
+	if (item->table_func_arg_reg == 0) {
+		ExprList *args = item->u1.pFuncArg;
+		assert(args != NULL && args->nExpr > 0);
+		item->table_func_arg_reg = parse->nMem + 1;
+		parse->nMem += args->nExpr;
+		item->table_func_return_reg = ++parse->nMem;
+		item->table_func_init_addr = sqlVdbeCurrentAddr(v);
+		sqlExprCachePush(parse);
+		sqlExprCodeExprList(parse, args, item->table_func_arg_reg, 0,
+				    SQL_ECEL_DUP);
+		sqlExprCachePop(parse);
+		sql_table_func_emit_arg_cast(parse, item,
+					     item->table_func_arg_reg);
+		sqlVdbeAddOp1(v, OP_Return, item->table_func_return_reg);
+	}
+	/* Each generated SELECT entry must fill even reused registers. */
+	assert(item->table_func_init_addr > 0);
+	sqlVdbeJumpHere(v, parse->table_func_init_jump);
+	sqlVdbeAddOp2(v, OP_Gosub, item->table_func_return_reg,
+		      item->table_func_init_addr);
+	parse->table_func_init_jump = sqlVdbeAddOp0(v, OP_Goto);
+	sqlVdbeJumpHere(v, skip);
+}
+
+/** Reused group subroutines still need arguments at each SELECT entry. */
+static void
+select_emit_group_arg_init(Parse *parse, Select *group)
+{
+	assert((group->selFlags & SF_NestedFrom) != 0);
+	for (int i = 0; i < group->pSrc->nSrc; ++i) {
+		struct SrcItem *item = &group->pSrc->a[i];
+		if (item->fg.isTabFunc && item->table_func_arg_reg != 0)
+			sql_table_func_emit_arg_init(parse, item);
+		if (item->pSubq != NULL &&
+		    (item->pSubq->pSelect->selFlags & SF_NestedFrom) != 0)
+			select_emit_group_arg_init(parse, item->pSubq->pSelect);
+	}
+}
+
 /**
  * Generate VDBE code that HALT program when subselect returned
  * more than one row (determined as LIMIT 1 overflow).
@@ -5822,6 +5988,9 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	      Select * p,		/* The SELECT statement being coded. */
 	      SelectDest * pDest)	/* What to do with the query results */
 {
+	int arg_init_start = 0;
+	int saved_arg_init_jump = pParse->table_func_init_jump;
+	int saved_arg_init_entry = pParse->table_func_init_entry;
 	int i, j;		/* Loop counters */
 	WhereInfo *pWInfo;	/* Return from sqlWhereBegin() */
 	Vdbe *v;		/* The virtual machine under construction */
@@ -6002,6 +6171,19 @@ sqlSelect(Parse * pParse,		/* The parser context */
 					      pFirst->pEList);
 	}
 
+	/*
+	 * At the explicit SELECT entry, run all independent argument
+	 * initializers before the main program. The chain is populated as
+	 * functions are compiled, including those in synthetic join groups
+	 * and those moved there by flattening. Groups share this entry.
+	 */
+	if ((p->selFlags & SF_NestedFrom) == 0 &&
+	    sql_src_list_has_table_func(pTabList)) {
+		arg_init_start = sqlVdbeAddOp0(v, OP_Goto);
+		pParse->table_func_init_jump = arg_init_start;
+		pParse->table_func_init_entry = arg_init_start;
+	}
+
 	/* Generate code for all sub-queries in the FROM clause
 	 */
 	for (i = 0; i < pTabList->nSrc; i++) {
@@ -6011,6 +6193,25 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		if (subq == NULL)
 			continue;
 		struct Select *pSub = subq->pSelect;
+		subq->is_from_dependent = pItem->fg.isCorrelated &&
+			sql_select_has_from_dependency(pSub, pTabList);
+
+		/*
+		 * A previous generation may have replaced the group's
+		 * reads of outer tables with reads of its own index
+		 * cursors. Regenerate correlated groups so that each copy
+		 * uses its caller's cursors. Include references through
+		 * enclosing groups, not only sources in the immediate
+		 * parent FROM.
+		 */
+		if (subq->addrFillSub != 0 && pItem->fg.isCorrelated &&
+		    (pSub->selFlags & SF_NestedFrom) != 0) {
+			subq->addrFillSub = 0;
+			subq->addrEndSub = 0;
+			subq->regReturn = 0;
+			subq->regResult = 0;
+			pItem->fg.viaCoroutine = 0;
+		}
 
 		/* Sometimes the code for a subquery will be generated more than
 		 * once, if the subquery is part of the WHERE clause in a LEFT JOIN,
@@ -6020,7 +6221,10 @@ sqlSelect(Parse * pParse,		/* The parser context */
 		 * to be invoked again.
 		 */
 		if (subq->addrFillSub) {
-			if (pItem->fg.viaCoroutine == 0) {
+			if ((pSub->selFlags & SF_NestedFrom) != 0)
+				select_emit_group_arg_init(pParse, pSub);
+			if (!pItem->fg.viaCoroutine &&
+			    !subq->is_from_dependent) {
 				sqlVdbeAddOp2(v, OP_Gosub, subq->regReturn,
 					      subq->addrFillSub);
 			}
@@ -6054,20 +6258,21 @@ sqlSelect(Parse * pParse,		/* The parser context */
 
 		/* Generate code to implement the subquery
 		 *
-		 * The subquery is implemented as a co-routine if all of these are true:
-		 *   (1)  The subquery is guaranteed to be the outer loop (so that it
-		 *        does not need to be computed more than once)
-		 *   (2)  The ALL keyword after SELECT is omitted.  (Applications are
-		 *        allowed to say "SELECT ALL" instead of just "SELECT" to disable
-		 *        the use of co-routines.)
-		 *
-		 * TODO: Are there other reasons beside (1) to use a co-routine
-		 * implementation?
+		 * An ordinary subquery can use a coroutine if it is
+		 * guaranteed to be the outer loop and SELECT ALL has not
+		 * disabled that choice. A dependent join group also uses
+		 * a coroutine, including under SELECT ALL: the loop
+		 * restarts it for the current left row without
+		 * accumulating its result. Explicit subquery rules are
+		 * unchanged.
 		 */
-		if (i == 0 && (pTabList->nSrc == 1 ||
-			       (pTabList->a[1].fg.jointype &
-				(JT_LEFT | JT_CROSS)) != 0) &&
-		    (p->selFlags & SF_All) == 0 &&
+		bool outer_loop = i == 0 && (pTabList->nSrc == 1 ||
+			(pTabList->a[1].fg.jointype &
+			 (JT_LEFT | JT_CROSS)) != 0) &&
+			(p->selFlags & SF_All) == 0;
+		bool dependent_group = subq->is_from_dependent &&
+			(pSub->selFlags & SF_NestedFrom) != 0;
+		if ((outer_loop || dependent_group) &&
 		    OptimizationEnabled(SQL_SubqCoroutine)) {
 			/* Implement a co-routine that will return a single row of the result
 			 * set on each invocation.
@@ -6085,6 +6290,7 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			pItem->fg.viaCoroutine = 1;
 			subq->regResult = dest.iSdst;
 			sqlVdbeEndCoroutine(v, subq->regReturn);
+			subq->addrEndSub = sqlVdbeCurrentAddr(v);
 			sqlVdbeJumpHere(v, addrTop - 1);
 			sqlClearTempRegCache(pParse);
 		} else {
@@ -6102,8 +6308,11 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			int retAddr;
 			assert(subq->addrFillSub == 0);
 			subq->regReturn = ++pParse->nMem;
-			topAddr = sqlVdbeAddOp2(v, OP_Integer, 0,
-						subq->regReturn);
+			if (subq->is_from_dependent)
+				topAddr = sqlVdbeAddOp0(v, OP_Goto);
+			else
+				topAddr = sqlVdbeAddOp2(v, OP_Integer, 0,
+							subq->regReturn);
 			subq->addrFillSub = topAddr + 1;
 			if (pItem->fg.isCorrelated == 0) {
 				/* If the subquery is not
@@ -6126,8 +6335,12 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			if (onceAddr)
 				sqlVdbeJumpHere(v, onceAddr);
 			retAddr = sqlVdbeAddOp1(v, OP_Return, subq->regReturn);
+			subq->addrEndSub = sqlVdbeCurrentAddr(v);
 			VdbeComment((v, "end %s", pItem->space->def->name));
-			sqlVdbeChangeP1(v, topAddr, retAddr);
+			if (subq->is_from_dependent)
+				sqlVdbeJumpHere(v, topAddr);
+			else
+				sqlVdbeChangeP1(v, topAddr, retAddr);
 			sqlClearTempRegCache(pParse);
 		}
 		pParse->nHeight -= sqlSelectExprHeight(p);
@@ -6869,6 +7082,12 @@ sqlSelect(Parse * pParse,		/* The parser context */
 	 * successful coding of the SELECT.
 	 */
  select_end:
+	if (arg_init_start != 0) {
+		sqlVdbeChangeP2(v, pParse->table_func_init_jump,
+				arg_init_start + 1);
+		pParse->table_func_init_jump = saved_arg_init_jump;
+		pParse->table_func_init_entry = saved_arg_init_entry;
+	}
 	pParse->iSelectId = iRestoreSelectId;
 
 	sql_xfree(sAggInfo.aCol);

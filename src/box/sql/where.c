@@ -672,12 +672,12 @@ estLog(LogEst N)
  */
 static void
 translateColumnToCopy(Vdbe * v,		/* The VDBE containing code to translate */
-		      int iStart,	/* Translate from this opcode to the end */
+		      int iStart,	/* First opcode to translate */
+		      int iEnd,		/* First opcode not to translate */
 		      int iTabCur,	/* OP_Column references to this table */
 		      int iRegister)	/* The first column is in this register */
 {
 	VdbeOp *pOp = sqlVdbeGetOp(v, iStart);
-	int iEnd = sqlVdbeCurrentAddr(v);
 	for (; iStart < iEnd; iStart++, pOp++) {
 		if (pOp->p1 != iTabCur)
 			continue;
@@ -2756,6 +2756,28 @@ whereLoopAddBtree(WhereLoopBuilder * pBuilder,	/* WHERE clause information */
 	pWC = pBuilder->pWC;
 
 	struct space *space = pSrc->space;
+	if (pSrc->fg.isTabFunc) {
+		const struct sql_table_func_def *func =
+			sql_table_func_find(pSrc->zName, strlen(pSrc->zName),
+					    false);
+		assert(func != NULL);
+		uint64_t rows = func->ops->estimate_rows(pSrc->u1.pFuncArg);
+		rSize = sqlLogEst(rows == 0 ? 1 : rows);
+		pNew->nEq = 0;
+		pNew->nBtm = 0;
+		pNew->nTop = 0;
+		pNew->nSkip = 0;
+		pNew->nLTerm = 0;
+		pNew->iSortIdx = 0;
+		pNew->rSetup = 0;
+		pNew->prereq = mPrereq;
+		pNew->nOut = rSize;
+		pNew->index_def = NULL;
+		pNew->wsFlags = 0;
+		pNew->rRun = rSize + 16;
+		whereLoopOutputAdjust(pWC, pNew, rSize);
+		return whereLoopInsert(pBuilder, pNew);
+	}
 	if (pSrc->pIBIndex) {
 		/* An INDEXED BY clause specifies a particular index to use */
 		probe = pSrc->pIBIndex;
@@ -2823,10 +2845,10 @@ tnt_error:
 	if (!pBuilder->pOrSet && /* Not pqart of an OR optimization */
 	    (pWInfo->wctrlFlags & WHERE_OR_SUBCLAUSE) == 0 &&
 	    (pWInfo->pParse->sql_flags & SQL_AutoIndex) != 0 &&
-	    pSrc->pIBIndex == 0	/* Has no INDEXED BY clause */
-	    && !pSrc->fg.notIndexed	/* Has no NOT INDEXED clause */
-	    &&!pSrc->fg.isCorrelated	/* Not a correlated subquery */
-	    && !pSrc->fg.isRecursive	/* Not a recursive common table expression. */
+	    pSrc->pIBIndex == 0 &&	/* Has no INDEXED BY clause */
+	    !pSrc->fg.notIndexed &&	/* Has no NOT INDEXED clause */
+	    !pSrc->fg.isCorrelated &&	/* Not row-dependent. */
+	    !pSrc->fg.isRecursive	/* Not recursive. */
 	    ) {
 		/* Generate auto-index WhereLoops */
 		WhereTerm *pTerm;
@@ -3106,12 +3128,19 @@ whereLoopAddAll(WhereLoopBuilder * pBuilder)
 			 */
 			mPrereq = mPrior;
 		}
+		Bitmask itemPrereq = mPrereq;
+		if (pItem->fg.isTabFunc)
+			itemPrereq |= sqlWhereExprListUsage(&pWInfo->sMaskSet,
+							    pItem->u1.pFuncArg);
+		if (pItem->pSubq != NULL && pItem->fg.isCorrelated)
+			itemPrereq |= sql_select_get_usage(
+				&pWInfo->sMaskSet, pItem->pSubq->pSelect);
 		priorJointype = pItem->fg.jointype;
 		{
-			rc = whereLoopAddBtree(pBuilder, mPrereq);
+			rc = whereLoopAddBtree(pBuilder, itemPrereq);
 		}
 		if (rc == 0)
-			rc = whereLoopAddOr(pBuilder, mPrereq, mUnusable);
+			rc = whereLoopAddOr(pBuilder, itemPrereq, mUnusable);
 		mPrior |= pNew->maskSelf;
 		if (rc != 0)
 			break;
@@ -4346,10 +4375,8 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 	 * equal to pTabList->nSrc but might be shortened to 1 if the
 	 * WHERE_OR_SUBCLAUSE flag is set.
 	 */
-	for (ii = 0; ii < pTabList->nSrc; ii++) {
+	for (ii = 0; ii < pTabList->nSrc; ii++)
 		createMask(pMaskSet, pTabList->a[ii].iCursor);
-		sqlWhereTabFuncArgs(pParse, &pTabList->a[ii], &pWInfo->sWC);
-	}
 #ifdef SQL_DEBUG
 	for (ii = 0; ii < pTabList->nSrc; ii++) {
 		Bitmask m =
@@ -4457,8 +4484,15 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 		while (pWInfo->nLevel >= 2) {
 			WhereTerm *pTerm, *pEnd;
 			pLoop = pWInfo->a[pWInfo->nLevel - 1].pWLoop;
-			if ((pWInfo->pTabList->a[pLoop->iTab].fg.
-			     jointype & JT_LEFT) == 0)
+			struct SrcItem *item =
+				&pWInfo->pTabList->a[pLoop->iTab];
+			struct Subquery *subq = item->pSubq;
+			/* Keep function calls in dependent groups too. */
+			if (item->fg.isTabFunc ||
+			    (subq != NULL && subq->is_from_dependent &&
+			     sql_src_list_has_table_func(subq->pSelect->pSrc)))
+				break;
+			if ((item->fg.jointype & JT_LEFT) == 0)
 				break;
 			if ((wctrlFlags & WHERE_WANT_DISTINCT) == 0
 			    && (pLoop->wsFlags & WHERE_ONEROW) == 0) {
@@ -4508,7 +4542,11 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 		struct space_def *space_def = pTabItem->space->def;
 		pLoop = pLevel->pWLoop;
 		struct space *space = pTabItem->space;
-		if (space_def->id == 0 || space_def->opts.is_view) {
+		if (pTabItem->fg.isTabFunc) {
+			if (!pTabItem->fg.isCorrelated)
+				sql_table_func_emit_open(pParse, pTabItem,
+							 pLevel->iTabCur);
+		} else if (space_def->id == 0 || space_def->opts.is_view) {
 			/* Do nothing */
 		} else if ((pLoop->wsFlags & WHERE_IDX_ONLY) == 0 &&
 			   (wctrlFlags & WHERE_OR_SUBCLAUSE) == 0) {
@@ -4628,6 +4666,81 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 	return 0;
 }
 
+/** Replace reads of a table within one contiguous bytecode range. */
+static void
+where_loop_replace_columns(Vdbe *v, WhereLevel *pLevel,
+			   struct SrcItem *pTabItem, int first, int last)
+{
+	WhereLoop *pLoop = pLevel->pWLoop;
+	int k;
+	VdbeOp *pOp;
+	/* For a co-routine, change all OP_Column references to the table of
+	 * the co-routine into OP_Copy of result contained in a register.
+	 */
+	if (pTabItem->fg.viaCoroutine != 0) {
+		assert(pTabItem->pSubq != NULL);
+		translateColumnToCopy(v, first, last,
+				      pLevel->iTabCur,
+				      pTabItem->pSubq->regResult);
+		return;
+	}
+
+	/* If this scan uses an index, make VDBE code substitutions to read data
+	 * from the index instead of from the table where possible. This can
+	 * avoid reading the table and improve performance.
+	 *
+	 * Calls to the code generator in between sqlWhereBegin and
+	 * sqlWhereEnd will have created code that references the table
+	 * directly.  This loop scans all that code looking for opcodes
+	 * that reference the table and converts them into opcodes that
+	 * reference the index.
+	 */
+	struct index_def *def = NULL;
+	if (pLoop->wsFlags & (WHERE_INDEXED | WHERE_IDX_ONLY)) {
+		def = pLoop->index_def;
+	} else if (pLoop->wsFlags & WHERE_MULTI_OR) {
+		def = pLevel->u.pCovidx;
+	}
+	if (def != NULL) {
+		k = first;
+		pOp = sqlVdbeGetOp(v, k);
+		for (; k < last; k++, pOp++) {
+			if (pOp->p1 != pLevel->iTabCur)
+				continue;
+			if (pOp->opcode != OP_Column)
+				continue;
+			assert(def == NULL ||
+			       def->space_id == pTabItem->space->def->id);
+			int x = pOp->p2;
+			assert(x >= 0);
+			pOp->p1 = pLevel->iIdxCur;
+			if ((pLoop->wsFlags & WHERE_AUTO_INDEX) == 0) {
+				pOp->p2 = x;
+				continue;
+			}
+			/*
+			 * In case we are using ephemeral index, the
+			 * space that will be used to get the values
+			 * will be ephemeral index. Since the opcode
+			 * OP_Column uses the position of the fields
+			 * according to the original space, and the
+			 * fields may be in other positions in the
+			 * ephemeral index, we must correct the P2 of
+			 * OP_Column. To get the positions of these
+			 * fields in ephemeral index, we use the index
+			 * definition we created.
+			 */
+			struct key_def *key_def =
+				pLevel->pWLoop->index_def->key_def;
+			uint32_t part_count = key_def->part_count;
+			for (uint32_t i = 0; i < part_count; ++i) {
+				if ((int)key_def->parts[i].fieldno == x)
+					pOp->p2 = i;
+			}
+		}
+	}
+}
+
 /*
  * Generate the end of the WHERE loop.  See comments on
  * sqlWhereBegin() for additional information.
@@ -4649,7 +4762,16 @@ sqlWhereEnd(WhereInfo * pWInfo)
 		int addr;
 		pLevel = &pWInfo->a[i];
 		pLoop = pLevel->pWLoop;
+		struct SrcItem *item = &pTabList->a[pLevel->iFrom];
 		sqlVdbeResolveLabel(v, pLevel->addrCont);
+		if (pLevel->iLeftJoin && item->fg.viaCoroutine) {
+			/*
+			 * Do not resume an exhausted coroutine after its
+			 * NULL row.
+			 */
+			sqlVdbeAddOp2(v, OP_IsNull, item->pSubq->regReturn,
+				      pLevel->addrBrk);
+		}
 		if (pLevel->op != OP_Noop) {
 			sqlVdbeAddOp3(v, pLevel->op, pLevel->p1, pLevel->p2,
 					  pLevel->p3);
@@ -4680,11 +4802,28 @@ sqlWhereEnd(WhereInfo * pWInfo)
 		}
 		if (pLevel->iLeftJoin) {
 			int ws = pLoop->wsFlags;
+			if (item->fg.viaCoroutine) {
+				/*
+				 * EndCoroutine leaves the return register
+				 * undefined.
+				 */
+				sqlVdbeAddOp2(v, OP_Null, 0,
+					      item->pSubq->regReturn);
+			}
 			addr =
 			    sqlVdbeAddOp1(v, OP_IfPos, pLevel->iLeftJoin);
 			assert((ws & WHERE_IDX_ONLY) == 0
 			       || (ws & WHERE_INDEXED) != 0);
-			if ((ws & WHERE_IDX_ONLY) == 0) {
+			if (item->fg.viaCoroutine) {
+				/*
+				 * The group's row lives in registers, not
+				 * a cursor.
+				 */
+				int first = item->pSubq->regResult;
+				int count = item->pSubq->pSelect->pEList->nExpr;
+				sqlVdbeAddOp3(v, OP_Null, 0, first,
+					      first + count - 1);
+			} else if ((ws & WHERE_IDX_ONLY) == 0) {
 				sqlVdbeAddOp1(v, OP_NullRow,
 						  pTabList->a[i].iCursor);
 			}
@@ -4711,78 +4850,31 @@ sqlWhereEnd(WhereInfo * pWInfo)
 
 	assert(pWInfo->nLevel <= pTabList->nSrc);
 	for (i = 0, pLevel = pWInfo->a; i < pWInfo->nLevel; i++, pLevel++) {
-		int k, last;
-		VdbeOp *pOp;
 		struct SrcItem *pTabItem = &pTabList->a[pLevel->iFrom];
 		assert(pTabItem->space != NULL);
 		pLoop = pLevel->pWLoop;
-
-		/* For a co-routine, change all OP_Column references to the table of
-		 * the co-routine into OP_Copy of result contained in a register.
+		where_loop_replace_columns(v, pLevel, pTabItem,
+					   pLevel->addrBody,
+					   sqlVdbeCurrentAddr(v));
+		/*
+		 * A dependent group's subroutine precedes the loop. Rewrite it
+		 * separately, without touching code between it and this loop.
+		 * OR branches share the subroutine, so only their parent may
+		 * rewrite it to an index that all branches can use.
 		 */
-		if (pTabItem->fg.viaCoroutine != 0) {
-			assert(pTabItem->pSubq != NULL);
-			translateColumnToCopy(v, pLevel->addrBody,
-					      pLevel->iTabCur,
-					      pTabItem->pSubq->regResult);
+		if ((pWInfo->wctrlFlags & WHERE_OR_SUBCLAUSE) != 0)
 			continue;
-		}
-
-		/* If this scan uses an index, make VDBE code substitutions to read data
-		 * from the index instead of from the table where possible.  In some cases
-		 * this optimization prevents the table from ever being read, which can
-		 * yield a significant performance boost.
-		 *
-		 * Calls to the code generator in between sqlWhereBegin and
-		 * sqlWhereEnd will have created code that references the table
-		 * directly.  This loop scans all that code looking for opcodes
-		 * that reference the table and converts them into opcodes that
-		 * reference the index.
-		 */
-		struct index_def *def = NULL;
-		if (pLoop->wsFlags & (WHERE_INDEXED | WHERE_IDX_ONLY)) {
-			def = pLoop->index_def;
-		} else if (pLoop->wsFlags & WHERE_MULTI_OR) {
-			def = pLevel->u.pCovidx;
-		}
-		if (def != NULL) {
-			last = sqlVdbeCurrentAddr(v);
-			k = pLevel->addrBody;
-			pOp = sqlVdbeGetOp(v, k);
-			for (; k < last; k++, pOp++) {
-				if (pOp->p1 != pLevel->iTabCur)
-					continue;
-				if (pOp->opcode != OP_Column)
-					continue;
-				assert(def == NULL || def->space_id ==
-						      pTabItem->space->def->id);
-				int x = pOp->p2;
-				assert(x >= 0);
-				pOp->p1 = pLevel->iIdxCur;
-				if ((pLoop->wsFlags & WHERE_AUTO_INDEX) == 0) {
-					pOp->p2 = x;
-					continue;
-				}
-				/*
-				 * In case we are using ephemeral index, the
-				 * space that will be used to get the values
-				 * will be ephemeral index. Since the opcode
-				 * OP_Column uses the position of the fields
-				 * according to the original space, and the
-				 * fields may be in other positions in the
-				 * ephemeral index, we must correct the P2 of
-				 * OP_Column. To get the positions of these
-				 * fields in ephemeral index, we use the index
-				 * definition we created.
-				 */
-				struct key_def *key_def =
-					pLevel->pWLoop->index_def->key_def;
-				uint32_t part_count = key_def->part_count;
-				for (uint32_t i = 0; i < part_count; ++i) {
-					if ((int)key_def->parts[i].fieldno == x)
-						pOp->p2 = i;
-				}
-			}
+		for (int j = 0; j < pTabList->nSrc; j++) {
+			struct Subquery *subq = pTabList->a[j].pSubq;
+			if (subq == NULL || !subq->is_from_dependent)
+				continue;
+			Bitmask used = sql_select_get_usage(
+				&pWInfo->sMaskSet, subq->pSelect);
+			if ((used & pLoop->maskSelf) == 0)
+				continue;
+			where_loop_replace_columns(v, pLevel, pTabItem,
+						   subq->addrFillSub,
+						   subq->addrEndSub);
 		}
 	}
 

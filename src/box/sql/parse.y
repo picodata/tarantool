@@ -645,6 +645,7 @@ seqscan(X) ::= .            {X = 1;}
 %destructor stl_prefix {sqlSrcListDelete($$);}
 %type from {SrcList*}
 %destructor from {sqlSrcListDelete($$);}
+%type with_ordinality_opt {bool}
 
 // A complete FROM clause.
 //
@@ -666,10 +667,21 @@ seltablist(A) ::= stl_prefix(A) seqscan(X) nm(Y) as(Z) indexed_opt(I)
   A = sqlSrcListAppendFromTerm(pParse,A,&Y,&Z,0,N,U,X);
   sqlSrcListIndexedBy(A, &I);
 }
-seltablist(A) ::= stl_prefix(A) seqscan(X) nm(Y) LP exprlist(E) RP as(Z)
-                  on_opt(N) using_opt(U). {
+seltablist(A) ::= stl_prefix(A) seqscan(X) nm(Y) LP exprlist(E) RP
+                  with_ordinality_opt(O) as(Z) on_opt(N) using_opt(U). {
   A = sqlSrcListAppendFromTerm(pParse,A,&Y,&Z,0,N,U,X);
-  sqlSrcListFuncArgs(A, E);
+  sqlSrcListFuncArgs(A, E, O);
+}
+with_ordinality_opt(A) ::= . { A = false; }
+with_ordinality_opt(A) ::= WITH nm(N). {
+  if (sizeof("ORDINALITY") - 1 != (size_t)N.n ||
+      sqlStrNICmp(N.z, "ORDINALITY", N.n) != 0) {
+    diag_set(ClientError, ER_SQL_PARSER_GENERIC_WITH_POS,
+             pParse->line_count, pParse->line_pos,
+             "expected ORDINALITY after WITH");
+    pParse->is_aborted = true;
+  }
+  A = true;
 }
 seltablist(A) ::= stl_prefix(A) LP select(S) RP
                   as(Z) on_opt(N) using_opt(U). {
@@ -696,6 +708,7 @@ seltablist(A) ::= stl_prefix(A) LP seltablist(F) RP
       pNew->fg.notIndexed = pOld->fg.notIndexed;
       pNew->fg.isIndexedBy = pOld->fg.isIndexedBy;
       pNew->fg.isTabFunc = pOld->fg.isTabFunc;
+      pNew->fg.hasOrdinality = pOld->fg.hasOrdinality;
       pNew->fg.disallow_scan = pOld->fg.disallow_scan;
       pNew->u1 = pOld->u1;
       pOld->fg.isIndexedBy = 0;
@@ -1328,7 +1341,7 @@ expr(A) ::= expr(A) in_op(N) nm(Y) paren_exprlist(E). [IN] {
   struct SrcList *pSrc = sql_src_list_append(NULL, &Y);
   Select *pSelect = sqlSelectNew(pParse, 0,pSrc,0,0,0,0,0,0,0);
   if(E != NULL)
-    sqlSrcListFuncArgs(pSelect != NULL ? pSrc : NULL, E);
+    sqlSrcListFuncArgs(pSelect != NULL ? pSrc : NULL, E, false);
   A = sqlPExpr(pParse, TK_IN, A, 0);
   sqlPExprAddSelect(pParse, A, pSelect);
   if( N ) A = sqlPExpr(pParse, TK_NOT, A, 0);

@@ -1754,6 +1754,13 @@ sqlSrcListDup(struct SrcList *p, int flags)
 		pNewItem->zAlias = sql_xstrdup(pOldItem->zAlias);
 		pNewItem->fg = pOldItem->fg;
 		pNewItem->iCursor = pOldItem->iCursor;
+		pNewItem->table_func_arg_reg = pOldItem->table_func_arg_reg;
+		/* A saved register is only reusable with its initializer. */
+		pNewItem->table_func_init_addr = pOldItem->table_func_init_addr;
+		pNewItem->table_func_return_reg =
+			pOldItem->table_func_return_reg;
+		pNewItem->table_func_init_entry =
+			pOldItem->table_func_init_entry;
 		pNewItem->pSubq = NULL;
 		if (pOldItem->pSubq != NULL) {
 			struct Subquery *subq =

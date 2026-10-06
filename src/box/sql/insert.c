@@ -1058,6 +1058,8 @@ xferOptimization(Parse * pParse,	/* Parser context */
 	if (pSelect->pSrc->a[0].pSubq != NULL) {
 		return 0;	/* FROM clause cannot contain a subquery */
 	}
+	if (pSelect->pSrc->a[0].fg.isTabFunc)
+		return 0;
 	if (pSelect->pWhere) {
 		return 0;	/* SELECT may not have a WHERE clause */
 	}

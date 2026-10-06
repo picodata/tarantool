@@ -42,6 +42,57 @@
 #include "sqlInt.h"
 #include "whereInt.h"
 
+void
+sql_table_func_emit_arg_cast(struct Parse *parse, struct SrcItem *item, int reg)
+{
+	assert(item->fg.isTabFunc);
+	const struct sql_table_func_def *func =
+		sql_table_func_find(item->zName, strlen(item->zName), false);
+	assert(func != NULL);
+	if (func->param_types == NULL)
+		return;
+	sqlVdbeAddOp4(parse->pVdbe, OP_ApplyType, reg, func->param_count, 0,
+		      (char *)func->param_types, P4_STATIC);
+}
+
+void
+sql_table_func_emit_open(Parse *pParse, struct SrcItem *pTabItem, int iCur)
+{
+	assert(pTabItem->fg.isTabFunc);
+	Vdbe *v = pParse->pVdbe;
+	struct ExprList *args = pTabItem->u1.pFuncArg;
+	int argc = args != NULL ? args->nExpr : 0;
+	if (argc > 0 && !pTabItem->fg.isCorrelated)
+		sql_table_func_emit_arg_init(pParse, pTabItem);
+	int reg = pTabItem->table_func_arg_reg;
+	if (argc > 0 && pTabItem->fg.isCorrelated) {
+		reg = sqlGetTempRange(pParse, argc);
+		sqlExprCachePush(pParse);
+		sqlExprCodeExprList(pParse, args, reg, 0, SQL_ECEL_DUP);
+		sqlExprCachePop(pParse);
+		sql_table_func_emit_arg_cast(pParse, pTabItem, reg);
+	}
+	const struct sql_table_func_def *func =
+		sql_table_func_find(pTabItem->zName, strlen(pTabItem->zName),
+				    false);
+	assert(func != NULL);
+	uint32_t count = pTabItem->space->def->field_count;
+	struct sql_table_func_call *call =
+		sql_xmalloc(sizeof(*call) + count * sizeof(call->fields[0]));
+	call->func = func;
+	call->field_count = count;
+	call->has_ordinality = pTabItem->fg.hasOrdinality;
+	for (uint32_t i = 0; i < count; i++) {
+		call->fields[i] = pTabItem->space->def->fields[i];
+		call->fields[i].name = i < func->field_count ?
+			func->fields[i].name : (char *)"ORDINALITY";
+	}
+	sqlVdbeAddOp4(v, OP_TFuncOpen, iCur, reg, argc, (char *)call,
+		      P4_TABLE_FUNC);
+	if (argc > 0 && pTabItem->fg.isCorrelated)
+		sqlReleaseTempRange(pParse, reg, argc);
+}
+
 /*
  * Return the name of the i-th column of the pIdx index.
  */
@@ -190,8 +241,8 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 	uint8_t facets = pParse->explain_opts.facets;
 	bool is_run = pParse->explain == EXPLAIN_MODE_OFF ||
 		      (facets & EXPLAIN_FACET_ANALYZE) != 0;
-	if (is_run && !is_search && pItem->fg.disallow_scan &&
-	    (pParse->sql_flags & SQL_SeqScan) == 0) {
+	if (is_run && !is_search && !pItem->fg.isTabFunc &&
+	    pItem->fg.disallow_scan && (pParse->sql_flags & SQL_SeqScan) == 0) {
 		const char *obj = pItem->zName == NULL ? "subselect" :
 				  tt_sprintf("'%s'", pItem->zName);
 		diag_set(ClientError, ER_SQL_SEQ_SCAN, obj);
@@ -224,12 +275,14 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 		if ((flags & WHERE_IPK) == 0) {
 			const char *zFmt = 0;
 			struct index_def *idx_def = pLoop->index_def;
-			if (idx_def == NULL)
+			if (idx_def == NULL && !pItem->fg.isTabFunc)
 				return 0;
 
 			assert(!(flags & WHERE_AUTO_INDEX)
 			       || (flags & WHERE_IDX_ONLY));
-			if ((flags & WHERE_AUTO_INDEX) != 0) {
+			if (idx_def == NULL) {
+				assert(pItem->fg.isTabFunc);
+			} else if ((flags & WHERE_AUTO_INDEX) != 0) {
 				zFmt = "EPHEMERAL INDEX";
 			} else if (idx_def->iid == 0) {
 				if (is_search)
@@ -731,6 +784,13 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		pLevel->iLeftJoin = ++pParse->nMem;
 		sqlVdbeAddOp2(v, OP_Integer, 0, pLevel->iLeftJoin);
 		VdbeComment((v, "init LEFT JOIN no-match flag"));
+	}
+
+	/* Rebuild a dependent parenthesized join for the current left row. */
+	if (pTabItem->pSubq != NULL && pTabItem->pSubq->is_from_dependent &&
+	    !pTabItem->fg.viaCoroutine) {
+		sqlVdbeAddOp2(v, OP_Gosub, pTabItem->pSubq->regReturn,
+			      pTabItem->pSubq->addrFillSub);
 	}
 
 	/* Special case of a FROM clause subquery implemented as a co-routine */
@@ -1312,6 +1372,16 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			 * a pseudo-cursor.  No need to Rewind or Next such cursors.
 			 */
 			pLevel->op = OP_Noop;
+		} else if (pTabItem->fg.isTabFunc) {
+			if (pTabItem->fg.isCorrelated)
+				sql_table_func_emit_open(pParse, pTabItem,
+							 iCur);
+			pLevel->op = OP_TFuncNext;
+			pLevel->p1 = iCur;
+			int rewind = sqlVdbeAddOp2(v, OP_TFuncRewind, iCur,
+						   addrBrk);
+			pLevel->p2 = 1 + rewind;
+			pLevel->p5 = SQL_STMTSTATUS_FULLSCAN_STEP;
 		} else {
 			pLevel->op = aStep[bRev];
 			pLevel->p1 = iCur;

@@ -448,6 +448,8 @@ WhereTerm *sqlWhereFindTerm(WhereClause * pWC,	/* The WHERE clause to be searche
 				struct index_def *idx_def);
 
 /* wherecode.c: */
+void
+sql_table_func_emit_open(Parse *pParse, struct SrcItem *pTabItem, int iCur);
 int sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 			       SrcList * pTabList,	/* Table list this loop refers to */
 			       WhereLevel * pLevel,	/* Scan to write OP_Explain opcode for */
@@ -466,14 +468,10 @@ void sqlWhereClauseClear(WhereClause *);
 void sqlWhereSplit(WhereClause *, Expr *, u8);
 Bitmask sqlWhereExprUsage(WhereMaskSet *, Expr *);
 Bitmask sqlWhereExprListUsage(WhereMaskSet *, ExprList *);
+/** Return the source dependency mask of a SELECT and its subqueries. */
+Bitmask
+sql_select_get_usage(WhereMaskSet *, Select *);
 void sqlWhereExprAnalyze(SrcList *, WhereClause *);
-/**
- * For table-valued-functions, transform the function arguments into
- * new WHERE clause terms.
- */
-void
-sqlWhereTabFuncArgs(struct Parse *pParse, struct SrcItem *pItem,
-		    struct WhereClause *pWC);
 
 /*
  * Bitmasks for the operators on WhereTerm objects.  These are all

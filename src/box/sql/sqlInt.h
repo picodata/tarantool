@@ -74,6 +74,7 @@
 #include "box/func_def.h"
 #include "box/sql.h"
 #include "box/txn.h"
+#include "table_func.h"
 #include "trivia/util.h"
 
 #include "core/decimal.h"
@@ -1689,6 +1690,10 @@ struct Subquery {
 	struct Select *pSelect;
 	/* Address of subroutine to manifest a subquery */
 	int addrFillSub;
+	/** Address just past the subquery subroutine or coroutine. */
+	int addrEndSub;
+	/** True if the subquery reads other sources in its parent's FROM. */
+	bool is_from_dependent;
 	/* Register holding return address of addrFillSub */
 	int regReturn;
 	/* Registers holding results of a co-routine */
@@ -1710,7 +1715,10 @@ struct SrcList {
 			unsigned notIndexed:1;	/* True if there is a NOT INDEXED clause */
 			unsigned isIndexedBy:1;	/* True if there is an INDEXED BY clause */
 			unsigned isTabFunc:1;	/* True if table-valued-function syntax */
-			unsigned isCorrelated:1;	/* True if sub-query is correlated */
+			/** True if table function has WITH ORDINALITY. */
+			unsigned hasOrdinality:1;
+			/** True if this source depends on another source. */
+			unsigned isCorrelated:1;
 			unsigned viaCoroutine:1;	/* Implemented as a co-routine */
 			unsigned isRecursive:1;	/* True for recursive reference in WITH */
 			/**
@@ -1723,6 +1731,14 @@ struct SrcList {
 		} fg;
 		u8 iSelectId;	/* If pSelect!=0, the id of the sub-select in EQP */
 		int iCursor;	/* The VDBE cursor number used to access this table */
+		/** Independent arguments saved for the explicit SELECT. */
+		int table_func_arg_reg;
+		/** Subroutine that fills the saved arguments. */
+		int table_func_init_addr;
+		/** Return address register of the argument initializer. */
+		int table_func_return_reg;
+		/** SELECT entry that already calls the initializer. */
+		int table_func_init_entry;
 		Expr *pOn;	/* The ON clause of a join */
 		IdList *pUsing;	/* The USING clause of a join */
 		Bitmask colUsed;	/* Bit N (1<<N) set if column N of space is used */
@@ -2281,6 +2297,10 @@ struct Parse {
 	int nHeight;		/* Expression tree height of current sub-select */
 	int iSelectId;		/* ID of current select for EXPLAIN output */
 	int iNextSelectId;	/* Next available select ID for EXPLAIN output */
+	/** Tail jump of independent argument initializers for this SELECT. */
+	int table_func_init_jump;
+	/** Start of this explicit SELECT's initializer chain. */
+	int table_func_init_entry;
 	VList *pVList;		/* Mapping between variable names and numbers */
 	Vdbe *pReprepare;	/* VM being reprepared (sqlReprepare()) */
 	const char *zTail;	/* All SQL text past the last semicolon parsed */
@@ -2667,6 +2687,8 @@ struct sqlConfig {
  */
 struct Walker {
 	Parse *pParse;		/* Parser context.  */
+	/** Parent FROM prefixes visible only to table function arguments. */
+	struct NameContext *table_func_ctx;
 	int (*xExprCallback) (Walker *, Expr *);	/* Callback for expressions */
 	int (*xSelectCallback) (Walker *, Select *);	/* Callback for SELECTs */
 	void (*xSelectCallback2) (Walker *, Select *);	/* Second callback for SELECTs */
@@ -2682,6 +2704,8 @@ struct Walker {
 		int *aiCol;	/* array of column indexes */
 		/** Space definition. */
 		struct space_def *space_def;
+		/** Custom context for local tree walkers. */
+		void *pArg;
 		struct WindowRewrite *pRewrite;	/* Window rewrite context */
 		Select *pSelect; /* NOTE(gmoshkin) introduced in commit I'm not porting */
 	} u;
@@ -3474,7 +3498,8 @@ sqlSrcListIndexedBy(struct SrcList *p, struct Token *pIndexedBy);
  * table-valued-function.
  */
 void
-sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList);
+sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList,
+		   bool has_ordinality);
 
 /**
  * Find the index named by the INDEXED BY clause of the FROM clause item
@@ -3525,6 +3550,25 @@ void
 sql_drop_index(struct Parse *parse_context);
 
 int sqlSelect(Parse *, Select *, SelectDest *);
+/** Check for table functions in FROM, including its nested subqueries. */
+bool
+sql_src_list_has_table_func(const struct SrcList *sources);
+
+/** Add independent arguments to the current explicit SELECT's entry. */
+void
+sql_table_func_emit_arg_init(Parse *parse, struct SrcItem *item);
+
+/**
+ * Cast the arguments of a table function, which start at register @a reg,
+ * to the types that the function accepts, if it declares them.
+ */
+void
+sql_table_func_emit_arg_cast(struct Parse *parse, struct SrcItem *item,
+			     int reg);
+
+/** Return whether a SELECT reads any source from the given FROM clause. */
+bool
+sql_select_has_from_dependency(struct Select *select, struct SrcList *sources);
 Select *sqlSelectNew(Parse *, ExprList *, SrcList *, Expr *, ExprList *,
 			 Expr *, ExprList *, u32, Expr *, Expr *);
 

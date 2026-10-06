@@ -207,6 +207,8 @@ struct SubProgram {
 #define P4_BOOL     (-17)	/* P4 is a bool value */
 #define P4_PTR      (-18)	/* P4 is a generic pointer */
 #define P4_KEYINFO  (-19)       /* P4 is a pointer to sql_key_info structure. */
+/** P4 owns a sql_table_func_call. */
+#define P4_TABLE_FUNC (-20)
 
 /* Error message codes for OP_Halt */
 #define P5_ConstraintNotNull 1

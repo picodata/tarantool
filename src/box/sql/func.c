@@ -59,6 +59,130 @@
 static struct mh_strnptr_t *built_in_functions = NULL;
 static struct func_sql_builtin **functions;
 
+/** Return true if a built-in scalar function has @a name. */
+static bool
+sql_builtin_func_is_reserved(const char *name, uint32_t name_len);
+
+static const struct sql_table_func_def **sql_table_funcs = NULL;
+static uint32_t sql_table_func_count = 0;
+static uint32_t sql_table_func_capacity = 0;
+static bool sql_table_func_registry_sealed = false;
+
+/**
+ * Compare SQL names without requiring either input to end with NUL. The
+ * names are case-sensitive, as the names of built-in scalar functions are.
+ */
+static bool
+name_is_equal(const char *lhs, uint32_t lhs_len, const char *rhs,
+	      uint32_t rhs_len)
+{
+	return lhs_len == rhs_len && memcmp(lhs, rhs, lhs_len) == 0;
+}
+
+/** Find a registered SQL table function without reporting an error. */
+static const struct sql_table_func_def *
+sql_table_func_registry_find(const char *name, uint32_t name_len)
+{
+	for (uint32_t i = 0; i < sql_table_func_count; i++) {
+		const struct sql_table_func_def *def = sql_table_funcs[i];
+		if (name_is_equal(name, name_len, def->name, strlen(def->name)))
+			return def;
+	}
+	return NULL;
+}
+
+/** Return true if @a name is a registered SQL table function name. */
+static bool
+sql_table_func_is_registered(const char *name, uint32_t name_len)
+{
+	return sql_table_func_registry_find(name, name_len) != NULL;
+}
+
+int
+sql_table_func_register(const struct sql_table_func_def *defs, uint32_t count)
+{
+	if (sql_table_func_registry_sealed) {
+		diag_set(IllegalParams,
+			 "SQL table function registry is sealed");
+		return -1;
+	}
+	for (uint32_t i = 0; i < count; i++) {
+		const struct sql_table_func_def *def = &defs[i];
+		if (def->name == NULL || def->name[0] == '\0' ||
+		    def->fields == NULL || def->field_count == 0 ||
+		    def->ops == NULL || def->ops->resolve_schema == NULL ||
+		    def->ops->estimate_rows == NULL || def->ops->open == NULL ||
+		    def->ops->next == NULL || def->ops->close == NULL ||
+		    (def->param_types != NULL && def->param_count <= 0)) {
+			diag_set(IllegalParams,
+				 "invalid SQL table function definition");
+			return -1;
+		}
+		uint32_t name_len = strlen(def->name);
+		if (sql_table_func_is_registered(def->name, name_len)) {
+			diag_set(IllegalParams,
+				 "duplicate SQL table function name");
+			return -1;
+		}
+		for (uint32_t j = 0; j < i; j++) {
+			if (name_is_equal(def->name, name_len, defs[j].name,
+					  strlen(defs[j].name))) {
+				diag_set(IllegalParams,
+					 "duplicate SQL table function name");
+				return -1;
+			}
+		}
+		if (sql_builtin_func_is_reserved(def->name, name_len)) {
+			diag_set(IllegalParams,
+				 "SQL table function name conflicts with "
+				 "SQL scalar function");
+			return -1;
+		}
+	}
+
+	if (count == 0)
+		return 0;
+	if (sql_table_func_count + count > sql_table_func_capacity) {
+		uint32_t capacity = sql_table_func_capacity == 0 ? 4 :
+				    sql_table_func_capacity;
+		while (capacity < sql_table_func_count + count)
+			capacity *= 2;
+		size_t size = capacity * sizeof(sql_table_funcs[0]);
+		sql_table_funcs = xrealloc(sql_table_funcs, size);
+		sql_table_func_capacity = capacity;
+	}
+	for (uint32_t i = 0; i < count; i++)
+		sql_table_funcs[sql_table_func_count + i] = &defs[i];
+	sql_table_func_count += count;
+	return 0;
+}
+
+/** Release the registry storage and reset its startup state. */
+static void
+sql_table_func_registry_free(void)
+{
+	free(sql_table_funcs);
+	sql_table_funcs = NULL;
+	sql_table_func_count = 0;
+	sql_table_func_capacity = 0;
+	sql_table_func_registry_sealed = false;
+}
+
+const struct sql_table_func_def *
+sql_table_func_find(const char *name, uint32_t name_len, bool is_runtime)
+{
+	const struct sql_table_func_def *def =
+		sql_table_func_registry_find(name, name_len);
+	if (def != NULL)
+		return def;
+
+	diag_set(ClientError, is_runtime ? ER_SQL_EXECUTE :
+		 ER_SQL_PARSER_GENERIC,
+		 tt_sprintf("'%.*s' is not a function",
+			    (int)name_len, name));
+	return NULL;
+}
+
 /** Helper structure that keeps last_value data. **/
 struct last_value {
 	/** Memory cell with the last value. **/
@@ -2116,6 +2240,18 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"ZEROBLOB", 1, 1, 0, true, 0, NULL},
 };
 
+static bool
+sql_builtin_func_is_reserved(const char *name, uint32_t name_len)
+{
+	for (uint32_t i = 0; i < nelem(dictionaries); i++) {
+		const char *builtin_name = dictionaries[i].name;
+		if (name_is_equal(name, name_len, builtin_name,
+				  strlen(builtin_name)))
+			return true;
+	}
+	return false;
+}
+
 /**
  * The structure that defines the implementation of the function. These
  * definitions are used during initialization to create all descibed
@@ -2482,6 +2618,25 @@ is_castable(int op, enum field_type a, enum field_type b)
 	       b == FIELD_TYPE_ANY;
 }
 
+int
+sql_table_func_check_arg_types(const struct sql_table_func_def *func,
+			       struct ExprList *args)
+{
+	if (func->param_types == NULL)
+		return 0;
+	assert(args != NULL && args->nExpr == func->param_count);
+	for (int i = 0; i < args->nExpr; i++) {
+		struct Expr *e = sqlExprSkipCollate(args->a[i].pExpr);
+		if (is_castable(e->op, func->param_types[i], sql_expr_type(e)))
+			continue;
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 tt_sprintf("wrong arguments for function %s()",
+				    func->name));
+		return -1;
+	}
+	return 0;
+}
+
 enum check_type {
 	CHECK_TYPE_EXACT,
 	CHECK_TYPE_UPCAST,
@@ -2569,6 +2724,13 @@ sql_func_find(struct Expr *expr)
 	if (dict != NULL)
 		return find_built_in_func(expr, dict);
 	struct func *func = func_by_name(name, strlen(name));
+	if (func == NULL &&
+	    sql_table_func_is_registered(name, strlen(name))) {
+		diag_set(ClientError, ER_SQL_PARSER_GENERIC,
+			 tt_sprintf("table function %s() cannot be used as "
+				    "a scalar function", name));
+		return NULL;
+	}
 	if (func == NULL) {
 		diag_set(ClientError, ER_NO_SUCH_FUNCTION, name);
 		return NULL;
@@ -2677,11 +2839,13 @@ sql_built_in_functions_cache_init(void)
 	struct sql_func_dictionary *dict_original = built_in_func_get(name);
 	dict->count = dict_original->count;
 	dict->functions = dict_original->functions;
+	sql_table_func_registry_sealed = true;
 }
 
 void
 sql_built_in_functions_cache_free(void)
 {
+	sql_table_func_registry_free();
 	if (built_in_functions == NULL)
 		return;
 	for (uint32_t i = 0; i < nelem(definitions); ++i)
