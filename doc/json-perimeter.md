@@ -235,6 +235,7 @@ inside storage, and out through a renderer. Tests are in
 | [lua-tuple-field](#lua-tuple-field) | accept | `msgpackffi` `ext_decoder[MP_JSON]` | anyone who can read a tuple |
 | [lua-decode-unchecked](#lua-decode-unchecked) | accept | `msgpack.decode_unchecked()`, `msgpackffi.decode()` | Lua, unguarded by name |
 | [sql-json-text](#sql-json-text) | normalize | `tnt_json_parse()`, `mem_set_json_text()` | anyone who can run SQL |
+| [table-function-iterators](#table-function-iterators) | accept | `unnest_next()`, `json_each_next()` | SQL expressions |
 | [sql-cast-container](#sql-cast-container) | normalize | `mem_set_json_normalized()` | anyone who can run SQL |
 | [c-return](#c-return) | accept | `port_c_get_vdbemem()` | a module |
 | [tuple-from-raw-bytes](#tuple-from-raw-bytes) | reject | `tuple_new_checked()` | Lua, through merger or xlog |
@@ -473,6 +474,20 @@ A SQL `MAP` is built from a Lua table, whose key order is unspecified, so
 there is no author's order to keep and no caller who could have sorted it.
 
 Tests: `json_cast` group.
+
+<a id="table-function-iterators"></a>
+#### table-function-iterators: UNNEST and JSON_EACH
+
+**Accept**, on [closure](#closure). The iterators in `src/box/sql/func.c`
+read arguments serialized from SQL `Mem` values. Those values have already
+crossed the SQL input perimeter. `UNNEST` copies SQL array elements unchanged,
+including nested JSON. For a JSON array, `UNNEST` wraps each inner element;
+`JSON_EACH` wraps each object value. Both use `json_norm_from_trusted()` and
+`mp_encode_json()`: a subtree of a normalized value remains normalized.
+They do not normalize again. A JSON null element remains JSON, not SQL NULL.
+
+Tests: `test/sql-luatest/table_func_test.lua`, `test_unnest_json_array`,
+`test_json_each_after_unnest_json_array`, `test_null_counts`.
 
 ### From a compiled module
 
