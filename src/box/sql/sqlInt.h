@@ -2089,16 +2089,44 @@ enum explain_facet {
 	 * with its operands, and the comment of the code generator.
 	 */
 	EXPLAIN_FACET_PSEUDOCODE = 1 << 2,
+	/**
+	 * Run the statement first, and show how many times each
+	 * instruction ran and how many samples found it running.
+	 */
+	EXPLAIN_FACET_ANALYZE = 1 << 3,
+};
+
+/** What EXPLAIN ANALYZE measures, a mask. */
+enum explain_analyze_mode {
+	/** Count how many times each instruction runs. */
+	EXPLAIN_ANALYZE_HITS = 1 << 0,
+	/** Sample the instruction that runs, a number of times a second. */
+	EXPLAIN_ANALYZE_SAMPLES = 1 << 1,
+	/** All the modes. */
+	EXPLAIN_ANALYZE_ALL = EXPLAIN_ANALYZE_HITS | EXPLAIN_ANALYZE_SAMPLES,
+};
+
+enum {
+	/** The default number of samples of EXPLAIN ANALYZE in a second. */
+	EXPLAIN_SAMPLE_FREQ_DEFAULT = 99,
+	/**
+	 * The biggest number of samples of EXPLAIN ANALYZE in a second.
+	 * Linux checks the timers of CPU time at each tick of its clock,
+	 * so it sends their signals at most CONFIG_HZ times a second,
+	 * and CONFIG_HZ is 1000 or less.
+	 */
+	EXPLAIN_SAMPLE_FREQ_MAX = 1000,
 };
 
 enum {
 	/** The number of columns of EXPLAIN with all the facets. */
-	EXPLAIN_MAX_COLUMNS = 10,
+	EXPLAIN_MAX_COLUMNS = 12,
 };
 
 /**
- * The options of EXPLAIN (...). The parser fills them in struct Parse,
- * and the statement keeps them in struct Vdbe.
+ * The options of EXPLAIN (...): its facets, and the options of the
+ * facet ANALYZE. The parser fills them in struct Parse, and the
+ * statement keeps them in struct Vdbe with the defaults in place.
  */
 struct ExplainOpts {
 	/** The facets, a mask of enum explain_facet. */
@@ -2116,6 +2144,17 @@ struct ExplainOpts {
 	 * - N > 0: the graph shows the jumps of N addresses.
 	 */
 	int graph_filter_count;
+	/**
+	 * The option 'mode' of the facet ANALYZE: what EXPLAIN ANALYZE
+	 * measures, a mask of enum explain_analyze_mode. In Parse it is 0
+	 * if the mode is not given.
+	 */
+	uint8_t analyze_mode;
+	/**
+	 * The option 'freq': the number of samples in a second. In Parse
+	 * it is 0 if the frequency is not given.
+	 */
+	int sample_freq;
 };
 
 typedef struct ExplainOpts ExplainOpts;
@@ -2211,7 +2250,10 @@ struct Parse {
 	ynVar nVar;		/* Number of '?' variables seen in the SQL so far */
 	/** What EXPLAIN does with the statement. */
 	ExplainMode explain;
-	/** The options of EXPLAIN (...). */
+	/**
+	 * The options of EXPLAIN (...). A zero or NULL field is an option
+	 * that is not given.
+	 */
 	ExplainOpts explain_opts;
 	int nHeight;		/* Expression tree height of current sub-select */
 	int iSelectId;		/* ID of current select for EXPLAIN output */
@@ -2301,8 +2343,73 @@ void
 sql_explain_add_line(struct Parse *parse, const struct Token *number);
 
 /**
+ * Get what EXPLAIN ANALYZE measures: the mode given, or sampling by
+ * default.
+ */
+static inline uint8_t
+sql_explain_analyze_mode(const struct Parse *parse)
+{
+	return parse->explain_opts.analyze_mode != 0 ?
+	       parse->explain_opts.analyze_mode : EXPLAIN_ANALYZE_SAMPLES;
+}
+
+/**
+ * Get the number of samples of EXPLAIN ANALYZE in a second: the number
+ * given or the default.
+ */
+static inline int
+sql_explain_sample_freq(const struct Parse *parse)
+{
+	return parse->explain_opts.sample_freq != 0 ?
+	       parse->explain_opts.sample_freq : EXPLAIN_SAMPLE_FREQ_DEFAULT;
+}
+
+/**
+ * Fail the parse if the statement, which is given by its kind, is under
+ * EXPLAIN with the facet ANALYZE. This is for the statements that
+ * EXPLAIN ANALYZE cannot run as it runs the other statements:
+ *
+ * - the statements that control the transaction or the session. A run
+ *   is a part of a transaction, and these statements change the
+ *   transaction or the session itself;
+ * - the statements that change the schema. The program is made for the
+ *   old schema, thus it cannot run again.
+ */
+void
+sql_explain_analyze_forbid(struct Parse *parse, const char *kind);
+
+/**
+ * Set an option of the facet ANALYZE of EXPLAIN (analyze {name: value}).
+ * The name is a token of a string literal. The value is a token of a
+ * string or number literal, type is its token type, and is_negative
+ * tells that a number has a minus sign. The options are:
+ *
+ * - 'freq', the number of samples in a second, 99 by default;
+ * - 'mode', what to measure: 'hits', 'samples' (the default), or 'all'
+ *   for all of them. A list of them is set with
+ *   sql_explain_begin_option_list().
+ */
+void
+sql_explain_set_option(struct Parse *parse, const struct Token *name,
+		       const struct Token *value, int type, bool is_negative);
+
+/**
+ * Start a list value of an option of the facet ANALYZE of EXPLAIN
+ * (analyze {name: [value, ...]}). Only 'mode' takes a list: the
+ * statement measures all the modes of the list. The name is NULL for
+ * the short form of this list, (analyze [value, ...]).
+ */
+void
+sql_explain_begin_option_list(struct Parse *parse, const struct Token *name);
+
+/** Add a value, a token of a string literal, to the list of an option. */
+void
+sql_explain_add_option_item(struct Parse *parse, const struct Token *value);
+
+/**
  * Complete the facets of EXPLAIN (...) after the list is parsed: a list
- * without "opcode" and "pseudocode" gets "pseudocode".
+ * without "opcode" and "pseudocode" gets "pseudocode". Check the options
+ * of ANALYZE.
  */
 void
 sql_explain_check_facets(struct Parse *parse);

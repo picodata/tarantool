@@ -186,8 +186,11 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 			   (WHERE_ORDERBY_MIN | WHERE_ORDERBY_MAX)) != 0);
 	struct SrcItem *pItem = &pTabList->a[pLevel->iFrom];
 	assert(pItem->zName != NULL || pItem->pSubq != NULL);
-	if (pParse->explain == EXPLAIN_MODE_OFF && !is_search &&
-	    pItem->fg.disallow_scan &&
+	/* EXPLAIN does not run the statement, but EXPLAIN ANALYZE does. */
+	uint8_t facets = pParse->explain_opts.facets;
+	bool is_run = pParse->explain == EXPLAIN_MODE_OFF ||
+		      (facets & EXPLAIN_FACET_ANALYZE) != 0;
+	if (is_run && !is_search && pItem->fg.disallow_scan &&
 	    (pParse->sql_flags & SQL_SeqScan) == 0) {
 		const char *obj = pItem->zName == NULL ? "subselect" :
 				  tt_sprintf("'%s'", pItem->zName);

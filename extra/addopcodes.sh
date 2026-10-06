@@ -50,7 +50,6 @@ extras="            \
     SELECT_COLUMN   \
     ASTERISK        \
     SPAN            \
-    ANALYZE         \
     LINEFEED        \
     SPACE           \
     ILLEGAL         \

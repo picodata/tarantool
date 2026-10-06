@@ -51,11 +51,18 @@ typedef struct ExplainColumn ExplainColumn;
 
 /**
  * Set the names and types of the columns of EXPLAIN. For EXPLAIN without
- * QUERY PLAN they depend on the facets.
+ * QUERY PLAN they depend on the facets and on the mode of ANALYZE.
  */
 static void
-sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
+sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets,
+			uint8_t mode)
 {
+	static const ExplainColumn analyze_hits[] = {
+		{"hits", "text"},
+	};
+	static const ExplainColumn analyze_samples[] = {
+		{"samples", "text"},
+	};
 	static const ExplainColumn graph[] = {
 		{"graph", "text"},
 	};
@@ -71,9 +78,11 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
 		{"selectid", "integer"}, {"order", "integer"},
 		{"from", "integer"}, {"detail", "text"},
 	};
-	static_assert(ArraySize(graph) + ArraySize(opcode) +
+	static_assert(ArraySize(analyze_hits) + ArraySize(analyze_samples) +
+		      ArraySize(graph) + ArraySize(opcode) +
 		      ArraySize(pseudocode) == EXPLAIN_MAX_COLUMNS,
 		      "EXPLAIN_MAX_COLUMNS must be the number of columns");
+	bool is_analyzed = (facets & EXPLAIN_FACET_ANALYZE) != 0;
 	bool is_program = explain == EXPLAIN_MODE_PROGRAM;
 	/* The groups of columns, in the order of the result. */
 	const struct {
@@ -82,6 +91,12 @@ sql_explain_set_columns(struct Vdbe *v, ExplainMode explain, uint8_t facets)
 		bool is_shown;
 	} groups[] = {
 		{plan, ArraySize(plan), explain == EXPLAIN_MODE_QUERY_PLAN},
+		{analyze_hits, ArraySize(analyze_hits),
+		 is_program && is_analyzed &&
+		 (mode & EXPLAIN_ANALYZE_HITS) != 0},
+		{analyze_samples, ArraySize(analyze_samples),
+		 is_program && is_analyzed &&
+		 (mode & EXPLAIN_ANALYZE_SAMPLES) != 0},
 		{graph, ArraySize(graph),
 		 is_program && (facets & EXPLAIN_FACET_GRAPH) != 0},
 		{opcode, ArraySize(opcode),
@@ -118,6 +133,16 @@ sql_explain_error(struct Parse *parse, const char *message)
 }
 
 void
+sql_explain_analyze_forbid(struct Parse *parse, const char *kind)
+{
+	if ((parse->explain_opts.facets & EXPLAIN_FACET_ANALYZE) == 0 ||
+	    parse->is_aborted)
+		return;
+	sql_explain_error(parse, tt_sprintf("EXPLAIN ANALYZE cannot run %s",
+					    kind));
+}
+
+void
 sql_explain_add_facet(struct Parse *parse, const struct Token *name,
 		      bool has_lines)
 {
@@ -128,6 +153,7 @@ sql_explain_add_facet(struct Parse *parse, const struct Token *name,
 		{"graph", EXPLAIN_FACET_GRAPH},
 		{"opcode", EXPLAIN_FACET_OPCODE},
 		{"pseudocode", EXPLAIN_FACET_PSEUDOCODE},
+		{"analyze", EXPLAIN_FACET_ANALYZE},
 	};
 	if (parse->is_aborted)
 		return;
@@ -173,16 +199,153 @@ sql_explain_add_line(struct Parse *parse, const struct Token *number)
 	opts->graph_filter[i] = line;
 }
 
+/** Check that a token is a string literal with the given text. */
+static bool
+sql_explain_token_is(const struct Token *token, const char *text)
+{
+	uint32_t len = strlen(text);
+	return token->n == len + 2 && token->z[0] == '\'' &&
+	       strncmp(token->z + 1, text, len) == 0 &&
+	       token->z[len + 1] == '\'';
+}
+
+/** The options of the facet ANALYZE of EXPLAIN, sorted by name. */
+static const char *const explain_options[] = {
+	"freq",
+	"mode",
+};
+
+/** Check that a token is the name of an option of the facet ANALYZE. */
+static bool
+sql_explain_option_is_known(const struct Token *name)
+{
+	for (int i = 0; i < (int)ArraySize(explain_options); i++) {
+		if (sql_explain_token_is(name, explain_options[i]))
+			return true;
+	}
+	return false;
+}
+
+/**
+ * Fail the parse with an error about an unknown option of the facet
+ * ANALYZE. The error lists the options.
+ */
+static void
+sql_explain_unknown_option(struct Parse *parse, const struct Token *name)
+{
+	char list[128];
+	int size = 0;
+	for (int i = 0; i < (int)ArraySize(explain_options); i++) {
+		size += snprintf(list + size, sizeof(list) - size, "%s'%s'",
+				 i == 0 ? "" : ", ", explain_options[i]);
+		assert(size < (int)sizeof(list));
+	}
+	sql_explain_error(parse, tt_sprintf(
+		"Unknown EXPLAIN option %.*s of facet 'analyze': the "
+		"options are %s", (int)name->n, name->z, list));
+}
+
+/**
+ * Add a mode of EXPLAIN ANALYZE, a token of a string literal, to the
+ * modes of the statement. Fail the parse if it is not a mode.
+ */
+static void
+sql_explain_add_mode(struct Parse *parse, const struct Token *value)
+{
+	static const struct {
+		const char *name;
+		enum explain_analyze_mode mode;
+	} modes[] = {
+		{"hits", EXPLAIN_ANALYZE_HITS},
+		{"samples", EXPLAIN_ANALYZE_SAMPLES},
+		{"all", EXPLAIN_ANALYZE_ALL},
+	};
+	for (int i = 0; i < (int)ArraySize(modes); i++) {
+		if (sql_explain_token_is(value, modes[i].name)) {
+			parse->explain_opts.analyze_mode |= modes[i].mode;
+			return;
+		}
+	}
+	sql_explain_error(parse, "EXPLAIN option 'mode' must be 'hits', "
+			  "'samples', 'all' or a list of them");
+}
+
+void
+sql_explain_begin_option_list(struct Parse *parse, const struct Token *name)
+{
+	if (parse->is_aborted)
+		return;
+	if (name == NULL) {
+		parse->explain_opts.analyze_mode = 0;
+		return;
+	}
+	if (!sql_explain_option_is_known(name)) {
+		sql_explain_unknown_option(parse, name);
+		return;
+	}
+	if (!sql_explain_token_is(name, "mode")) {
+		sql_explain_error(parse, tt_sprintf(
+			"EXPLAIN option %.*s takes no list", (int)name->n,
+			name->z));
+		return;
+	}
+	parse->explain_opts.analyze_mode = 0;
+}
+
+void
+sql_explain_add_option_item(struct Parse *parse, const struct Token *value)
+{
+	if (parse->is_aborted)
+		return;
+	sql_explain_add_mode(parse, value);
+}
+
+void
+sql_explain_set_option(struct Parse *parse, const struct Token *name,
+		       const struct Token *value, int type, bool is_negative)
+{
+	if (parse->is_aborted)
+		return;
+	if (sql_explain_token_is(name, "freq")) {
+		int freq;
+		if (type != TK_INTEGER || is_negative ||
+		    sqlGetInt32(value->z, &freq) == 0 || freq < 1 ||
+		    freq > EXPLAIN_SAMPLE_FREQ_MAX) {
+			sql_explain_error(parse, tt_sprintf(
+				"EXPLAIN option 'freq' must be an integer "
+				"from 1 to %d", EXPLAIN_SAMPLE_FREQ_MAX));
+			return;
+		}
+		parse->explain_opts.sample_freq = freq;
+		return;
+	}
+	if (sql_explain_token_is(name, "mode")) {
+		/* A token that is not a string is not a mode. */
+		parse->explain_opts.analyze_mode = 0;
+		sql_explain_add_mode(parse, value);
+		return;
+	}
+	sql_explain_unknown_option(parse, name);
+}
+
 void
 sql_explain_check_facets(struct Parse *parse)
 {
 	if (parse->is_aborted)
 		return;
 	uint8_t columns = EXPLAIN_FACET_OPCODE | EXPLAIN_FACET_PSEUDOCODE;
-	/* The graph alone says nothing: show the pseudocode next to it. */
+	/*
+	 * The graph alone, or ANALYZE alone, says nothing: show the
+	 * pseudocode next to it.
+	 */
 	ExplainOpts *opts = &parse->explain_opts;
 	if ((columns & opts->facets) == 0)
 		opts->facets |= EXPLAIN_FACET_PSEUDOCODE;
+	if (parse->explain_opts.sample_freq != 0 &&
+	    parse->explain_opts.analyze_mode == EXPLAIN_ANALYZE_HITS) {
+		sql_explain_error(parse, "EXPLAIN option 'freq' needs mode "
+				  "'samples'");
+	}
 }
 
 /**
@@ -247,7 +410,8 @@ sql_stmt_compile_impl(const char *zSql, int nBytes, struct Vdbe *pReprepare,
 	if (rc == 0 && sParse.pVdbe != NULL &&
 	    sParse.explain != EXPLAIN_MODE_OFF) {
 		sql_explain_set_columns(sParse.pVdbe, sParse.explain,
-					sParse.explain_opts.facets);
+					sParse.explain_opts.facets,
+					sql_explain_analyze_mode(&sParse));
 	}
 
 	if (sql_get()->init.busy == 0) {

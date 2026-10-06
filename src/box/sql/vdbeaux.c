@@ -2047,6 +2047,59 @@ vdbe_explain_delete(VdbeExplain *explain)
 }
 
 /**
+ * Print how many times an instruction ran, like llvm-cov does. A count
+ * below 1000 is printed as is. A bigger count is printed as its first 3
+ * digits and the suffix of a power of 1000: 1.23k, 12.3k, 123k, 1.23M.
+ * The digits after the first 3 are cut, not rounded. The result is
+ * aligned to the right in the length of the name of its column, and in
+ * at least 5 characters, the length of the longest result. Thus the
+ * counts align like the numbers in addr, also in a client that shows a
+ * text at the left of its column.
+ */
+static char *
+explain_count_str(uint64_t count, const char *column)
+{
+	char str[8];
+	int width = MAX(5, (int)strlen(column));
+	if (count < 1000)
+		return sqlMPrintf("%*llu", width, (unsigned long long)count);
+	/* A power of 1000 such that count / unit is from 1 to 999. */
+	uint64_t unit = 1000;
+	int power = 0;
+	while (count / unit >= 1000) {
+		unit *= 1000;
+		power++;
+	}
+	char suffix = "kMGTPE"[power];
+	int whole = count / unit;
+	if (whole < 10) {
+		sql_snprintf(sizeof(str), str, "%d.%02d%c", whole,
+			     (int)(count / (unit / 100) % 100), suffix);
+	} else if (whole < 100) {
+		sql_snprintf(sizeof(str), str, "%d.%d%c", whole,
+			     (int)(count / (unit / 10) % 10), suffix);
+	} else {
+		sql_snprintf(sizeof(str), str, "%d%c", whole, suffix);
+	}
+	return sqlMPrintf("%*s", width, str);
+}
+
+/**
+ * Get the performance counters of an instruction of the program or of
+ * one of its sub-programs. No sub-program runs when the program is
+ * listed, thus Vdbe.aOp is the main program.
+ */
+static const VdbeOpPerfStats *
+vdbe_op_perf_stats(const struct Vdbe *p, const struct VdbeOp *op)
+{
+	const struct SubProgram *sub = vdbe_op_sub_program(p, op);
+	if (sub != NULL)
+		return &sub->perf.ops[op - sub->aOp];
+	assert(op >= p->aOp && op < p->aOp + p->nOp);
+	return &p->perf.ops[op - p->aOp];
+}
+
+/**
  * Fill the row of EXPLAIN for an instruction with the columns of the
  * facets of the statement, and set the number of columns.
  */
@@ -2080,6 +2133,18 @@ explain_list_row(struct Vdbe *p, Op *ops, int op_count, int addr,
 	int indent = 2 * state->loop_depth[addr];
 	Op *op = &ops[addr];
 	struct Mem *first = mem;
+	uint8_t mode = (mask & EXPLAIN_FACET_ANALYZE) != 0 ?
+		       opts->analyze_mode : 0;
+	if ((mode & EXPLAIN_ANALYZE_HITS) != 0) {
+		uint64_t count = vdbe_op_perf_stats(p, op)->hit_count;
+		mem_set_str0_allocated(mem++,
+				       explain_count_str(count, "hits"));
+	}
+	if ((mode & EXPLAIN_ANALYZE_SAMPLES) != 0) {
+		uint64_t count = vdbe_op_perf_stats(p, op)->sample_count;
+		mem_set_str0_allocated(mem++,
+				       explain_count_str(count, "samples"));
+	}
 	if (state->graph != NULL) {
 		mem_set_str0_allocated(mem++,
 				       explain_graph_row(state->graph, addr));
@@ -2330,6 +2395,46 @@ allocSpace(struct ReusableSpace *p,	/* Bulk memory available for allocation */
 	return pBuf;
 }
 
+/**
+ * Set the performance counters of a program of op_count instructions to
+ * zero. Make the counters before the first run.
+ */
+static void
+vdbe_perf_stats_reset(VdbePerfStats *perf, int op_count)
+{
+	size_t size = op_count * sizeof(perf->ops[0]);
+	if (perf->ops == NULL) {
+		perf->ops = sql_xmalloc(size);
+		perf->count = op_count;
+	}
+	assert(perf->count == op_count);
+	memset(perf->ops, 0, size);
+}
+
+/** Free the performance counters of a program. */
+static void
+vdbe_perf_stats_destroy(VdbePerfStats *perf)
+{
+	sql_xfree(perf->ops);
+	memset(perf, 0, sizeof(*perf));
+}
+
+/**
+ * Prepare EXPLAIN ANALYZE for a new run: the statement runs as usual, and
+ * after the run the program is listed. Set the counts and the samples of
+ * all instructions to zero. No sub-program runs now, thus Vdbe.aOp and
+ * Vdbe.perf are the ones of the main program.
+ */
+static void
+explain_analyze_rewind(struct Vdbe *p)
+{
+	p->explain_data->mode = EXPLAIN_MODE_OFF;
+	vdbe_perf_stats_reset(&p->perf, p->nOp);
+	for (struct SubProgram *sub = p->pProgram; sub != NULL;
+	     sub = sub->pNext)
+		vdbe_perf_stats_reset(&sub->perf, sub->nOp);
+}
+
 /*
  * Rewind the VDBE back to the beginning in preparation for
  * running it.
@@ -2356,6 +2461,8 @@ sqlVdbeRewind(Vdbe * p)
 	p->cacheCtr = 1;
 	p->iStatement = 0;
 	p->nFkConstraint = 0;
+	if (vdbe_is_analyzed(p))
+		explain_analyze_rewind(p);
 }
 
 /*
@@ -2451,7 +2558,10 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 	assert(vdbe_explain_mode(p) == pParse->explain);
 	if (p->explain_data != NULL) {
 		/* The statement takes the filter of the graph. */
-		p->explain_data->opts = pParse->explain_opts;
+		ExplainOpts *opts = &p->explain_data->opts;
+		*opts = pParse->explain_opts;
+		opts->analyze_mode = sql_explain_analyze_mode(pParse);
+		opts->sample_freq = sql_explain_sample_freq(pParse);
 		pParse->explain_opts.graph_filter = NULL;
 		pParse->explain_opts.graph_filter_count = 0;
 	}
@@ -2516,6 +2626,7 @@ sqlVdbeFrameRestore(VdbeFrame * pFrame)
 	Vdbe *v = pFrame->v;
 	closeCursorsInFrame(v);
 	v->aOp = pFrame->aOp;
+	v->perf = pFrame->perf;
 	v->nOp = pFrame->nOp;
 	v->aMem = pFrame->aMem;
 	v->nMem = pFrame->nMem;
@@ -2962,6 +3073,7 @@ sqlVdbeClearObject(struct Vdbe *p)
 		pNext = pSub->pNext;
 		vdbeFreeOpArray(pSub->aOp, pSub->nOp);
 		vdbe_synopsis_aux_delete(pSub->synopsis_aux);
+		vdbe_perf_stats_destroy(&pSub->perf);
 		sql_xfree(pSub->name);
 		sql_xfree(pSub);
 	}
@@ -2972,6 +3084,7 @@ sqlVdbeClearObject(struct Vdbe *p)
 	}
 	vdbeFreeOpArray(p->aOp, p->nOp);
 	vdbe_explain_delete(p->explain_data);
+	vdbe_perf_stats_destroy(&p->perf);
 	sql_xfree(p->zSql);
 }
 

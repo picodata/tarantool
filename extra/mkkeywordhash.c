@@ -59,7 +59,7 @@ static Keyword aKeywordTable[] = {
   { "AFTER",                  "TK_AFTER",       false },
   { "ALL",                    "TK_ALL",         true  },
   { "ALTER",                  "TK_ALTER",       true  },
-  { "ANALYZE",                "TK_STANDARD",    true  },
+  { "ANALYZE",                "TK_ANALYZE",     true  },
   { "AND",                    "TK_AND",         true  },
   { "ARRAY",                  "TK_ARRAY",       true  },
   { "AS",                     "TK_AS",          true  },

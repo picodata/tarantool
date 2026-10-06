@@ -73,6 +73,7 @@ set(sql_sources
     sql/vdbe.c
     sql/vdbeapi.c
     sql/vdbeaux.c
+    sql/vdbesample.c
     sql/vdbesort.c
     sql/vdbetrace.c
     sql/walker.c

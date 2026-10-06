@@ -451,6 +451,14 @@ int sqlVdbeExec(Vdbe *p)
 
 	/* Currently, subprograms are only allowed to return one row. */
 	int nSubProgramReturnedRows = 0;
+	/*
+	 * EXPLAIN ANALYZE counts how many times each instruction runs, or
+	 * keeps the instruction that runs for the samples, or both.
+	 */
+	bool is_analyzed = vdbe_is_analyzed(p);
+	uint8_t mode = is_analyzed ? p->explain_data->opts.analyze_mode : 0;
+	bool is_counted = (mode & EXPLAIN_ANALYZE_HITS) != 0;
+	bool is_sampled = (mode & EXPLAIN_ANALYZE_SAMPLES) != 0;
 
 	int64_t start_time = 0;
 	if (vdbe_yield_cb) {
@@ -489,6 +497,15 @@ int sqlVdbeExec(Vdbe *p)
 
 		assert(pOp>=aOp && pOp<&aOp[p->nOp]);
 		p->step_count++;
+		if (is_analyzed) {
+			VdbeOpPerfStats *perf = &p->perf.ops[pOp - aOp];
+			if (is_counted)
+				perf->hit_count++;
+			if (is_sampled) {
+				__atomic_store_n(&p->explain_data->op_perf,
+						 perf, __ATOMIC_RELAXED);
+			}
+		}
 		if (p->step_count % OPCODE_YIELD_COUNT == 0) {
 			if (vdbe_yield_cb) {
 				struct vdbe_yield_args args = {
@@ -1094,7 +1111,8 @@ case OP_SCopy: {            /* out2 */
  * P3 is 0 for all other callers, so existing behaviour is preserved.
  */
 case OP_ResultRow: {
-	assert(p->pFrame != NULL || p->nResColumn == pOp->p2);
+	/* EXPLAIN ANALYZE has the columns of EXPLAIN and drops the rows. */
+	assert(p->pFrame != NULL || p->nResColumn == pOp->p2 || is_analyzed);
 	assert(pOp->p1>0);
 	assert(pOp->p1+pOp->p2<=(p->nMem+1 - p->nCursor)+1);
 	assert(p->iStatement == 0 && p->anonymous_savepoint == NULL);
@@ -4335,6 +4353,7 @@ case OP_Program: {        /* jump */
 		pFrame->apCsr = p->apCsr;
 		pFrame->nCursor = p->nCursor;
 		pFrame->aOp = p->aOp;
+		pFrame->perf = p->perf;
 		pFrame->nOp = p->nOp;
 		pFrame->token = pProgram->token;
 
@@ -4362,6 +4381,7 @@ case OP_Program: {        /* jump */
 	p->nCursor = (u16)pFrame->nChildCsr;
 	p->apCsr = (VdbeCursor **)&aMem[p->nMem];
 	p->aOp = aOp = pProgram->aOp;
+	p->perf = pProgram->perf;
 	p->nOp = pProgram->nOp;
 	pOp = &aOp[-1];
 

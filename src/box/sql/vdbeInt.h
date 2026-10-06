@@ -49,6 +49,15 @@ typedef struct VdbeOp Op;
 struct func;
 typedef struct ExplainGraph ExplainGraph;
 
+#if defined(__linux__)
+/**
+ * EXPLAIN ANALYZE can sample the instructions while they run: it needs
+ * a timer that sends its signal to one thread.
+ */
+#define VDBE_HAS_SAMPLES 1
+#include <time.h>
+#endif
+
 /*
  * Boolean values
  */
@@ -142,6 +151,8 @@ struct VdbeFrame {
 	Vdbe *v;		/* VM this frame belongs to */
 	VdbeFrame *pParent;	/* Parent of this frame, or NULL if parent is main */
 	Op *aOp;		/* Program instructions for parent frame */
+	/** The performance counters of the parent frame. */
+	VdbePerfStats perf;
 	i64 *anExec;		/* Event counters from parent frame */
 	Mem *aMem;		/* Array of memory cells for parent frame */
 	VdbeCursor **apCsr;	/* Array of Vdbe cursors for parent frame */
@@ -219,7 +230,7 @@ struct sql_column_metadata {
 struct VdbeExplain {
 	/** What a step of the statement does. */
 	ExplainMode mode;
-	/** The options of EXPLAIN (...). */
+	/** The options of EXPLAIN (...), with the defaults in place. */
 	ExplainOpts opts;
 	/**
 	 * The comments and the object names of the instructions in
@@ -241,6 +252,12 @@ struct VdbeExplain {
 	 * have the facet 'graph'.
 	 */
 	ExplainGraph *graph;
+	/**
+	 * The performance counters of the instruction that the run of
+	 * EXPLAIN ANALYZE is in, NULL if the statement is in no
+	 * instruction. The handler of the sampling signal reads it.
+	 */
+	VdbeOpPerfStats *op_perf;
 };
 
 typedef struct VdbeExplain VdbeExplain;
@@ -333,6 +350,8 @@ struct Vdbe {
 
 	/** The data of EXPLAIN, NULL if the statement has none. */
 	VdbeExplain *explain_data;
+	/** The performance counters of the instructions in aOp. */
+	VdbePerfStats perf;
 
 	/** Parser flags with which this object was built. */
 	uint32_t sql_flags;
@@ -374,6 +393,35 @@ sqlVdbePrintOp(FILE *out, struct Vdbe *p, int pc, struct VdbeOp *op);
 int sqlVdbeExec(Vdbe *);
 int sqlVdbeList(Vdbe *);
 
+/** The sampling of a run of an EXPLAIN ANALYZE statement. */
+struct VdbeSample {
+	/** The statement that runs. */
+	struct Vdbe *vdbe;
+	/** The fiber that runs the statement. */
+	struct fiber *fiber;
+#ifdef VDBE_HAS_SAMPLES
+	/** The timer that sends the signal for the samples. */
+	timer_t timer;
+#endif
+	/** The link in the list of the samplings that run now. */
+	struct rlist link;
+};
+
+typedef struct VdbeSample VdbeSample;
+
+/**
+ * Start to sample the run of an EXPLAIN ANALYZE statement. The sampling
+ * must stay in memory until it stops. Return -1 and set the diagnostics
+ * area if the instructions cannot be sampled. In a build that cannot
+ * sample it always does this.
+ */
+int
+vdbe_sample_start(VdbeSample *sample, struct Vdbe *p);
+
+/** Stop to sample the run of an EXPLAIN ANALYZE statement. */
+void
+vdbe_sample_stop(VdbeSample *sample);
+
 int sqlVdbeHalt(Vdbe *);
 
 /** Get what a step of a statement does. */
@@ -382,6 +430,14 @@ vdbe_explain_mode(const struct Vdbe *p)
 {
 	return p->explain_data != NULL ? p->explain_data->mode :
 	       EXPLAIN_MODE_OFF;
+}
+
+/** Check that a statement is under EXPLAIN with the facet ANALYZE. */
+static inline bool
+vdbe_is_analyzed(const struct Vdbe *p)
+{
+	return p->explain_data != NULL &&
+	       (p->explain_data->opts.facets & EXPLAIN_FACET_ANALYZE) != 0;
 }
 
 const char *sqlOpcodeName(int);

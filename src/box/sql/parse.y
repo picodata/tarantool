@@ -155,25 +155,35 @@ cmdx ::= cmd.
 ///////////////////// Begin and end transactions. ////////////////////////////
 //
 
-cmd ::= START TRANSACTION.  {sql_transaction_begin(pParse);}
-cmd ::= COMMIT.      {sql_transaction_commit(pParse);}
-cmd ::= ROLLBACK.    {sql_transaction_rollback(pParse);}
+// EXPLAIN ANALYZE does not take the statements of two kinds: ctl_cmd, which
+// controls the transaction or the session, and ddl_cmd, which changes the
+// schema. A new statement of such a kind must be a rule of that kind.
+cmd ::= ctl_cmd. {
+  sql_explain_analyze_forbid(pParse, "a statement that controls the "
+                             "transaction or the session");
+}
+cmd ::= ddl_cmd. {
+  sql_explain_analyze_forbid(pParse, "a statement that changes the schema");
+}
+ctl_cmd ::= START TRANSACTION.  {sql_transaction_begin(pParse);}
+ctl_cmd ::= COMMIT.      {sql_transaction_commit(pParse);}
+ctl_cmd ::= ROLLBACK.    {sql_transaction_rollback(pParse);}
 
 savepoint_opt ::= SAVEPOINT.
 savepoint_opt ::= .
-cmd ::= SAVEPOINT nm(X). {
+ctl_cmd ::= SAVEPOINT nm(X). {
   sqlSavepoint(pParse, SAVEPOINT_BEGIN, &X);
 }
-cmd ::= RELEASE savepoint_opt nm(X). {
+ctl_cmd ::= RELEASE savepoint_opt nm(X). {
   sqlSavepoint(pParse, SAVEPOINT_RELEASE, &X);
 }
-cmd ::= ROLLBACK TO savepoint_opt nm(X). {
+ctl_cmd ::= ROLLBACK TO savepoint_opt nm(X). {
   sqlSavepoint(pParse, SAVEPOINT_ROLLBACK, &X);
 }
 
 ///////////////////// The CREATE TABLE statement ////////////////////////////
 //
-cmd ::= create_table create_table_args with_opts create_table_end.
+ddl_cmd ::= create_table create_table_args with_opts create_table_end.
 create_table ::= createkw TABLE ifnotexists(E) nm(Y). {
   create_table_def_init(&pParse->create_table_def, &Y, E);
   create_ck_constraint_parse_def_init(&pParse->create_ck_constraint_parse_def);
@@ -380,14 +390,14 @@ resolvetype(A) ::= REPLACE.                  {A = ON_CONFLICT_ACTION_REPLACE;}
 ////////////////////////// The DROP TABLE /////////////////////////////////////
 //
 
-cmd ::= DROP TABLE ifexists(E) fullname(X) . {
+ddl_cmd ::= DROP TABLE ifexists(E) fullname(X) . {
   struct Token t = Token_nil;
   drop_table_def_init(&pParse->drop_table_def, X, &t, E);
   pParse->initiateTTrans = true;
   sql_drop_table(pParse);
 }
 
-cmd ::= DROP VIEW ifexists(E) fullname(X) . {
+ddl_cmd ::= DROP VIEW ifexists(E) fullname(X) . {
   struct Token t = Token_nil;
   drop_view_def_init(&pParse->drop_view_def, X, &t, E);
   pParse->initiateTTrans = true;
@@ -400,7 +410,7 @@ ifexists(A) ::= .            {A = 0;}
 
 ///////////////////// The CREATE VIEW statement /////////////////////////////
 //
-cmd ::= createkw(X) VIEW ifnotexists(E) nm(Y) eidlist_opt(C)
+ddl_cmd ::= createkw(X) VIEW ifnotexists(E) nm(Y) eidlist_opt(C)
           AS select(S). {
   if (!pParse->parse_only) {
     create_view_def_init(&pParse->create_view_def, &Y, &X, C, S, E);
@@ -1444,7 +1454,7 @@ paren_exprlist(A) ::= LP exprlist(X) RP.  {A = X;}
 
 ///////////////////////////// The CREATE INDEX command ///////////////////////
 //
-cmd ::= createkw uniqueflag(U) INDEX ifnotexists(NE) nm(X)
+ddl_cmd ::= createkw uniqueflag(U) INDEX ifnotexists(NE) nm(X)
         ON nm(Y) LP sortlist(Z) RP. {
   struct SrcList *src_list = sql_src_list_append(NULL ,&Y);
   create_index_def_init(&pParse->create_index_def, src_list, &X, Z, U,
@@ -1500,7 +1510,7 @@ eidlist(A) ::= nm(Y). {
 
 ///////////////////////////// The DROP INDEX command /////////////////////////
 //
-cmd ::= DROP INDEX ifexists(E) nm(X) ON fullname(Y).   {
+ddl_cmd ::= DROP INDEX ifexists(E) nm(X) ON fullname(Y).   {
   drop_index_def_init(&pParse->drop_index_def, Y, &X, E);
   pParse->initiateTTrans = true;
   sql_drop_index(pParse);
@@ -1508,7 +1518,7 @@ cmd ::= DROP INDEX ifexists(E) nm(X) ON fullname(Y).   {
 
 ///////////////////////////// The SET SESSION command ////////////////////////
 //
-cmd ::= SET SESSION nm(X) EQ term(Y).  {
+ctl_cmd ::= SET SESSION nm(X) EQ term(Y).  {
     sql_setting_set(pParse,&X,Y.pExpr);
 }
 
@@ -1535,7 +1545,7 @@ cmd ::= FUNCTION_KW(T) expr(E). {
 }
 //////////////////////////// The CREATE TRIGGER command /////////////////////
 
-cmd ::= createkw trigger_decl(A) BEGIN trigger_cmd_list(S) END(Z). {
+ddl_cmd ::= createkw trigger_decl(A) BEGIN trigger_cmd_list(S) END(Z). {
   Token all;
   all.z = A.z;
   all.n = (int)(Z.z - A.z) + Z.n;
@@ -1673,7 +1683,7 @@ raisetype(A) ::= FAIL.      {A = ON_CONFLICT_ACTION_FAIL;}
 
 
 ////////////////////////  DROP TRIGGER statement //////////////////////////////
-cmd ::= DROP TRIGGER ifexists(NOERR) fullname(X). {
+ddl_cmd ::= DROP TRIGGER ifexists(NOERR) fullname(X). {
   struct Token t = Token_nil;
   drop_trigger_def_init(&pParse->drop_trigger_def, X, &t, NOERR);
   pParse->initiateTTrans = true;
@@ -1709,7 +1719,7 @@ alter_add_column(A) ::= alter_table_start(T) ADD column_name(N). {
 column_name(N) ::= COLUMN nm(A). { N = A; }
 column_name(N) ::= nm(A). { N = A; }
 
-cmd ::= alter_column_def carglist create_column_end.
+ddl_cmd ::= alter_column_def carglist create_column_end.
 
 alter_column_def ::= alter_add_column(N) typedef(Y). {
   create_column_def_init(&pParse->create_column_def, N.table_name, &N.name, &Y);
@@ -1718,18 +1728,18 @@ alter_column_def ::= alter_add_column(N) typedef(Y). {
   sql_create_column_start(pParse);
 }
 
-cmd ::= alter_add_constraint(N) FOREIGN KEY LP eidlist(FA) RP REFERENCES
+ddl_cmd ::= alter_add_constraint(N) FOREIGN KEY LP eidlist(FA) RP REFERENCES
         nm(T) eidlist_opt(TA). {
   create_fk_def_init(&pParse->create_fk_def, N.table_name, &N.name, FA, &T, TA);
   sql_create_foreign_key(pParse);
 }
 
-cmd ::= alter_add_constraint(N) CHECK LP expr(X) RP. {
+ddl_cmd ::= alter_add_constraint(N) CHECK LP expr(X) RP. {
     create_ck_def_init(&pParse->create_ck_def, N.table_name, &N.name, &X);
     sql_create_check_contraint(pParse, false);
 }
 
-cmd ::= alter_add_constraint(N) unique_spec(U) LP sortlist(X) RP. {
+ddl_cmd ::= alter_add_constraint(N) unique_spec(U) LP sortlist(X) RP. {
   create_index_def_init(&pParse->create_index_def, N.table_name, &N.name, X, U,
                         SORT_ORDER_ASC, false);
   sql_create_index(pParse);
@@ -1739,13 +1749,13 @@ cmd ::= alter_add_constraint(N) unique_spec(U) LP sortlist(X) RP. {
 unique_spec(U) ::= UNIQUE.      { U = SQL_INDEX_TYPE_CONSTRAINT_UNIQUE; }
 unique_spec(U) ::= PRIMARY KEY. { U = SQL_INDEX_TYPE_CONSTRAINT_PK; }
 
-cmd ::= alter_table_start(A) RENAME TO nm(N). {
+ddl_cmd ::= alter_table_start(A) RENAME TO nm(N). {
     rename_entity_def_init(&pParse->rename_entity_def, A, &N);
     pParse->initiateTTrans = true;
     sql_alter_table_rename(pParse);
 }
 
-cmd ::= ALTER TABLE fullname(X) DROP CONSTRAINT nm(Z). {
+ddl_cmd ::= ALTER TABLE fullname(X) DROP CONSTRAINT nm(Z). {
   drop_constraint_def_init(&pParse->drop_constraint_def, X, &Z, false);
   pParse->initiateTTrans = true;
   sql_drop_constraint(pParse);
@@ -1958,9 +1968,16 @@ explain ::= EXPLAIN LP explain_facets RP. {
   pParse->explain = EXPLAIN_MODE_PROGRAM;
   sql_explain_check_facets(pParse);
 }
+explain ::= EXPLAIN ANALYZE. {
+  pParse->explain = EXPLAIN_MODE_PROGRAM;
+  pParse->explain_opts.facets = EXPLAIN_FACET_ANALYZE |
+                                EXPLAIN_FACET_PSEUDOCODE;
+}
 explain_facets ::= explain_facet.
 explain_facets ::= explain_facets COMMA explain_facet.
 explain_facet ::= nm(X). { sql_explain_add_facet(pParse, &X, false); }
+// ANALYZE is a reserved keyword, so it is not an nm.
+explain_facet ::= ANALYZE(X). { sql_explain_add_facet(pParse, &X, false); }
 explain_facet ::= nm(X) LB explain_lines RB. {
   sql_explain_add_facet(pParse, &X, true);
 }
@@ -1968,3 +1985,35 @@ explain_facet ::= nm(X) LB RB. { sql_explain_add_facet(pParse, &X, true); }
 explain_lines ::= explain_line.
 explain_lines ::= explain_lines COMMA explain_line.
 explain_line ::= INTEGER(X). { sql_explain_add_line(pParse, &X); }
+// The options of ANALYZE have the syntax of a map: {'freq': 99}. A number
+// with a minus sign is in the grammar to report it with a clear error.
+// The value of an option can be a list of strings: {'mode': ['hits']}.
+explain_facet ::= ANALYZE(X) LCB explain_options RCB. {
+  sql_explain_add_facet(pParse, &X, false);
+}
+explain_options ::= .
+explain_options ::= explain_option_list.
+explain_option_list ::= explain_option.
+explain_option_list ::= explain_option_list COMMA explain_option.
+explain_option ::= STRING(X) COLON INTEGER|FLOAT|DECIMAL|STRING(Y). {
+  sql_explain_set_option(pParse, &X, &Y, @Y, false);
+}
+explain_option ::= STRING(X) COLON MINUS INTEGER|FLOAT|DECIMAL(Y). {
+  sql_explain_set_option(pParse, &X, &Y, @Y, true);
+}
+explain_option ::= explain_option_list_start explain_option_items RB.
+explain_option_list_start ::= STRING(X) COLON LB. {
+  sql_explain_begin_option_list(pParse, &X);
+}
+explain_option_items ::= explain_option_item.
+explain_option_items ::= explain_option_items COMMA explain_option_item.
+explain_option_item ::= STRING(X). {
+  sql_explain_add_option_item(pParse, &X);
+}
+// A list after ANALYZE is the list of its modes: (analyze ['hits']) is
+// (analyze {'mode': ['hits']}).
+explain_facet ::= explain_modes_start explain_option_items RB.
+explain_modes_start ::= ANALYZE(X) LB. {
+  sql_explain_add_facet(pParse, &X, false);
+  sql_explain_begin_option_list(pParse, NULL);
+}

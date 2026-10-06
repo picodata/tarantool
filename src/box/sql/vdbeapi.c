@@ -100,6 +100,54 @@ sql_metadata_is_full()
 	return current_session()->sql_flags & SQL_FullMetadata;
 }
 
+/**
+ * Run an EXPLAIN ANALYZE statement to its end and drop the rows that it
+ * gives. Sample the instructions while it runs.
+ * Then start the listing of the program like for EXPLAIN, with the counts
+ * of the run.
+ */
+static int
+vdbe_explain_analyze(struct Vdbe *p)
+{
+	struct sql *db = sql_get();
+	int rc;
+	VdbeSample sample;
+	bool is_sampled = (p->explain_data->opts.analyze_mode &
+			   EXPLAIN_ANALYZE_SAMPLES) != 0;
+	if (is_sampled && vdbe_sample_start(&sample, p) != 0) {
+		/*
+		 * The statement did not start, so its autocommit flag
+		 * is the one of its last execution. Make the halt roll
+		 * back to the savepoint of the statement, which does
+		 * nothing, and not roll back the transaction.
+		 */
+		p->auto_commit = false;
+		p->is_aborted = true;
+		return -1;
+	}
+	db->nVdbeExec++;
+	do {
+		rc = sqlVdbeExec(p);
+	} while (rc == SQL_ROW);
+	db->nVdbeExec--;
+	/* The statement is in no instruction now: see vdbesample.c. */
+	__atomic_store_n(&p->explain_data->op_perf, NULL, __ATOMIC_RELAXED);
+	if (is_sampled)
+		vdbe_sample_stop(&sample);
+	if (rc != SQL_DONE)
+		return rc;
+	/*
+	 * The run has halted the statement. Make it active again, like
+	 * EXPLAIN on its first step.
+	 */
+	assert(p->magic == VDBE_MAGIC_HALT);
+	p->magic = VDBE_MAGIC_RUN;
+	p->explain_data->mode = EXPLAIN_MODE_PROGRAM;
+	p->pc = 0;
+	db->nVdbeActive++;
+	return sqlVdbeList(p);
+}
+
 /*
  * Execute the statement pStmt, either until a row of data is ready, the
  * statement is completely executed or an error occurs.
@@ -137,6 +185,8 @@ sqlStep(Vdbe * p)
 	}
 	if (vdbe_explain_mode(p) != EXPLAIN_MODE_OFF) {
 		rc = sqlVdbeList(p);
+	} else if (vdbe_is_analyzed(p)) {
+		rc = vdbe_explain_analyze(p);
 	} else {
 		db->nVdbeExec++;
 		rc = sqlVdbeExec(p);

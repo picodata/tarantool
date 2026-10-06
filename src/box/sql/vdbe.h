@@ -126,6 +126,33 @@ struct VdbeOpSynopsisAux {
 
 typedef struct VdbeOpSynopsisAux VdbeOpSynopsisAux;
 
+/** The performance counters of an instruction, for EXPLAIN ANALYZE. */
+struct VdbeOpPerfStats {
+	/** The number of times the instruction ran. */
+	uint64_t hit_count;
+	/** The number of samples that found the instruction running. */
+	uint64_t sample_count;
+};
+
+typedef struct VdbeOpPerfStats VdbeOpPerfStats;
+
+/**
+ * The performance counters of the instructions of a program. They are
+ * apart from the instructions to keep the instructions small, and only
+ * an EXPLAIN ANALYZE statement has them.
+ */
+struct VdbePerfStats {
+	/**
+	 * The counters of each instruction. NULL if the statement is not
+	 * EXPLAIN ANALYZE.
+	 */
+	VdbeOpPerfStats *ops;
+	/** The number of elements in ops. */
+	int count;
+};
+
+typedef struct VdbePerfStats VdbePerfStats;
+
 /*
  * A sub-routine used to implement a trigger program.
  */
@@ -144,6 +171,8 @@ struct SubProgram {
 	char *name;
 	/** The synopsis data of the instructions. */
 	VdbeOpSynopsisAux *synopsis_aux;
+	/** The performance counters of the instructions. */
+	VdbePerfStats perf;
 	/* Next sub-program already visited */
 	SubProgram *pNext;
 };
