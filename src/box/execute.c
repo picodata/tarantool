@@ -73,6 +73,7 @@ sql_changed_to_port(struct region *region, struct port *port)
 	size_t svp = region_used(region);
 
 	struct Mem mem;
+	mem_create(&mem);
 	mem_set_int(&mem, sql_get()->nChange);
 	char *pos = mem_encode_array(&mem, 1, &size, region);
 
