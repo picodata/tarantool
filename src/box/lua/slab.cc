@@ -40,6 +40,7 @@
 #include <lualib.h>
 #include <lj_obj.h> /* internals: lua in box.runtime.info() */
 
+#include <dlfcn.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -370,17 +371,55 @@ lbox_malloc_internal_info(struct lua_State *L)
 }
 
 /*
+ * Gets the memory usage from jemalloc with mallctl(). Returns false if
+ * jemalloc is built without statistics.
+ *
+ * The size is stats.resident: the pages which jemalloc holds, including
+ * freed (dirty) pages which it keeps for reuse and its metadata. It is
+ * the nearest to the glibc meaning of the size, the memory which malloc
+ * got from the system. stats.active is lower: it excludes the freed pages
+ * and the metadata.
+ */
+static bool
+jemalloc_info(void *mallctl_sym, uint64_t *total, uint64_t *used)
+{
+	typedef int (*mallctl_f)(const char *, void *, size_t *, void *,
+				 size_t);
+	mallctl_f mallctl = (mallctl_f)mallctl_sym;
+	/* jemalloc refreshes the statistics on a write to "epoch". */
+	uint64_t epoch = 1;
+	size_t len = sizeof(epoch);
+	if (mallctl("epoch", &epoch, &len, &epoch, len) != 0)
+		return false;
+	size_t resident, allocated;
+	len = sizeof(size_t);
+	if (mallctl("stats.resident", &resident, &len, NULL, 0) != 0 ||
+	    mallctl("stats.allocated", &allocated, &len, NULL, 0) != 0)
+		return false;
+	*total = resident;
+	*used = allocated;
+	return true;
+}
+
+/*
  * Returns the malloc memory usage information in a table
  *
  *   {
  *     size = <total allocated>,
  *     used = <actually used>,
+ *     allocator = <"glibc", "jemalloc", "mimalloc", "asan" or "unknown">,
  *   }
  *
  * (all numbers are in bytes).
  *
  * The information is retrieved with malloc_info(). If it isn't supported by
- * the system or its format is unknown, {size = 0, used = 0} is returned.
+ * the system or its format is unknown, size and used are 0 and allocator is
+ * "unknown". If jemalloc serves malloc (it's linked into the executable or
+ * preloaded), the information is retrieved from its statistics instead,
+ * because malloc_info() of glibc doesn't see the memory of another
+ * allocator. A preloaded mimalloc and ASan are only named, size and used
+ * are 0: the release build of mimalloc has no statistics of the used
+ * memory, and malloc_info() of ASan returns zeros.
  *
  * This function never raises.
  */
@@ -390,6 +429,25 @@ lbox_malloc_info(struct lua_State *L)
 	int version = 0;
 	uint64_t total = 0;
 	uint64_t available = 0;
+	const char *allocator = "unknown";
+	void *mallctl;
+#if defined(ENABLE_ASAN)
+	/* ASan replaces malloc, its malloc_info() returns zeros. */
+	allocator = "asan";
+	goto out;
+#endif /* defined(ENABLE_ASAN) */
+	mallctl = dlsym(RTLD_DEFAULT, "mallctl");
+	if (mallctl != NULL) {
+		allocator = "jemalloc";
+		uint64_t used;
+		if (jemalloc_info(mallctl, &total, &used))
+			available = total - used;
+		goto out;
+	}
+	if (dlsym(RTLD_DEFAULT, "mi_version") != NULL) {
+		allocator = "mimalloc";
+		goto out;
+	}
 	lua_pushcfunction(L, lbox_malloc_internal_info);
 	if (luaT_call(L, 0, 1) != 0)
 		goto out;
@@ -413,6 +471,7 @@ lbox_malloc_info(struct lua_State *L)
 	lua_pop(L, 1);
 	if (version != 1)
 		goto out;
+	allocator = "glibc";
 	/*
 	 * Extract the size of used memory. Even though the document version is
 	 * valid, we still need to be careful accessing it.
@@ -468,6 +527,8 @@ out:
 	lua_setfield(L, -2, "size");
 	luaL_pushuint64(L, total - available);
 	lua_setfield(L, -2, "used");
+	lua_pushstring(L, allocator);
+	lua_setfield(L, -2, "allocator");
 	return 1;
 }
 
