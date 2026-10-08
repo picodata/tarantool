@@ -2155,6 +2155,12 @@ struct ExplainOpts {
 	 * it is 0 if the frequency is not given.
 	 */
 	int sample_freq;
+	/**
+	 * The option 'timeout': the maximum time of a run in seconds, 0 if
+	 * the time is not limited. A run that stops at the limit keeps the
+	 * changes that it made.
+	 */
+	double timeout;
 };
 
 typedef struct ExplainOpts ExplainOpts;
@@ -2387,7 +2393,10 @@ sql_explain_analyze_forbid(struct Parse *parse, const char *kind);
  * - 'freq', the number of samples in a second, 99 by default;
  * - 'mode', what to measure: 'hits', 'samples' (the default), or 'all'
  *   for all of them. A list of them is set with
- *   sql_explain_begin_option_list().
+ *   sql_explain_begin_option_list();
+ * - 'timeout', the maximum time of the run in seconds, an integer or a
+ *   number with a fraction. 0, the default, is no limit. A run that
+ *   stops at the limit keeps the changes that it made.
  */
 void
 sql_explain_set_option(struct Parse *parse, const struct Token *name,

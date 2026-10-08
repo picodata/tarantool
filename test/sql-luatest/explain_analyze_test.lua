@@ -326,7 +326,7 @@ g.test_forbidden_statements = function()
             [[EXPLAIN ANALYZE]],
             [[EXPLAIN (ANALYZE)]],
             [[EXPLAIN (opcode, ANALYZE {'mode': 'hits'})]],
-            [[EXPLAIN (ANALYZE {'freq': 10})]],
+            [[EXPLAIN (ANALYZE {'timeout': 10})]],
         }
         box.execute([[CREATE VIEW w AS SELECT a FROM t;]])
         box.execute([[CREATE INDEX j ON t(a);]])

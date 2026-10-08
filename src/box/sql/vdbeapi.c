@@ -38,6 +38,7 @@
 #include "mem.h"
 #include "vdbeInt.h"
 #include "box/session.h"
+#include "clock.h"
 
 /*
  * Invoke the profile callback.  This routine is only called if we already
@@ -101,8 +102,8 @@ sql_metadata_is_full()
 }
 
 /**
- * Run an EXPLAIN ANALYZE statement to its end and drop the rows that it
- * gives. Sample the instructions while it runs.
+ * Run an EXPLAIN ANALYZE statement to its end, or to its timeout, and
+ * drop the rows that it gives. Sample the instructions while it runs.
  * Then start the listing of the program like for EXPLAIN, with the counts
  * of the run.
  */
@@ -125,6 +126,14 @@ vdbe_explain_analyze(struct Vdbe *p)
 		p->is_aborted = true;
 		return -1;
 	}
+	if (p->explain_data->opts.timeout > 0) {
+		int64_t now = clock_monotonic64();
+		double timeout = p->explain_data->opts.timeout * 1e9;
+		/* A timeout that is too big for the clock is no limit. */
+		p->explain_data->deadline =
+			timeout < (double)(INT64_MAX - now) ?
+			now + (int64_t)timeout : 0;
+	}
 	db->nVdbeExec++;
 	do {
 		rc = sqlVdbeExec(p);
@@ -136,6 +145,15 @@ vdbe_explain_analyze(struct Vdbe *p)
 		vdbe_sample_stop(&sample);
 	if (rc != SQL_DONE)
 		return rc;
+	/*
+	 * A run that stopped at its timeout did not halt the statement.
+	 * The halt can fail, for example at the commit.
+	 */
+	if (p->explain_data->is_timed_out) {
+		sqlVdbeHalt(p);
+		if (p->is_aborted)
+			return -1;
+	}
 	/*
 	 * The run has halted the statement. Make it active again, like
 	 * EXPLAIN on its first step.

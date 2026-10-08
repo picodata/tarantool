@@ -459,6 +459,8 @@ int sqlVdbeExec(Vdbe *p)
 	uint8_t mode = is_analyzed ? p->explain_data->opts.analyze_mode : 0;
 	bool is_counted = (mode & EXPLAIN_ANALYZE_HITS) != 0;
 	bool is_sampled = (mode & EXPLAIN_ANALYZE_SAMPLES) != 0;
+	/* The time when the run of EXPLAIN ANALYZE stops, 0 if never. */
+	int64_t deadline = is_analyzed ? p->explain_data->deadline : 0;
 
 	int64_t start_time = 0;
 	if (vdbe_yield_cb) {
@@ -506,14 +508,33 @@ int sqlVdbeExec(Vdbe *p)
 						 perf, __ATOMIC_RELAXED);
 			}
 		}
-		if (p->step_count % OPCODE_YIELD_COUNT == 0) {
+		/*
+		 * The point of preemption: the callback can yield or stop
+		 * the statement, and EXPLAIN ANALYZE checks its timeout.
+		 */
+		if (p->step_count % OPCODE_YIELD_COUNT == 0 &&
+		    (vdbe_yield_cb != NULL || deadline > 0)) {
+			int64_t now = clock_monotonic64();
 			if (vdbe_yield_cb) {
 				struct vdbe_yield_args args = {
 					.start = &start_time,
-					.current = clock_monotonic64(),
+					.current = now,
 				};
 				if (vdbe_yield_cb(&args) != 0)
 					goto abort_due_to_error;
+			}
+			if (deadline > 0 && now >= deadline) {
+				/*
+				 * The time of EXPLAIN ANALYZE is over. This
+				 * instruction does not run. Stop here:
+				 * vdbe_explain_analyze() halts the statement.
+				 */
+				p->step_count--;
+				if (is_counted)
+					p->perf.ops[pOp - aOp].hit_count--;
+				p->explain_data->is_timed_out = true;
+				rc = SQL_DONE;
+				goto vdbe_return;
 			}
 		}
 		if (p->vdbe_max_steps > 0 &&

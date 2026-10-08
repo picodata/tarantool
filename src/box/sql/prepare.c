@@ -34,6 +34,7 @@
  * interface, and routines that contribute to loading the database schema
  * from disk.
  */
+#include <math.h>
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "box/space.h"
@@ -213,6 +214,7 @@ sql_explain_token_is(const struct Token *token, const char *text)
 static const char *const explain_options[] = {
 	"freq",
 	"mode",
+	"timeout",
 };
 
 /** Check that a token is the name of an option of the facet ANALYZE. */
@@ -304,6 +306,7 @@ void
 sql_explain_set_option(struct Parse *parse, const struct Token *name,
 		       const struct Token *value, int type, bool is_negative)
 {
+	bool is_string = type == TK_STRING;
 	if (parse->is_aborted)
 		return;
 	if (sql_explain_token_is(name, "freq")) {
@@ -317,6 +320,18 @@ sql_explain_set_option(struct Parse *parse, const struct Token *name,
 			return;
 		}
 		parse->explain_opts.sample_freq = freq;
+		return;
+	}
+	if (sql_explain_token_is(name, "timeout")) {
+		double timeout;
+		if (is_string || sqlAtoF(value->z, &timeout, value->n) == 0 ||
+		    !isfinite(timeout) || (is_negative && timeout != 0)) {
+			sql_explain_error(parse, "EXPLAIN option 'timeout' "
+					  "must be a non-negative number of "
+					  "seconds");
+			return;
+		}
+		parse->explain_opts.timeout = timeout;
 		return;
 	}
 	if (sql_explain_token_is(name, "mode")) {

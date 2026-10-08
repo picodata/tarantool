@@ -258,6 +258,15 @@ struct VdbeExplain {
 	 * instruction. The handler of the sampling signal reads it.
 	 */
 	VdbeOpPerfStats *op_perf;
+	/**
+	 * The monotonic time in nanoseconds at which the current run of
+	 * EXPLAIN ANALYZE stops, 0 if the run has no timeout. The run
+	 * checks it at its points of preemption, once in
+	 * OPCODE_YIELD_COUNT instructions.
+	 */
+	int64_t deadline;
+	/** The current run of EXPLAIN ANALYZE stopped at the deadline. */
+	bool is_timed_out;
 };
 
 typedef struct VdbeExplain VdbeExplain;

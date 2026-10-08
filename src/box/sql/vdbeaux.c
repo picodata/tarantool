@@ -2429,6 +2429,8 @@ static void
 explain_analyze_rewind(struct Vdbe *p)
 {
 	p->explain_data->mode = EXPLAIN_MODE_OFF;
+	p->explain_data->deadline = 0;
+	p->explain_data->is_timed_out = false;
 	vdbe_perf_stats_reset(&p->perf, p->nOp);
 	for (struct SubProgram *sub = p->pProgram; sub != NULL;
 	     sub = sub->pNext)
