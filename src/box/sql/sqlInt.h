@@ -2161,6 +2161,16 @@ struct ExplainOpts {
 	 * changes that it made.
 	 */
 	double timeout;
+	/**
+	 * The option 'rollback_stmt'. If true, each run rolls back the
+	 * changes of the statement when it halts, with or without an
+	 * error. A statement in its own transaction rolls back that
+	 * transaction. A statement in a transaction of the user rolls back
+	 * to the savepoint that it made at its start, and the transaction
+	 * stays open. A statement that starts no transaction, such as
+	 * SELECT, rolls back nothing.
+	 */
+	bool is_stmt_rolled_back;
 };
 
 typedef struct ExplainOpts ExplainOpts;
@@ -2396,7 +2406,10 @@ sql_explain_analyze_forbid(struct Parse *parse, const char *kind);
  *   sql_explain_begin_option_list();
  * - 'timeout', the maximum time of the run in seconds, an integer or a
  *   number with a fraction. 0, the default, is no limit. A run that
- *   stops at the limit keeps the changes that it made.
+ *   stops at the limit keeps the changes that it made;
+ * - 'rollback_stmt', TRUE or FALSE (the default). If TRUE, the run rolls
+ *   back its changes: its transaction, or its savepoint if it is in a
+ *   transaction of the user.
  */
 void
 sql_explain_set_option(struct Parse *parse, const struct Token *name,

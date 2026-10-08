@@ -185,8 +185,11 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 		 * truncate optimization. This is workaround until
 		 * system tables cannot be changes inside a
 		 * transaction (_truncate).
+		 *
+		 * The run of EXPLAIN ANALYZE that rolls back its changes
+		 * needs the transaction.
 		 */
-		parse->initiateTTrans = false;
+		parse->initiateTTrans = parse->explain_opts.is_stmt_rolled_back;
 	} else {
 		/* Resolve the column names in the WHERE clause. */
 		struct NameContext nc;

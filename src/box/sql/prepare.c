@@ -214,6 +214,7 @@ sql_explain_token_is(const struct Token *token, const char *text)
 static const char *const explain_options[] = {
 	"freq",
 	"mode",
+	"rollback_stmt",
 	"timeout",
 };
 
@@ -320,6 +321,16 @@ sql_explain_set_option(struct Parse *parse, const struct Token *name,
 			return;
 		}
 		parse->explain_opts.sample_freq = freq;
+		return;
+	}
+	if (sql_explain_token_is(name, "rollback_stmt")) {
+		if (type != TK_TRUE && type != TK_FALSE) {
+			sql_explain_error(parse, "EXPLAIN option "
+					  "'rollback_stmt' must be TRUE or "
+					  "FALSE");
+			return;
+		}
+		parse->explain_opts.is_stmt_rolled_back = type == TK_TRUE;
 		return;
 	}
 	if (sql_explain_token_is(name, "timeout")) {

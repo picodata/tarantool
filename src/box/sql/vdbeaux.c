@@ -2884,7 +2884,6 @@ sqlVdbeHalt(Vdbe * p)
 	 */
 	if (p->pc >= 0) {
 		int eStatementOp = 0;
-
 		/* Check for immediate foreign key violations. */
 		if (!p->is_aborted && p->nFkConstraint > 0) {
 			p->is_aborted = true;
@@ -2893,6 +2892,13 @@ sqlVdbeHalt(Vdbe * p)
 				 "constraint failed");
 		}
 
+		const VdbeExplain *explain = p->explain_data;
+		bool is_dry_run = explain != NULL &&
+				  explain->opts.is_stmt_rolled_back &&
+				  explain->mode == EXPLAIN_MODE_OFF;
+		bool is_ok = !p->is_aborted ||
+			     p->errorAction == ON_CONFLICT_ACTION_FAIL;
+
 		/* If the auto-commit flag is set and this is the only active writer
 		 * VM, then we do either a commit or rollback of the current transaction.
 		 *
@@ -2900,8 +2906,7 @@ sqlVdbeHalt(Vdbe * p)
 		 * above has occurred.
 		 */
 		if (p->auto_commit) {
-			if (!p->is_aborted
-			    || (p->errorAction == ON_CONFLICT_ACTION_FAIL)) {
+			if (!is_dry_run && is_ok) {
 				/*
 				 * The auto-commit flag is true, the vdbe
 				 * program was successful or hit an 'OR FAIL'
@@ -2927,8 +2932,9 @@ sqlVdbeHalt(Vdbe * p)
 			}
 			p->anonymous_savepoint = NULL;
 		} else if (eStatementOp == 0) {
-			if (!p->is_aborted ||
-			    p->errorAction == ON_CONFLICT_ACTION_FAIL) {
+			if (is_dry_run) {
+				eStatementOp = SAVEPOINT_ROLLBACK;
+			} else if (is_ok) {
 				eStatementOp = SAVEPOINT_RELEASE;
 			} else if (p->errorAction == ON_CONFLICT_ACTION_ABORT) {
 				eStatementOp = SAVEPOINT_ROLLBACK;

@@ -1995,7 +1995,8 @@ explain_options ::= .
 explain_options ::= explain_option_list.
 explain_option_list ::= explain_option.
 explain_option_list ::= explain_option_list COMMA explain_option.
-explain_option ::= STRING(X) COLON INTEGER|FLOAT|DECIMAL|STRING(Y). {
+explain_option ::= STRING(X) COLON
+                   INTEGER|FLOAT|DECIMAL|STRING|TRUE|FALSE(Y). {
   sql_explain_set_option(pParse, &X, &Y, @Y, false);
 }
 explain_option ::= STRING(X) COLON MINUS INTEGER|FLOAT|DECIMAL(Y). {
