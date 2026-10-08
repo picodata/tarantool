@@ -37,8 +37,11 @@
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
+#include "box/schema.h"
 #include "box/session.h"
+#include "box/txn.h"
 #include "clock.h"
+#include "fiber.h"
 
 /*
  * Invoke the profile callback.  This routine is only called if we already
@@ -102,10 +105,85 @@ sql_metadata_is_full()
 }
 
 /**
- * Run an EXPLAIN ANALYZE statement to its end, or to its timeout, and
- * drop the rows that it gives. Sample the instructions while it runs.
- * Then start the listing of the program like for EXPLAIN, with the counts
- * of the run.
+ * Run an EXPLAIN ANALYZE statement one time to its end, or to its
+ * timeout, and drop the rows that it gives. The statement is halted
+ * after a run without an error.
+ */
+static int
+vdbe_explain_analyze_run(struct Vdbe *p)
+{
+	struct sql *db = sql_get();
+	int rc;
+	if (p->explain_data->opts.timeout > 0) {
+		int64_t now = clock_monotonic64();
+		double timeout = p->explain_data->opts.timeout * 1e9;
+		/* A timeout that is too big for the clock is no limit. */
+		p->explain_data->deadline =
+			timeout < (double)(INT64_MAX - now) ?
+			now + (int64_t)timeout : 0;
+	}
+	db->nVdbeExec++;
+	do {
+		rc = sqlVdbeExec(p);
+	} while (rc == SQL_ROW);
+	db->nVdbeExec--;
+	/* The statement is in no instruction now: see vdbesample.c. */
+	__atomic_store_n(&p->explain_data->op_perf, NULL, __ATOMIC_RELAXED);
+	/*
+	 * A run that stopped at its timeout did not halt the statement.
+	 * The halt can fail, for example at the commit.
+	 */
+	if (rc == SQL_DONE && p->explain_data->is_timed_out) {
+		sqlVdbeHalt(p);
+		if (p->is_aborted)
+			rc = -1;
+	}
+	return rc;
+}
+
+/**
+ * Let the other fibers run between two runs of EXPLAIN ANALYZE, so that
+ * many runs do not block the event loop. The statement is ready for its
+ * next run, thus it is busy and no other fiber can use it.
+ *
+ * A transaction that cannot yield is aborted by a yield, thus in such a
+ * transaction there is no yield.
+ *
+ * The statement cannot run again if its fiber was cancelled while it
+ * waited. It also cannot run again if the schema changed: the program is
+ * made for the old schema. Another fiber can change the schema while the
+ * statement waits, and the last run can change it without a wait, for
+ * example in a function that the statement calls.
+ */
+static int
+vdbe_explain_analyze_yield(struct Vdbe *p)
+{
+	struct txn *txn = in_txn();
+	if (txn == NULL || txn_has_flag(txn, TXN_CAN_YIELD)) {
+		fiber_sleep(0);
+		if (fiber_is_cancelled()) {
+			diag_set(FiberIsCancelled);
+			goto error;
+		}
+	}
+	if (stmt_cache_schema_version() != p->schema_ver) {
+		p->expired = 1;
+		diag_set(ClientError, ER_SQL_EXECUTE, "schema version has "
+			 "changed: need to re-compile SQL statement");
+		goto error;
+	}
+	return 0;
+error:
+	p->is_aborted = true;
+	return -1;
+}
+
+/**
+ * Run an EXPLAIN ANALYZE statement the given number of times and sample
+ * the instructions while it runs. The other fibers run between the runs.
+ * An error stops the runs; a timeout of a run is not an error. Then start
+ * the listing of the program like for EXPLAIN, with the counts of all
+ * runs.
  */
 static int
 vdbe_explain_analyze(struct Vdbe *p)
@@ -126,37 +204,30 @@ vdbe_explain_analyze(struct Vdbe *p)
 		p->is_aborted = true;
 		return -1;
 	}
-	if (p->explain_data->opts.timeout > 0) {
-		int64_t now = clock_monotonic64();
-		double timeout = p->explain_data->opts.timeout * 1e9;
-		/* A timeout that is too big for the clock is no limit. */
-		p->explain_data->deadline =
-			timeout < (double)(INT64_MAX - now) ?
-			now + (int64_t)timeout : 0;
+	while ((rc = vdbe_explain_analyze_run(p)) == SQL_DONE &&
+	       ++p->explain_data->runs_done < p->explain_data->opts.runs) {
+		/*
+		 * Make the statement ready to run again, as the first
+		 * step of a statement does. The counters stay, because
+		 * this is not the first run.
+		 */
+		sqlVdbeReset(p);
+		sqlVdbeRewind(p);
+		db->nVdbeActive++;
+		p->pc = 0;
+		if (vdbe_explain_analyze_yield(p) != 0) {
+			rc = -1;
+			break;
+		}
 	}
-	db->nVdbeExec++;
-	do {
-		rc = sqlVdbeExec(p);
-	} while (rc == SQL_ROW);
-	db->nVdbeExec--;
-	/* The statement is in no instruction now: see vdbesample.c. */
-	__atomic_store_n(&p->explain_data->op_perf, NULL, __ATOMIC_RELAXED);
+	p->explain_data->runs_done = 0;
 	if (is_sampled)
 		vdbe_sample_stop(&sample);
 	if (rc != SQL_DONE)
 		return rc;
 	/*
-	 * A run that stopped at its timeout did not halt the statement.
-	 * The halt can fail, for example at the commit.
-	 */
-	if (p->explain_data->is_timed_out) {
-		sqlVdbeHalt(p);
-		if (p->is_aborted)
-			return -1;
-	}
-	/*
-	 * The run has halted the statement. Make it active again, like
-	 * EXPLAIN on its first step.
+	 * The last run has halted the statement. Make it active again,
+	 * like EXPLAIN on its first step.
 	 */
 	assert(p->magic == VDBE_MAGIC_HALT);
 	p->magic = VDBE_MAGIC_RUN;

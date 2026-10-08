@@ -2171,6 +2171,12 @@ struct ExplainOpts {
 	 * SELECT, rolls back nothing.
 	 */
 	bool is_stmt_rolled_back;
+	/**
+	 * The option 'runs': the number of times that EXPLAIN ANALYZE runs
+	 * the statement. The measurements are the sums of all runs. In
+	 * Parse it is 0 if the number is not given.
+	 */
+	int runs;
 };
 
 typedef struct ExplainOpts ExplainOpts;
@@ -2409,7 +2415,10 @@ sql_explain_analyze_forbid(struct Parse *parse, const char *kind);
  *   stops at the limit keeps the changes that it made;
  * - 'rollback_stmt', TRUE or FALSE (the default). If TRUE, the run rolls
  *   back its changes: its transaction, or its savepoint if it is in a
- *   transaction of the user.
+ *   transaction of the user;
+ * - 'runs', the number of times to run the statement, 1 by default. The
+ *   measurements are the sums of all runs. The timeout and the rollback
+ *   are for each run.
  */
 void
 sql_explain_set_option(struct Parse *parse, const struct Token *name,

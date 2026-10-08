@@ -215,6 +215,7 @@ static const char *const explain_options[] = {
 	"freq",
 	"mode",
 	"rollback_stmt",
+	"runs",
 	"timeout",
 };
 
@@ -343,6 +344,17 @@ sql_explain_set_option(struct Parse *parse, const struct Token *name,
 			return;
 		}
 		parse->explain_opts.timeout = timeout;
+		return;
+	}
+	if (sql_explain_token_is(name, "runs")) {
+		int runs;
+		if (type != TK_INTEGER || is_negative ||
+		    sqlGetInt32(value->z, &runs) == 0 || runs < 1) {
+			sql_explain_error(parse, "EXPLAIN option 'runs' must "
+					  "be a positive integer");
+			return;
+		}
+		parse->explain_opts.runs = runs;
 		return;
 	}
 	if (sql_explain_token_is(name, "mode")) {

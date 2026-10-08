@@ -2421,9 +2421,10 @@ vdbe_perf_stats_destroy(VdbePerfStats *perf)
 
 /**
  * Prepare EXPLAIN ANALYZE for a new run: the statement runs as usual, and
- * after the run the program is listed. Set the counts and the samples of
- * all instructions to zero. No sub-program runs now, thus Vdbe.aOp and
- * Vdbe.perf are the ones of the main program.
+ * after the last run the program is listed. Before the first run, set the
+ * counts and the samples of all instructions to zero: the next runs add
+ * to them. No sub-program runs now, thus Vdbe.aOp and Vdbe.perf are the
+ * ones of the main program.
  */
 static void
 explain_analyze_rewind(struct Vdbe *p)
@@ -2431,6 +2432,8 @@ explain_analyze_rewind(struct Vdbe *p)
 	p->explain_data->mode = EXPLAIN_MODE_OFF;
 	p->explain_data->deadline = 0;
 	p->explain_data->is_timed_out = false;
+	if (p->explain_data->runs_done > 0)
+		return;
 	vdbe_perf_stats_reset(&p->perf, p->nOp);
 	for (struct SubProgram *sub = p->pProgram; sub != NULL;
 	     sub = sub->pNext)
@@ -2564,6 +2567,7 @@ sqlVdbeMakeReady(Vdbe * p,	/* The VDBE */
 		*opts = pParse->explain_opts;
 		opts->analyze_mode = sql_explain_analyze_mode(pParse);
 		opts->sample_freq = sql_explain_sample_freq(pParse);
+		opts->runs = MAX(pParse->explain_opts.runs, 1);
 		pParse->explain_opts.graph_filter = NULL;
 		pParse->explain_opts.graph_filter_count = 0;
 	}

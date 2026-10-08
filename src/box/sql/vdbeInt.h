@@ -267,6 +267,8 @@ struct VdbeExplain {
 	int64_t deadline;
 	/** The current run of EXPLAIN ANALYZE stopped at the deadline. */
 	bool is_timed_out;
+	/** The number of runs of EXPLAIN ANALYZE that are done. */
+	int runs_done;
 };
 
 typedef struct VdbeExplain VdbeExplain;
