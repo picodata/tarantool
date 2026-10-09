@@ -242,6 +242,14 @@ create_unit_test(PREFIX func_cache
                  SOURCES func_cache.c box_test_utils.c
                  LIBRARIES box unit
 )
+create_unit_test(PREFIX sql_skip_scan
+                 SOURCES sql_skip_scan.c box_test_utils.c
+                 LIBRARIES box unit
+)
+target_include_directories(sql_skip_scan.test PRIVATE
+    ${PROJECT_BINARY_DIR}/src/box/sql)
+target_compile_definitions(sql_skip_scan.test PRIVATE
+    $<$<CONFIG:Debug>:SQL_DEBUG>)
 create_unit_test(PREFIX prbuf
                  SOURCES prbuf.c
                  LIBRARIES unit core

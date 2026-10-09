@@ -83,6 +83,9 @@ struct WhereLevel {
 	int addrBrk;		/* Jump here to break out of the loop */
 	int addrNxt;		/* Jump here to start the next IN combination */
 	int addrSkip;		/* Jump here for next iteration of skip-scan */
+	int addrSkipEnd;	/* End of the fixed prefix */
+	int regSkip;		/* True while skip-scan keys are initialized */
+	int regSkipGroup;	/* NULL: unsearched, true: positioned */
 	int addrCont;		/* Jump here to continue with the next loop cycle */
 	int addrFirst;		/* First instruction of interior of the loop */
 	int addrBody;		/* Beginning of the body of this loop */
@@ -92,12 +95,13 @@ struct WhereLevel {
 	union {			/* Information that depends on pWLoop->wsFlags */
 		struct {
 			int nIn;	/* Number of entries in aInLoop[] */
+			int nInBeforeSkip; /* IN entries outside skip-scan */
 			struct InLoop {
 				int iCur;	/* The VDBE cursor used by this IN operator */
 				int addrInTop;	/* Top of the IN loop */
 				u8 eEndLoopOp;	/* IN Loop terminator. OP_Next or OP_Prev */
 			} *aInLoop;	/* Information about each nested IN operator */
-		} in;		/* Used when pWLoop->wsFlags&WHERE_IN_ABLE */
+		} in;		/* Used for WHERE_IN_ABLE or WHERE_SKIPSCAN */
 		struct index_def *pCovidx;	/* Possible covering index for WHERE_MULTI_OR */
 	} u;
 	struct WhereLoop *pWLoop;	/* The selected WhereLoop object */
@@ -138,6 +142,7 @@ struct WhereLoop {
 	u32 wsFlags;		/* WHERE_* flags describing the plan */
 	u16 nLTerm;		/* Number of entries in aLTerm[] */
 	u16 nSkip;		/* Number of NULL aLTerm[] entries */
+	u16 nSkipStart;	/* First NULL entry in aLTerm[] */
   /**** whereLoopXfer() copies fields above ***********************/
 #define WHERE_LOOP_XFER_SZ offsetof(WhereLoop,nLSlot)
 	u16 nLSlot;		/* Number of slots allocated for aLTerm[] */
@@ -145,6 +150,43 @@ struct WhereLoop {
 	WhereLoop *pNextLoop;	/* Next WhereLoop object in the WhereClause */
 	WhereTerm *aLTermSpace[3];	/* Initial aLTerm[] space */
 };
+
+/** Return the position of the first entry in the skip-scan block. */
+static inline u16
+whereLoopSkipStart(const struct WhereLoop *loop)
+{
+	assert(loop->nSkip == 0 ||
+	       loop->nSkipStart + loop->nSkip <= loop->nEq);
+	return loop->nSkipStart;
+}
+
+/** Return the position after the last entry in the skip-scan block. */
+static inline u16
+whereLoopSkipEnd(const struct WhereLoop *loop)
+{
+	return whereLoopSkipStart(loop) + loop->nSkip;
+}
+
+/** Return whether an index part belongs to the skip-scan block. */
+static inline bool
+whereLoopIsSkipped(const struct WhereLoop *loop, u16 part)
+{
+	return loop->nSkip != 0 && part >= whereLoopSkipStart(loop) &&
+	       part < whereLoopSkipEnd(loop);
+}
+
+/** First IN term inside the skip loop, or -1 if all IN loops are outside. */
+int
+whereLoopInnerInStart(const struct WhereLoop *loop);
+
+/** Adjust subset costs without erasing additional external IN iterations. */
+void
+whereLoopAdjustCost(const struct WhereLoop *loops, struct WhereLoop *candidate);
+
+/** Find a dominated loop, or return NULL if the new loop is dominated. */
+struct WhereLoop **
+whereLoopFindLesser(struct WhereLoop **previous,
+		    const struct WhereLoop *candidate, bool keep_scan_fallback);
 
 /* This object holds the prerequisites and the cost of running a
  * subquery on one operand of an OR operator in the WHERE clause.
@@ -255,6 +297,8 @@ struct WhereTerm {
 	int iParent;		/* Disable pWC->a[iParent] when this term disabled */
 	int leftCursor;		/* Cursor number of X in "X <op> <expr>" */
 	int iField;		/* Field in (?,?,?) IN (SELECT...) vector */
+	/** Comparison rule of this IN component, resolved during analysis. */
+	uint32_t in_coll_id;
 	union {
 		int leftColumn;	/* Column number of X in "X <op> <expr>" */
 		WhereOrInfo *pOrInfo;	/* Extra information if (eOperator & WO_OR)!=0 */

@@ -123,8 +123,6 @@ struct index_stat {
 	uint32_t *avg_eq;
 	/** Use this index for == or IN queries only. */
 	bool is_unordered;
-	/** Don't try to use skip-scan optimization if true. */
-	bool skip_scan_enabled;
 };
 
 /** Index options */

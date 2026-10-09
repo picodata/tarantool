@@ -3632,6 +3632,9 @@ LogEst sqlWhereOutputRowCount(WhereInfo *);
 int sqlWhereIsDistinct(WhereInfo *);
 int sqlWhereIsOrdered(WhereInfo *);
 int sqlWhereOrderedInnerLoop(WhereInfo *);
+/** Return the jump target for a row rejected by an ORDER BY LIMIT sorter. */
+int
+sqlWhereOrderByLimitOptLabel(WhereInfo *pWInfo);
 int sqlWhereIsSorted(WhereInfo *);
 int sqlWhereContinueLabel(WhereInfo *);
 int sqlWhereBreakLabel(WhereInfo *);
@@ -4881,6 +4884,13 @@ void sqlWithPush(Parse *, With *, u8);
 #define IN_INDEX_MEMBERSHIP  0x0002	/* IN operator used for membership test */
 #define IN_INDEX_LOOP        0x0004	/* IN operator used as a loop */
 int sqlFindInIndex(Parse *, Expr *, u32, int *, int *, int *);
+
+/**
+ * Return true if the right-hand side of IN operator @a in is built
+ * once per statement execution rather than on every evaluation.
+ */
+bool
+sql_in_rhs_is_invariant(struct Expr *in);
 
 void sqlExprSetHeightAndFlags(Parse * pParse, Expr * p);
 #if SQL_MAX_EXPR_DEPTH>0

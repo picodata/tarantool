@@ -454,6 +454,15 @@ whereCombineDisjuncts(SrcList * pSrc,	/* the FROM clause */
 	exprAnalyze(pSrc, pWC, idxNew);
 }
 
+/** Get the collations of the left side of equality @a eq and of @a eq. */
+static int
+whereEqColls(Parse *parse, Expr *eq, uint32_t *left, uint32_t *cmp)
+{
+	if (sql_binary_compare_coll_seq(parse, eq->pLeft, NULL, left) != 0)
+		return -1;
+	return sql_binary_compare_coll_seq(parse, eq->pLeft, eq->pRight, cmp);
+}
+
 /*
  * Analyze a term that consists of two or more OR-connected
  * subterms.  So in:
@@ -730,6 +739,8 @@ exprAnalyzeOrTerm(SrcList * pSrc,	/* the FROM clause */
 			 * table and column is common to every term in the OR clause
 			 */
 			okToChngToIN = 1;
+			bool have_coll = false;
+			uint32_t in_coll_id = COLL_NONE;
 			for (; i >= 0 && okToChngToIN; i--, pOrTerm++) {
 				assert(pOrTerm->eOperator & WO_EQ);
 				if (pOrTerm->leftCursor != iCursor) {
@@ -737,6 +748,24 @@ exprAnalyzeOrTerm(SrcList * pSrc,	/* the FROM clause */
 				} else if (pOrTerm->u.leftColumn != iColumn) {
 					okToChngToIN = 0;
 				} else {
+					/*
+					 * A list IN uses only its left
+					 * collation. Each original equality
+					 * must have that same meaning,
+					 * including explicit COLLATE on
+					 * either side.
+					 */
+					uint32_t coll, cmp_coll;
+					if (whereEqColls(pParse, pOrTerm->pExpr,
+							 &coll, &cmp_coll) != 0)
+						return;
+					if (coll != cmp_coll ||
+					    (have_coll && coll != in_coll_id)) {
+						okToChngToIN = 0;
+						continue;
+					}
+					have_coll = true;
+					in_coll_id = coll;
 					/* If the right-hand side is also a column, then the types
 					 * of both right and left sides must be such that no type
 					 * conversions are required on the right.  (Ticket #2249)
@@ -1035,6 +1064,16 @@ exprAnalyze(SrcList * pSrc,	/* the FROM clause */
 		assert(pExpr->pRight == 0);
 		if (sqlExprCheckIN(pParse, pExpr))
 			return;
+		if (!sqlExprIsVector(pExpr->pLeft) || pTerm->iField > 0) {
+			int field = pTerm->iField > 0 ? pTerm->iField - 1 : 0;
+			Expr *lhs = sqlVectorFieldSubexpr(pExpr->pLeft, field);
+			Expr *rhs = ExprHasProperty(pExpr, EP_xIsSelect) ?
+				pExpr->x.pSelect->pEList->a[field].pExpr : NULL;
+			uint32_t *id = &pTerm->in_coll_id;
+			if (sql_binary_compare_coll_seq(pParse, lhs, rhs,
+							id) != 0)
+				return;
+		}
 		if (ExprHasProperty(pExpr, EP_xIsSelect)) {
 			pTerm->prereqRight =
 			    sql_select_get_usage(pMaskSet, pExpr->x.pSelect);

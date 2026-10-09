@@ -112,6 +112,8 @@ struct SortCtx {
 	int labelBkOut;		/* Start label for the block-output subroutine */
 	int addrSortIndex;	/* Address of the OP_SorterOpen or OP_OpenEphemeral */
 	int labelDone;		/* Jump here when done, ex: LIMIT reached */
+	/** Jump target when the sorter rejects an ordered inner-loop row. */
+	int labelOBLopt;
 	u8 sortFlags;		/* Zero or more SORTFLAG_* bits */
 	u8 bOrderedInnerLoop;	/* ORDER BY correctly sorts the inner loop */
 };
@@ -1183,8 +1185,8 @@ pushOntoSorter(Parse * pParse,		/* Parser context */
 			 * entry from the current iteration does not fit into the top
 			 * LIMIT+OFFSET entries of the sorter.
 			 */
-			int iBrk = sqlVdbeCurrentAddr(v) + 2;
-			sqlVdbeAddOp3(v, OP_Eq, regBase + nExpr, iBrk, r1);
+			sqlVdbeAddOp3(v, OP_Eq, regBase + nExpr,
+				      pSort->labelOBLopt, r1);
 			sqlVdbeChangeP5(v, SQL_NULLEQ);
 		}
 		sqlVdbeJumpHere(v, addr);
@@ -6555,6 +6557,10 @@ sqlSelect(Parse * pParse,		/* The parser context */
 			sSort.nOBSat = sqlWhereIsOrdered(pWInfo);
 			sSort.bOrderedInnerLoop =
 			    sqlWhereOrderedInnerLoop(pWInfo);
+			if (sSort.bOrderedInnerLoop) {
+				sSort.labelOBLopt =
+					sqlWhereOrderByLimitOptLabel(pWInfo);
+			}
 			if (sSort.nOBSat == sSort.pOrderBy->nExpr) {
 				sSort.pOrderBy = 0;
 			}

@@ -182,7 +182,6 @@ explainIndexRange(StrAccum * pStr, WhereLoop * pLoop)
 {
 	struct index_def *def = pLoop->index_def;
 	u16 nEq = pLoop->nEq;
-	u16 nSkip = pLoop->nSkip;
 	int i, j;
 
 	assert(def != NULL);
@@ -203,7 +202,8 @@ explainIndexRange(StrAccum * pStr, WhereLoop * pLoop)
 		}
 		if (i)
 			sqlStrAccumAppend(pStr, " AND ", 5);
-		sqlXPrintf(pStr, i >= nSkip ? "%s=?" : "ANY(%s)", z);
+		bool is_skipped = whereLoopIsSkipped(pLoop, i);
+		sqlXPrintf(pStr, is_skipped ? "ANY(%s)" : "%s=?", z);
 	}
 
 	j = i;
@@ -469,8 +469,8 @@ codeEqualityTerm(Parse * pParse,	/* The parsing context */
 			}
 		}
 		for (i = iEq; i < pLoop->nLTerm; i++) {
-			if (ALWAYS(pLoop->aLTerm[i])
-			    && pLoop->aLTerm[i]->pExpr == pX)
+			if (pLoop->aLTerm[i] != NULL &&
+			    pLoop->aLTerm[i]->pExpr == pX)
 				nEq++;
 		}
 
@@ -489,7 +489,8 @@ codeEqualityTerm(Parse * pParse,	/* The parsing context */
 			ExprList *pLhs = 0;	/* New pX->pLeft vector */
 
 			for (i = iEq; i < pLoop->nLTerm; i++) {
-				if (pLoop->aLTerm[i]->pExpr == pX) {
+				if (pLoop->aLTerm[i] != NULL &&
+				    pLoop->aLTerm[i]->pExpr == pX) {
 					int iField =
 					    pLoop->aLTerm[i]->iField - 1;
 					Expr *pNewRhs = sqlExprDup(
@@ -555,7 +556,7 @@ codeEqualityTerm(Parse * pParse,	/* The parsing context */
 		assert((pLoop->wsFlags & WHERE_MULTI_OR) == 0);
 
 		pLoop->wsFlags |= WHERE_IN_ABLE;
-		if (pLevel->u.in.nIn == 0) {
+		if (pLevel->addrNxt == pLevel->addrBrk) {
 			pLevel->addrNxt = sqlVdbeMakeLabel(v);
 		}
 
@@ -570,7 +571,8 @@ codeEqualityTerm(Parse * pParse,	/* The parsing context */
 		int iMap = 0;
 		pIn += i;
 		for (i = iEq; i < pLoop->nLTerm; i++) {
-			if (pLoop->aLTerm[i]->pExpr == pX) {
+			if (pLoop->aLTerm[i] != NULL &&
+			    pLoop->aLTerm[i]->pExpr == pX) {
 				int iOut = iReg + i - iEq;
 				int iCol = aiMap ? aiMap[iMap++] :
 					   iSingleIdxCol;
@@ -592,6 +594,70 @@ codeEqualityTerm(Parse * pParse,	/* The parsing context */
 	}
 	disableTerm(pLevel, pTerm);
 	return iReg;
+}
+
+/** Initialize a skip-scan pass before its internal IN loops. */
+static void
+codeSkipScanStart(Parse *pParse, WhereLevel *pLevel, int bRev, int regBase);
+
+/** Values independent of IN combinations, without calls or fallible casts. */
+static bool
+skipScanSimpleValue(const Expr *expr, int cursor)
+{
+	while (expr->op == TK_COLLATE)
+		expr = expr->pLeft;
+	switch (expr->op) {
+	case TK_TRUE:
+	case TK_FALSE:
+	case TK_INTEGER:
+	case TK_FLOAT:
+	case TK_DECIMAL:
+	case TK_STRING:
+	case TK_BLOB:
+	case TK_NULL:
+	case TK_VARIABLE:
+		return true;
+	case TK_COLUMN_REF:
+		/* A search boundary may use an already selected outer row. */
+		return expr->iTable != cursor;
+	case TK_UMINUS:
+		return expr->pLeft->op == TK_INTEGER ||
+		       expr->pLeft->op == TK_FLOAT ||
+		       expr->pLeft->op == TK_DECIMAL;
+	default:
+		return false;
+	}
+}
+
+/**
+ * Reset the flag of a value evaluated once per skip-scan pass. A search
+ * bound cannot refer to the scanned table, so its value is the same for
+ * every group and every inner-IN combination of the pass.
+ */
+static int
+codeSkipScanSavedOpen(Parse *parse)
+{
+	int flag = ++parse->nMem;
+	sqlVdbeAddOp2(parse->pVdbe, OP_Bool, false, flag);
+	return flag;
+}
+
+/** Jump over evaluation if saved; codeSkipScanSavedPut closes the branch. */
+static int
+codeSkipScanSavedGet(Parse *parse, int flag)
+{
+	int hit = sqlVdbeAddOp2(parse->pVdbe, OP_If, flag, 0);
+	sqlExprCachePush(parse);
+	return hit;
+}
+
+/** Mark the value evaluated after codeSkipScanSavedGet() as saved. */
+static void
+codeSkipScanSavedPut(Parse *parse, int flag, int hit)
+{
+	sqlExprCachePop(parse);
+	sqlVdbeAddOp2(parse->pVdbe, OP_Bool, true, flag);
+	sqlVdbeJumpHere(parse->pVdbe, hit);
 }
 
 /*
@@ -633,10 +699,11 @@ static int
 codeAllEqualityTerms(Parse * pParse,	/* Parsing context */
 		     WhereLevel * pLevel,	/* Which nested loop of the FROM we are coding */
 		     int bRev,		/* Reverse the order of IN operators */
-		     int nExtraReg)	/* Number of extra registers to allocate */
+		     int nExtraReg,	/* Extra registers to allocate */
+		     int *range_saved, const int *range_values)
 {
 	u16 nEq;		/* The number of == or IN constraints to code */
-	u16 nSkip;		/* Number of left-most columns to skip */
+	u16 nSkip;		/* Number of columns in the skip block */
 	Vdbe *v = pParse->pVdbe;	/* The vm under construction */
 	WhereTerm *pTerm;	/* A single constraint term */
 	WhereLoop *pLoop;	/* The WhereLoop object */
@@ -648,40 +715,65 @@ codeAllEqualityTerms(Parse * pParse,	/* Parsing context */
 	pLoop = pLevel->pWLoop;
 	nEq = pLoop->nEq;
 	nSkip = pLoop->nSkip;
-	struct index_def *idx_def = pLoop->index_def;
-	assert(idx_def != NULL);
+	assert(pLoop->index_def != NULL);
+	assert(nSkip == 0 || whereLoopSkipEnd(pLoop) <= nEq);
 
 	/* Figure out how many memory cells we will need then allocate them.
 	 */
 	regBase = pParse->nMem + 1;
 	nReg = pLoop->nEq + nExtraReg;
 	pParse->nMem += nReg;
-
-	if (nSkip) {
-		int iIdxCur = pLevel->iIdxCur;
-		sqlVdbeAddOp1(v, (bRev ? OP_Last : OP_Rewind), iIdxCur);
-		VdbeComment((v, "begin skip-scan on %s", idx_def->name));
-		j = sqlVdbeAddOp0(v, OP_Goto);
-		pLevel->addrSkip =
-		    sqlVdbeAddOp4Int(v, (bRev ? OP_SeekLT : OP_SeekGT),
-					 iIdxCur, 0, regBase, nSkip);
-		sqlVdbeJumpHere(v, j);
-		for (j = 0; j < nSkip; j++) {
-			sqlVdbeAddOp3(v, OP_Column, iIdxCur,
-					  idx_def->key_def->parts[j].fieldno,
-					  regBase + j);
-			VdbeSynopsisObjName((v, "%s",
-					     explainIndexColumnName(idx_def,
-								    j)));
-		}
+	if (nSkip != 0) {
+		assert(pLevel->regSkip == 0);
+		pLevel->regSkip = ++pParse->nMem;
+		pLevel->addrSkipEnd = sqlVdbeMakeLabel(v);
+		sqlVdbeAddOp2(v, OP_Bool, false, pLevel->regSkip);
 	}
 
-	/* Evaluate the equality constraints
+	/*
+	 * Open the skip-scan before the first suffix IN, so its sorted
+	 * values are visited within each prefix. Keep vector IN loops
+	 * outside: their components may straddle the skipped block.
+	 * Keep suffix IN loops outside if their values are rebuilt on
+	 * every evaluation: inside, that would happen for each prefix.
+	 * A different set comparator also requires external loops: advancing
+	 * through that set is not monotonic in the target index.
 	 */
-	for (j = nSkip; j < nEq; j++) {
+	int skip_before = whereLoopInnerInStart(pLoop);
+	int *eq_saved = NULL;
+	if (skip_before >= 0)
+		eq_saved = sql_xmalloc0(nEq * sizeof(*eq_saved));
+	for (j = 0; j < nEq; j++) {
+		if (whereLoopIsSkipped(pLoop, j))
+			continue;
+		if (j == skip_before) {
+			/*
+			 * Equalities after an inner IN are coded inside the
+			 * group loop. Evaluate the ones that are not simple
+			 * once per pass: being classified as constant does
+			 * not factor the code of a deterministic function out.
+			 */
+			for (int i = j + 1; i < nEq; ++i) {
+				WhereTerm *term = pLoop->aLTerm[i];
+				if (term->eOperator != WO_EQ ||
+				    skipScanSimpleValue(term->pExpr->pRight,
+							pLevel->iTabCur))
+					continue;
+				eq_saved[i] = codeSkipScanSavedOpen(pParse);
+			}
+			for (int i = 0; i < 2; ++i) {
+				if (range_values[i] > 0)
+					range_saved[i] =
+						codeSkipScanSavedOpen(pParse);
+			}
+			codeSkipScanStart(pParse, pLevel, bRev, regBase);
+		}
 		int r1;
 		pTerm = pLoop->aLTerm[j];
 		assert(pTerm != 0);
+		int saved_hit = 0;
+		if (eq_saved != NULL && eq_saved[j] != 0)
+			saved_hit = codeSkipScanSavedGet(pParse, eq_saved[j]);
 		/* The following testcase is true for indices with redundant columns.
 		 * Ex: CREATE INDEX i1 ON t1(a,b,a); SELECT * FROM t1 WHERE a=0 AND b=0;
 		 */
@@ -692,18 +784,131 @@ codeAllEqualityTerms(Parse * pParse,	/* Parsing context */
 				sqlReleaseTempReg(pParse, regBase);
 				regBase = r1;
 			} else {
-				sqlVdbeAddOp2(v, OP_SCopy, r1, regBase + j);
+				/* A saved value outlives the temporary r1. */
+				sqlVdbeAddOp2(v, saved_hit != 0 ? OP_Copy :
+					      OP_SCopy, r1, regBase + j);
 			}
 		}
-		if ((pTerm->eOperator & (WO_IN | WO_ISNULL)) == 0) {
-			Expr *pRight = pTerm->pExpr->pRight;
-			if (sqlExprCanBeNull(pRight)) {
+		if (saved_hit != 0)
+			codeSkipScanSavedPut(pParse, eq_saved[j], saved_hit);
+		if ((pTerm->eOperator & (WO_IN | WO_ISNULL)) == 0 &&
+		    sqlExprCanBeNull(pTerm->pExpr->pRight)) {
+			if (nSkip == 0) {
 				sqlVdbeAddOp2(v, OP_IsNull, regBase + j,
-						  pLevel->addrBrk);
+					      pLevel->addrBrk);
+			} else {
+				/* A NULL-row must not resume old IN loops. */
+				int not_null = sqlVdbeAddOp2(v, OP_NotNull,
+							     regBase + j, 0);
+				sqlVdbeAddOp2(v, OP_Bool, false,
+					      pLevel->regSkip);
+				sqlVdbeGoto(v, pLevel->addrBrk);
+				sqlVdbeJumpHere(v, not_null);
 			}
 		}
 	}
+	sql_xfree(eq_saved);
+	if (nSkip != 0 && skip_before < 0) {
+		for (int i = 0; i < 2; ++i) {
+			if (range_values[i] > 0)
+				range_saved[i] = codeSkipScanSavedOpen(pParse);
+		}
+	}
 	return regBase;
+}
+
+/** Capture the skipped fields after a successful group search. */
+static void
+codeSkipScanCapture(Parse *parse, WhereLevel *level, int reg_base)
+{
+	WhereLoop *loop = level->pWLoop;
+	int end = whereLoopSkipEnd(loop);
+	for (int j = whereLoopSkipStart(loop); j < end; ++j) {
+		uint32_t fieldno = loop->index_def->key_def->parts[j].fieldno;
+		sqlVdbeAddOp3(parse->pVdbe, OP_Column, level->iIdxCur, fieldno,
+			      reg_base + j);
+	}
+}
+
+/** Start a pass without touching the index until its initial key is ready. */
+static void
+codeSkipScanStart(Parse *parse, WhereLevel *level, int reverse, int reg_base)
+{
+	WhereLoop *loop = level->pWLoop;
+	Vdbe *v = parse->pVdbe;
+	int start = whereLoopSkipStart(loop);
+	int end = whereLoopSkipEnd(loop);
+	level->u.in.nInBeforeSkip = level->u.in.nIn;
+	level->regSkipGroup = ++parse->nMem;
+	sqlVdbeAddOp2(v, OP_Null, 0, level->regSkipGroup);
+	sqlVdbeAddOp2(v, OP_Bool, true, level->regSkip);
+	/* Unsearched skipped fields must not contribute type errors. */
+	sqlVdbeAddOp3(v, OP_Null, 0, reg_base + start, reg_base + end - 1);
+	int first = sqlVdbeAddOp0(v, OP_Goto);
+	level->addrSkip = sqlVdbeAddOp2(v, OP_If, level->regSkipGroup, 0);
+	sqlVdbeGoto(v, level->addrSkipEnd);
+	sqlVdbeJumpHere(v, level->addrSkip);
+	sqlVdbeAddOp4Int(v, reverse ? OP_SeekLT : OP_SeekGT, level->iIdxCur,
+			 level->addrSkipEnd, reg_base, end);
+	if (start != 0) {
+		sqlVdbeAddOp4Int(v, reverse ? OP_IdxLT : OP_IdxGT,
+				 level->iIdxCur, level->addrSkipEnd, reg_base,
+				 start);
+	}
+	codeSkipScanCapture(parse, level, reg_base);
+	sqlVdbeJumpHere(v, first);
+	if (level->u.in.nIn == 0)
+		level->addrNxt = sqlVdbeMakeLabel(v);
+}
+
+/** Find the first group only after all reached initial-key checks succeed. */
+static void
+codeSkipScanFirst(Parse *parse, WhereLevel *level, int reverse, int reg_base,
+		  int addr_next)
+{
+	Vdbe *v = parse->pVdbe;
+	int ready = sqlVdbeAddOp2(v, OP_If, level->regSkipGroup, 0);
+	/* An empty prefix still lets later IN combinations be checked. */
+	sqlVdbeAddOp2(v, OP_NotNull, level->regSkipGroup, addr_next);
+	sqlVdbeAddOp2(v, OP_Bool, false, level->regSkipGroup);
+	int start = whereLoopSkipStart(level->pWLoop);
+	if (start == 0) {
+		sqlVdbeAddOp2(v, reverse ? OP_Last : OP_Rewind, level->iIdxCur,
+			      addr_next);
+	} else {
+		int key = sqlGetTempRange(parse, start);
+		sqlVdbeAddOp3(v, OP_Copy, reg_base, key, start - 1);
+		sqlVdbeAddOp4Int(v, reverse ? OP_SeekLE : OP_SeekGE,
+				 level->iIdxCur, addr_next, key, start);
+		sqlReleaseTempRange(parse, key, start);
+		sqlVdbeAddOp4Int(v, reverse ? OP_IdxLT : OP_IdxGT,
+				 level->iIdxCur, addr_next, reg_base, start);
+	}
+	codeSkipScanCapture(parse, level, reg_base);
+	sqlVdbeAddOp2(v, OP_Bool, true, level->regSkipGroup);
+	sqlVdbeJumpHere(v, ready);
+}
+
+/** Validate the reached key before any skip-scan movement or conversion. */
+static void
+codeSeek(Parse *parse, WhereLevel *level, int op, int addr_next,
+	 int addr_inexact, int reg_base, int n_eq, int n_key)
+{
+	Vdbe *v = parse->pVdbe;
+	int key = reg_base;
+	if (level->pWLoop->nSkip != 0) {
+		sqlVdbeAddOp4Int(v, OP_IfNotExact, level->iIdxCur, addr_inexact,
+				 reg_base, n_key);
+		sqlVdbeChangeP5(v, n_eq);
+		bool reverse = op == OP_SeekLE || op == OP_SeekLT;
+		codeSkipScanFirst(parse, level, reverse, reg_base,
+				  addr_inexact);
+		key = sqlGetTempRange(parse, n_key);
+		sqlVdbeAddOp3(v, OP_Copy, reg_base, key, n_key - 1);
+	}
+	sqlVdbeAddOp4Int(v, op, level->iIdxCur, addr_next, key, n_key);
+	if (key != reg_base)
+		sqlReleaseTempRange(parse, key, n_key);
 }
 
 /*
@@ -737,6 +942,58 @@ codeExprOrVector(Parse * pParse, Expr * p, int iReg, int nReg)
 		assert(nReg == 1);
 		sqlExprCode(pParse, p, iReg);
 	}
+}
+
+/**
+ * Emit a seek for a vector bound that may contain NULL.
+ *
+ * For example, with PRIMARY KEY(a,b), this query must return rows with a < 2:
+ *     SELECT * FROM t WHERE (a,b) < (2,NULL) ORDER BY a,b;
+ * Checking the full key (2,NULL) fails because b cannot contain NULL.
+ *
+ * If a key part contains a NULL forbidden by the index, use the prefix before
+ * it. Keep the original SQL comparison to filter the rows.
+ */
+static void
+codeRangeKey(Parse *parse, WhereLevel *level,
+	     const struct key_def *key_def, int op,
+	     int addr_next, int addr_inexact, int reg_base, int n_eq,
+	     int n_key)
+{
+	Vdbe *v = parse->pVdbe;
+	assert(op == OP_SeekGE || op == OP_SeekLE);
+	assert(n_key > n_eq + 1);
+	int addr_done = 0;
+	/*
+	 * Exclude the equal prefix when shortening a seek: even (a,b) <=
+	 * (2,NULL) cannot be true for a = 2, since b is compared with NULL.
+	 */
+	int seek_op = op == OP_SeekGE ? OP_SeekGT : OP_SeekLT;
+	/* Keep equality terms; the caller handles a NULL first range part. */
+	for (int i = n_eq + 1; i < n_key; ++i) {
+		/* The index already accepts NULL in these parts. */
+		if (key_part_is_nullable(&key_def->parts[i]))
+			continue;
+		if (addr_done == 0)
+			addr_done = sqlVdbeMakeLabel(v);
+		/*
+		 * If this value is not NULL, skip the code for a shortened key.
+		 * Otherwise, use only the values before it:
+		 * (2,NULL,5) becomes (2).
+		 */
+		int addr_not_null =
+			sqlVdbeAddOp2(v, OP_NotNull, reg_base + i, 0);
+		codeSeek(parse, level, seek_op, addr_next, addr_inexact,
+			 reg_base, n_eq, i);
+		/* Stop at the first forbidden NULL. */
+		sqlVdbeGoto(v, addr_done);
+		sqlVdbeJumpHere(v, addr_not_null);
+	}
+	/* No forbidden NULL was found, so use the full key. */
+	codeSeek(parse, level, op, addr_next, addr_inexact, reg_base, n_eq,
+		 n_key);
+	if (addr_done != 0)
+		sqlVdbeResolveLabel(v, addr_done);
 }
 
 /*
@@ -867,6 +1124,7 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		u16 nEq = pLoop->nEq;	/* Number of == or IN terms */
 		u16 nBtm = pLoop->nBtm;	/* Length of BTM vector */
 		u16 nTop = pLoop->nTop;	/* Length of TOP vector */
+		u16 nSkipEnd = whereLoopSkipEnd(pLoop);
 		int regBase;	/* Base register holding constraint values */
 		WhereTerm *pRangeStart = 0;	/* Inequality constraint at range start */
 		WhereTerm *pRangeEnd = 0;	/* Inequality constraint at range end */
@@ -876,6 +1134,9 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		int nConstraint;	/* Number of constraint terms */
 		int iIdxCur;	/* The VDBE cursor for the index */
 		int nExtraReg = 0;	/* Number of extra registers needed */
+		int regRangeStart = 0;	/* Saved range-start value */
+		int regRangeEnd = 0;	/* Saved range-end value */
+		int range_saved[2] = {0, 0};	/* Flags of saved bounds */
 		int op;		/* Instruction opcode */
 		u8 bSeekPastNull = 0;	/* True to seek past initial nulls */
 		u8 bStopAtNull = 0;	/* Add condition to terminate at NULLs */
@@ -886,7 +1147,7 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		assert(space != NULL);
 		assert(space->def->field_count != 0);
 		iIdxCur = pLevel->iIdxCur;
-		assert(nEq >= pLoop->nSkip);
+		assert(nEq >= nSkipEnd);
 
 		/* If this loop satisfies a sort order (pOrderBy) request that
 		 * was passed to this function to implement a "SELECT min(x) ..."
@@ -901,7 +1162,8 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		       || (pWInfo->wctrlFlags & WHERE_ORDERBY_MIN) == 0);
 		uint32_t part_count = idx_def->key_def->part_count;
 		if ((pWInfo->wctrlFlags & WHERE_ORDERBY_MIN) != 0 &&
-		    pWInfo->nOBSat > 0 && part_count > nEq) {
+		    pWInfo->nOBSat > 0 && part_count > nEq &&
+		    pLoop->nSkip == 0) {
 			j = idx_def->key_def->parts[nEq].fieldno;
 			/* Allow seek for column with `NOT NULL` == false attribute.
 			 * If a column may contain NULL-s, the comparator installed
@@ -914,7 +1176,6 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			 *      NULL, ... NULL, min_value, ...
 			 */
 			if (space->def->fields[j].is_nullable) {
-				assert(pLoop->nSkip == 0);
 				bSeekPastNull = 1;
 				nExtraReg = 1;
 			}
@@ -955,13 +1216,39 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			SWAP(nBtm, nTop);
 		}
 
+		/* Save each bound once per pass, when it is first reached. */
+		int range_values[2] = {0, 0};
+		if (pLoop->nSkip != 0 && pRangeStart != NULL &&
+		    !skipScanSimpleValue(pRangeStart->pExpr->pRight,
+					 pLevel->iTabCur)) {
+			regRangeStart = pParse->nMem + 1;
+			pParse->nMem += nBtm;
+			range_values[0] = nBtm;
+		}
+		if (pLoop->nSkip != 0 && pRangeEnd != NULL &&
+		    !skipScanSimpleValue(pRangeEnd->pExpr->pRight,
+					 pLevel->iTabCur)) {
+			regRangeEnd = pParse->nMem + 1;
+			pParse->nMem += nTop;
+			range_values[1] = nTop;
+		}
+
 		/* Generate code to evaluate all constraint terms using == or IN
 		 * and store the values of those terms in an array of registers
 		 * starting at regBase.
 		 */
-		regBase =
-		    codeAllEqualityTerms(pParse, pLevel, bRev, nExtraReg);
+		regBase = codeAllEqualityTerms(pParse, pLevel, bRev, nExtraReg,
+					       range_saved, range_values);
+		if (pLoop->nSkip != 0 && pLevel->addrSkip == 0)
+			codeSkipScanStart(pParse, pLevel, bRev, regBase);
 		addrNxt = pLevel->addrNxt;
+		bool inner_in = pLoop->nSkip != 0 &&
+			pLevel->u.in.nIn > pLevel->u.in.nInBeforeSkip;
+		int addrRangeNull = pLoop->nSkip != 0 && !inner_in ?
+			pLevel->addrSkipEnd : addrNxt;
+		/* A bound is the same for the whole pass, so is its NULL. */
+		int addrBoundNull = pLoop->nSkip != 0 ? pLevel->addrSkipEnd :
+			addrNxt;
 
 		startEq = !pRangeStart
 		    || pRangeStart->eOperator & (WO_LE | WO_GE);
@@ -972,12 +1259,23 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		nConstraint = nEq;
 		if (pRangeStart) {
 			Expr *pRight = pRangeStart->pExpr->pRight;
-			codeExprOrVector(pParse, pRight, regBase + nEq, nBtm);
+			if (regRangeStart != 0) {
+				int flag = range_saved[0];
+				int hit = codeSkipScanSavedGet(pParse, flag);
+				codeExprOrVector(pParse, pRight, regRangeStart,
+						 nBtm);
+				codeSkipScanSavedPut(pParse, flag, hit);
+				sqlVdbeAddOp3(v, OP_Copy, regRangeStart,
+					      regBase + nEq, nBtm - 1);
+			} else {
+				codeExprOrVector(pParse, pRight, regBase + nEq,
+						 nBtm);
+			}
 
 			if ((pRangeStart->wtFlags & TERM_VNULL) == 0
 			    && sqlExprCanBeNull(pRight)) {
 				sqlVdbeAddOp2(v, OP_IsNull, regBase + nEq,
-						  addrNxt);
+					      addrBoundNull);
 			}
 
 			nConstraint += nBtm;
@@ -993,17 +1291,32 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			startEq = 0;
 			start_constraints = 1;
 		}
-		if (pLoop->nSkip > 0 && nConstraint == pLoop->nSkip) {
-			/* The skip-scan logic inside the call to codeAllEqualityConstraints()
-			 * above has already left the cursor sitting on the correct row,
-			 * so no further seeking is needed
-			 */
+		if (pLoop->nSkip > 0 && nConstraint == nSkipEnd) {
+			sqlVdbeAddOp4Int(v, OP_IfNotExact, iIdxCur,
+					 addrRangeNull, regBase, nEq);
+			sqlVdbeChangeP5(v, nEq);
+			codeSkipScanFirst(pParse, pLevel, bRev, regBase,
+					  addrRangeNull);
 		} else {
 			op = aStartOp[(start_constraints << 2) +
 				      (startEq << 1) + bRev];
 			assert(op != 0);
-			sqlVdbeAddOp4Int(v, op, iIdxCur, addrNxt, regBase,
-					     nConstraint);
+			int seek_end = inner_in ? pLevel->addrSkipEnd : addrNxt;
+			if (pRangeStart != NULL && nBtm > 1) {
+				codeRangeKey(pParse, pLevel, idx_def->key_def,
+					     op, seek_end, addrRangeNull,
+					     regBase, nEq, nConstraint);
+			} else {
+				codeSeek(pParse, pLevel, op, seek_end,
+					 addrRangeNull, regBase, nEq,
+					 nConstraint);
+			}
+		}
+		if (pLoop->nSkip > 0 && pRangeEnd != NULL) {
+			/* The next group has not reached this bound yet. */
+			sqlVdbeAddOp4Int(v, bRev ? OP_IdxLT : OP_IdxGT, iIdxCur,
+					 inner_in ? pLevel->addrSkip : addrNxt,
+					 regBase, nSkipEnd);
 		}
 
 		/* Load the value for the inequality constraint at the end of the
@@ -1013,11 +1326,22 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 		if (pRangeEnd) {
 			Expr *pRight = pRangeEnd->pExpr->pRight;
 			sqlExprCacheRemove(pParse, regBase + nEq, 1);
-			codeExprOrVector(pParse, pRight, regBase + nEq, nTop);
+			if (regRangeEnd != 0) {
+				int flag = range_saved[1];
+				int hit = codeSkipScanSavedGet(pParse, flag);
+				codeExprOrVector(pParse, pRight, regRangeEnd,
+						 nTop);
+				codeSkipScanSavedPut(pParse, flag, hit);
+				sqlVdbeAddOp3(v, OP_Copy, regRangeEnd,
+					      regBase + nEq, nTop - 1);
+			} else {
+				codeExprOrVector(pParse, pRight, regBase + nEq,
+						 nTop);
+			}
 			if ((pRangeEnd->wtFlags & TERM_VNULL) == 0
 			    && sqlExprCanBeNull(pRight)) {
 				sqlVdbeAddOp2(v, OP_IsNull, regBase + nEq,
-						  addrNxt);
+					      addrBoundNull);
 			}
 			nConstraint += nTop;
 
@@ -1031,6 +1355,19 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			sqlVdbeAddOp2(v, OP_Null, 0, regBase + nEq);
 			endEq = 0;
 			nConstraint++;
+		}
+
+		/*
+		 * If the seek has left the group, no later IN value can match
+		 * in it, so go to the next group. Only a seek can leave the
+		 * group: a row reached by Next fails the end check below first
+		 * and comes back here through the next IN value's seek. So keep
+		 * this before the loop top, out of the per-row path.
+		 */
+		if (inner_in) {
+			sqlVdbeAddOp4Int(v, bRev ? OP_IdxLT : OP_IdxGT,
+					 iIdxCur, pLevel->addrSkip, regBase,
+					 nSkipEnd);
 		}
 
 		/* Top of the loop body */

@@ -2376,6 +2376,15 @@ sqlInRhsIsConstant(Expr * pIn)
 	return res;
 }
 
+bool
+sql_in_rhs_is_invariant(struct Expr *in)
+{
+	/* The same conditions as for OP_Once in sqlCodeSubselect(). */
+	if (ExprHasProperty(in, EP_xIsSelect))
+		return !ExprHasProperty(in, EP_VarSelect);
+	return sqlInRhsIsConstant(in);
+}
+
 /*
  * This function is used by the implementation of the IN (...) operator.
  * The pX parameter is the expression on the RHS of the IN operator, which

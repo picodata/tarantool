@@ -45,6 +45,7 @@
 #include "box/tuple.h"
 #include "box/port.h"
 #include "clock.h"
+#include "errinj.h"
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
@@ -2512,6 +2513,43 @@ case OP_Fetch: {
 	if (vdbe_field_ref_fetch(ref, pOp->p2, res) != 0)
 		goto abort_due_to_error;
 	REGISTER_TRACE(p, pOp->p3, res);
+	break;
+}
+
+/* Opcode: IfNotExact P1 P2 P3 P4 P5
+ * Synopsis: if inexact(r[P3@P4]) goto P2
+ *
+ * Check the P4 reached key parts starting at P3 against cursor P1, including
+ * range parts. Jump to P2 if conversion of the first P5 equality parts loses
+ * precision, after checking every reached part for type errors as Seek does.
+ * The caller has already checked the initial bound for NULL and shortened
+ * vector bounds when needed. Leave the registers and cursor
+ * untouched: an impossible IN value must not advance past the next target.
+ * Lossy range conversions are permitted and remain the Seek's responsibility.
+ */
+case OP_IfNotExact: { /* jump, in3 */
+	struct VdbeCursor *cur = p->apCsr[pOp->p1];
+	assert(pOp->p4type == P4_INT32);
+	assert((uint32_t)pOp->p4.i <= cur->key_def->part_count);
+	assert(pOp->p5 <= pOp->p4.i);
+	bool inexact = false;
+	for (int i = 0; i < pOp->p4.i; ++i) {
+		struct Mem *value = &aMem[pOp->p3 + i];
+		enum field_type type = cur->key_def->parts[i].type;
+		if (mem_is_field_compatible(value, type))
+			continue;
+		if (!sql_type_is_numeric(type) || !mem_is_num(value)) {
+			diag_set(ClientError, ER_SQL_TYPE_MISMATCH,
+				 mem_str(value), field_type_strs[type]);
+			goto abort_due_to_error;
+		}
+		/* Numeric cells own no allocated memory. */
+		struct Mem copy = *value;
+		int cmp = mem_cast_implicit_number(&copy, type);
+		inexact |= i < pOp->p5 && cmp != 0;
+	}
+	if (inexact)
+		goto jump_to_p2;
 	break;
 }
 

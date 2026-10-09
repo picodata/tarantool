@@ -38,6 +38,7 @@
  * indices, you might also think of this module as the "query optimizer".
  */
 #include "coll/coll.h"
+#include "errinj.h"
 #include "sqlInt.h"
 #include "tarantoolInt.h"
 #include "mem.h"
@@ -96,6 +97,22 @@ int
 sqlWhereOrderedInnerLoop(WhereInfo * pWInfo)
 {
 	return pWInfo->bOrderedInnerLoop;
+}
+
+/*
+ * Return the label to jump to when the sorter of an ORDER BY LIMIT
+ * query rejects a row of the ordered inner loop: the rest of that
+ * loop run cannot fit either. A skip-scan is ordered across its
+ * prefixes, so finish it instead of moving to the next prefix.
+ */
+int
+sqlWhereOrderByLimitOptLabel(WhereInfo *pWInfo)
+{
+	assert(pWInfo->bOrderedInnerLoop);
+	WhereLevel *pInner = &pWInfo->a[pWInfo->nLevel - 1];
+	if (pInner->addrSkip != 0)
+		return pInner->addrSkipEnd;
+	return pInner->addrNxt;
 }
 
 /*
@@ -242,6 +259,55 @@ createMask(WhereMaskSet * pMaskSet, int iCursor)
 	pMaskSet->ix[pMaskSet->n++] = iCursor;
 }
 
+/**
+ * Check a term on the scanned column: an allowed operator, a compatible
+ * type and the collation of the scan. A term comparing the column with
+ * itself does not fit.
+ *
+ * @retval 1 The term fits.
+ * @retval 0 The term does not fit.
+ * @retval -1 The collation of the term is invalid.
+ */
+static int
+whereScanFits(struct WhereScan *scan, struct WhereTerm *term)
+{
+	if ((term->eOperator & scan->opMask) == 0)
+		return 0;
+	struct Expr *expr = term->pExpr;
+	/* Verify the type and collating sequence match */
+	if ((term->eOperator & WO_ISNULL) == 0) {
+		enum field_type expr_type = expr_cmp_mutual_type(expr);
+		if (expr_type == field_type_MAX)
+			return 0;
+		if (scan->idx_type == field_type_MAX)
+			scan->idx_type = expr_type;
+		if (field_type1_lookup_compatible_with_type2(
+				expr_type, scan->idx_type) == 0)
+			return 0;
+	}
+	if ((term->eOperator & WO_ISNULL) == 0 && scan->is_column_seen) {
+		assert(expr->pLeft != NULL);
+		uint32_t id;
+		if ((term->eOperator & WO_IN) != 0) {
+			/* IN's RHS is not in pRight. */
+			id = term->in_coll_id;
+		} else if (sql_binary_compare_coll_seq(
+				scan->pOrigWC->pWInfo->pParse, expr->pLeft,
+				expr->pRight, &id) != 0) {
+			return -1;
+		}
+		struct coll *coll = id != COLL_NONE ?
+				    coll_by_id(id)->coll : NULL;
+		if (coll != scan->coll)
+			return 0;
+	}
+	struct Expr *right = expr->pRight;
+	return (term->eOperator & WO_EQ) == 0 ||
+	       right->op != TK_COLUMN_REF ||
+	       right->iTable != scan->aiCur[0] ||
+	       right->iColumn != scan->aiColumn[0];
+}
+
 /*
  * Advance to the next WhereTerm that matches according to the criteria
  * established when the pScan object was initialized by whereScanInit().
@@ -294,41 +360,10 @@ whereScanNext(WhereScan * pScan)
 							pScan->nEquiv++;
 						}
 					}
-					if ((pTerm->eOperator & pScan->
-					     opMask) != 0) {
-						/* Verify the type and collating sequence match */
-						if ((pTerm->eOperator & WO_ISNULL) == 0) {
-							pX = pTerm->pExpr;
-							enum field_type expr_type = expr_cmp_mutual_type(pX);
-							if (expr_type == field_type_MAX)
-								continue;
-							if (pScan->idx_type == field_type_MAX)
-								pScan->idx_type = expr_type;
-							if (field_type1_lookup_compatible_with_type2(expr_type, pScan->idx_type) == 0)
-								continue;
-							if (pScan->is_column_seen) {
-								Parse *pParse =
-									pWC->pWInfo->pParse;
-								assert(pX->pLeft);
-								uint32_t id;
-								if (sql_binary_compare_coll_seq(
-									pParse, pX->pLeft,
-									pX->pRight, &id) != 0)
-									break;
-								struct coll *coll =
-									id != COLL_NONE ?
-									coll_by_id(id)->coll :
-									NULL;
-								if (coll != pScan->coll)
-									continue;
-							}
-						}
-						if ((pTerm->eOperator & WO_EQ) != 0
-						    && (pX = pTerm->pExpr->pRight)->op == TK_COLUMN_REF
-						    && pX->iTable == pScan->aiCur[0]
-						    && pX->iColumn == pScan->aiColumn[0]) {
-							continue;
-						}
+					int fits = whereScanFits(pScan, pTerm);
+					if (fits < 0)
+						break;
+					if (fits > 0) {
 						pScan->pWC = pWC;
 						pScan->k = k + 1;
 						return pTerm;
@@ -1183,117 +1218,6 @@ whereRangeAdjust(WhereTerm * pTerm, LogEst nNew)
 }
 
 /*
- * This function is called to estimate the number of rows visited by a
- * range-scan on a skip-scan index. For example:
- *
- *   CREATE INDEX i1 ON t1(a, b, c);
- *   SELECT * FROM t1 WHERE a=? AND c BETWEEN ? AND ?;
- *
- * Value pLoop->nOut is currently set to the estimated number of rows
- * visited for scanning (a=? AND b=?). This function reduces that estimate
- * by some factor to account for the (c BETWEEN ? AND ?) expression based
- * on the stat4 data for the index. this scan will be peformed multiple
- * times (once for each (a,b) combination that matches a=?) is dealt with
- * by the caller.
- *
- * It does this by scanning through all stat4 samples, comparing values
- * extracted from pLower and pUpper with the corresponding column in each
- * sample. If L and U are the number of samples found to be less than or
- * equal to the values extracted from pLower and pUpper respectively, and
- * N is the total number of samples, the pLoop->nOut value is adjusted
- * as follows:
- *
- *   nOut = nOut * ( min(U - L, 1) / N )
- *
- * If pLower is NULL, or a value cannot be extracted from the term, L is
- * set to zero. If pUpper is NULL, or a value cannot be extracted from it,
- * U is set to N.
- *
- * Normally, this function sets *pbDone to 1 before returning. However,
- * if no value can be extracted from either pLower or pUpper (and so the
- * estimate of the number of rows delivered remains unchanged), *pbDone
- * is left as is.
- *
- * If an error occurs, an sql error code is returned. Otherwise,
- * 0.
- */
-static int
-whereRangeSkipScanEst(Parse * pParse,		/* Parsing & code generating context */
-		      WhereTerm * pLower,	/* Lower bound on the range. ex: "x>123" Might be NULL */
-		      WhereTerm * pUpper,	/* Upper bound on the range. ex: "x<455" Might be NULL */
-		      WhereLoop * pLoop,	/* Update the .nOut value of this loop */
-		      int *pbDone)		/* Set to true if at least one expr. value extracted */
-{
-	struct index_def *p = pLoop->index_def;
-	struct space *space = space_by_id(p->space_id);
-	assert(space != NULL);
-	struct index *index = space_index(space, p->iid);
-	assert(index != NULL && index->def->opts.stat != NULL);
-	int nEq = pLoop->nEq;
-	int nLower = -1;
-	int nUpper = index->def->opts.stat->sample_count + 1;
-	int rc = 0;
-	enum field_type type = p->key_def->parts[nEq].type;
-
-	sql_value *p1 = 0;	/* Value extracted from pLower */
-	sql_value *p2 = 0;	/* Value extracted from pUpper */
-	sql_value *pVal = 0;	/* Value extracted from record */
-
-	struct coll *coll = p->key_def->parts[nEq].coll;
-	if (pLower) {
-		rc = sqlStat4ValueFromExpr(pParse, pLower->pExpr->pRight,
-					       type, &p1);
-		nLower = 0;
-	}
-	if (pUpper != NULL && rc == 0) {
-		rc = sqlStat4ValueFromExpr(pParse, pUpper->pExpr->pRight,
-					       type, &p2);
-		nUpper = p2 ? 0 : index->def->opts.stat->sample_count;
-	}
-
-	if (p1 || p2) {
-		int i;
-		int nDiff;
-		uint32_t sample_count = index->def->opts.stat->sample_count;
-		for (i = 0; i < (int)sample_count; i++) {
-			if (p1 != NULL && mem_cmp_scalar(p1, pVal, coll) >= 0)
-				nLower++;
-			if (p2 != NULL && mem_cmp_scalar(p2, pVal, coll) >= 0)
-				nUpper++;
-		}
-		nDiff = (nUpper - nLower);
-		if (nDiff <= 0)
-			nDiff = 1;
-
-		/* If there is both an upper and lower bound specified, and the
-		 * comparisons indicate that they are close together, use the fallback
-		 * method (assume that the scan visits 1/64 of the rows) for estimating
-		 * the number of rows visited. Otherwise, estimate the number of rows
-		 * using the method described in the header comment for this function.
-		 */
-		if (nDiff != 1 || pUpper == 0 || pLower == 0) {
-			int nAdjust =
-			    (sqlLogEst(sample_count) -
-			     sqlLogEst(nDiff));
-			pLoop->nOut -= nAdjust;
-			*pbDone = 1;
-			WHERETRACE(0x10,
-				   ("range skip-scan regions: %u..%u  adjust=%d est=%d\n",
-				    nLower, nUpper, nAdjust * -1, pLoop->nOut));
-		}
-
-	} else {
-		assert(*pbDone == 0);
-	}
-
-	sqlValueFree(p1);
-	sqlValueFree(p2);
-	sqlValueFree(pVal);
-
-	return rc;
-}
-
-/*
  * This function is used to estimate the number of rows that will be visited
  * by scanning an index for a range of values. The range may have an upper
  * bound, a lower bound, or both. The WHERE clause terms that set the upper
@@ -1359,6 +1283,10 @@ whereRangeScanEst(Parse * pParse,	/* Parsing & code generating context */
 	if (stat == NULL)
 		stat = &surrogate_stat;
 	if (stat->sample_count > 0 && nEq < (int) stat->sample_field_count) {
+		/*
+		 * STAT4 range bounds require a fully known equality prefix.
+		 * For a skip-scan, use the estimate without samples below.
+		 */
 		if (nEq == pBuilder->nRecValid) {
 			UnpackedRecord *pRec = pBuilder->pRec;
 			tRowcnt a[2];
@@ -1492,12 +1420,6 @@ whereRangeScanEst(Parse * pParse,	/* Parsing & code generating context */
 					   ("STAT4 range scan: %u..%u  est=%d\n",
 					    (u32) iLower, (u32) iUpper, nOut));
 			}
-		} else {
-			int bDone = 0;
-			rc = whereRangeSkipScanEst(pParse, pLower, pUpper,
-						   pLoop, &bDone);
-			if (bDone)
-				return rc;
 		}
 	}
 	assert(pUpper == 0 || (pUpper->wtFlags & TERM_VNULL) == 0);
@@ -1711,8 +1633,8 @@ whereLoopPrint(WhereLoop * p, WhereClause * pWC)
 		sqlDebugPrintf("%20s", "");
 	}
 	if (p->wsFlags & WHERE_SKIPSCAN) {
-		sqlDebugPrintf(" f %05x %d-%d", p->wsFlags, p->nLTerm,
-				   p->nSkip);
+		sqlDebugPrintf(" f %05x %d-%d@%d", p->wsFlags, p->nLTerm,
+			       p->nSkip, whereLoopSkipStart(p));
 	} else {
 		sqlDebugPrintf(" f %05x N %d", p->wsFlags, p->nLTerm);
 	}
@@ -1737,6 +1659,8 @@ whereLoopInit(WhereLoop * p)
 	p->nLTerm = 0;
 	p->nLSlot = ArraySize(p->aLTermSpace);
 	p->wsFlags = 0;
+	p->nSkip = 0;
+	p->nSkipStart = 0;
 	p->index_def = NULL;
 }
 
@@ -1827,14 +1751,67 @@ whereInfoFree(struct WhereInfo *pWInfo)
 	}
 }
 
+int
+whereLoopInnerInStart(const struct WhereLoop *loop)
+{
+	if (loop->nSkip == 0)
+		return -1;
+	int first = -1;
+	for (int i = 0; i < loop->nEq; ++i) {
+		const struct WhereTerm *term = loop->aLTerm[i];
+		if (term == NULL || (term->eOperator & WO_IN) == 0)
+			continue;
+		bool suffix = i >= whereLoopSkipEnd(loop);
+		if (sqlExprIsVector(term->pExpr->pLeft) ||
+		    (suffix && (!sql_in_rhs_is_invariant(term->pExpr) ||
+				term->in_coll_id !=
+				loop->index_def->key_def->parts[i].coll_id)))
+			return -1;
+		if (suffix && first < 0)
+			first = i;
+	}
+	return first;
+}
+
+/**
+ * Whether Y adds external IN iterations beyond the work done by X.
+ * Each extra component of an external vector IN may distinguish pairs
+ * that X projects to the same value. A shared prefix component alone
+ * therefore does not make the entire vector loop shared.
+ */
+static bool
+whereLoopHasExtraOuterIn(const struct WhereLoop *x, const struct WhereLoop *y)
+{
+	if (y->nSkip == 0)
+		return false;
+	int x_inner = whereLoopInnerInStart(x);
+	int y_inner = whereLoopInnerInStart(y);
+	for (int i = 0; i < y->nEq; ++i) {
+		const struct WhereTerm *term = y->aLTerm[i];
+		if (term == NULL || (term->eOperator & WO_IN) == 0 ||
+		    (y_inner >= 0 && i >= y_inner))
+			continue;
+		int j;
+		for (j = 0; j < x->nEq; ++j) {
+			if (x->aLTerm[j] == term)
+				break;
+		}
+		if (j == x->nEq || (x_inner >= 0 && j >= x_inner))
+			return true;
+	}
+	return false;
+}
+
 /*
  * Return TRUE if all of the following are true:
  *
  *   (1)  X has the same or lower cost that Y
  *   (2)  X uses fewer WHERE clause terms than Y
  *   (3)  Every WHERE clause term used by X is also used by Y
- *   (4)  X skips at least as many columns as Y
+ *   (4)  X skips at least as many columns as Y, unless X skips none
+ *        and Y skips only after a fixed prefix
  *   (5)  If X is a covering index, than Y is too
+ *   (6)  Y adds no external IN iterations beyond the work done by X
  *
  * Conditions (2) and (3) mean that X is a "proper subset" of Y.
  *
@@ -1842,7 +1819,11 @@ whereInfoFree(struct WhereInfo *pWInfo)
  * to have a lower cost.  This routine returns TRUE when that cost
  * relationship is inverted and needs to be adjusted.  Constraint (4)
  * was added because if X uses skip-scan less than Y it still might
- * deserve a lower cost even if it is a proper subset of Y.
+ * deserve a lower cost even if it is a proper subset of Y. A skip after
+ * a fixed prefix reads no more rows than the search on the prefix alone,
+ * but additional external IN loops repeat its prefix visits. Their cost
+ * has already been charged by whereLoopAddBtreeIndex(); do not erase
+ * it through either rRun or nOut, and do not charge for it twice.
  */
 static int
 whereLoopCheaperProperSubset(const WhereLoop * pX,	/* First WhereLoop to compare */
@@ -1852,7 +1833,13 @@ whereLoopCheaperProperSubset(const WhereLoop * pX,	/* First WhereLoop to compare
 	if (pX->nLTerm - pX->nSkip >= pY->nLTerm - pY->nSkip) {
 		return 0;	/* X is not a subset of Y */
 	}
-	if (pY->nSkip > pX->nSkip)
+	if (pY->nSkip > pX->nSkip &&
+	    (pX->nSkip != 0 || whereLoopSkipStart(pY) == 0))
+		return 0;
+	if (pX->nSkip != 0 && pY->nSkip != 0 &&
+	    whereLoopSkipStart(pX) != whereLoopSkipStart(pY))
+		return 0;
+	if (whereLoopHasExtraOuterIn(pX, pY))
 		return 0;
 	if (pX->rRun >= pY->rRun) {
 		if (pX->rRun > pY->rRun)
@@ -1892,7 +1879,7 @@ whereLoopCheaperProperSubset(const WhereLoop * pX,	/* First WhereLoop to compare
  * WHERE clause terms than Y and that every WHERE clause term used by X is
  * also used by Y.
  */
-static void
+void
 whereLoopAdjustCost(const WhereLoop * p, WhereLoop * pTemplate)
 {
 	if ((pTemplate->wsFlags & WHERE_INDEXED) == 0)
@@ -1926,6 +1913,13 @@ whereLoopAdjustCost(const WhereLoop * p, WhereLoop * pTemplate)
 	}
 }
 
+/** Whether a loop uses index bounds, possibly as part of an OR search. */
+static bool
+where_loop_is_search(const struct WhereLoop *loop)
+{
+	return (loop->wsFlags & (WHERE_CONSTRAINT | WHERE_MULTI_OR)) != 0;
+}
+
 /*
  * Search the list of WhereLoops in *ppPrev looking for one that can be
  * supplanted by pTemplate.
@@ -1938,9 +1932,14 @@ whereLoopAdjustCost(const WhereLoop * p, WhereLoop * pTemplate)
  *
  * If pTemplate cannot supplant any existing element of the list but needs
  * to be added to the list, then return a pointer to the tail of the list.
+ *
+ * keep_scan_fallback is true for INDEXED BY. Keep search and full-scan
+ * candidates separately: a search bound may depend on a table that has
+ * not been read yet in the chosen join order.
  */
-static WhereLoop **
-whereLoopFindLesser(WhereLoop ** ppPrev, const WhereLoop * pTemplate)
+WhereLoop **
+whereLoopFindLesser(WhereLoop **ppPrev, const WhereLoop *pTemplate,
+		    bool keep_scan_fallback)
 {
 	WhereLoop *p;
 	for (p = (*ppPrev); p; ppPrev = &p->pNextLoop, p = *ppPrev) {
@@ -1952,6 +1951,14 @@ whereLoopFindLesser(WhereLoop ** ppPrev, const WhereLoop * pTemplate)
 			 */
 			continue;
 		}
+		/*
+		 * INDEXED BY prefers a search whenever its bounds are
+		 * available. Keep a scan as a fallback for join orders
+		 * where they are not.
+		 */
+		if (keep_scan_fallback &&
+		    where_loop_is_search(p) != where_loop_is_search(pTemplate))
+			continue;
 		/* In the current implementation, the rSetup value is either zero
 		 * or the cost of building an automatic index (NlogN) and the NlogN
 		 * is the same for compatible WhereLoops.
@@ -2036,6 +2043,20 @@ whereLoopInsert(WhereLoopBuilder * pBuilder, WhereLoop * pTemplate)
 	WhereLoop **ppPrev, *p;
 	WhereInfo *pWInfo = pBuilder->pWInfo;
 	int rc;
+	/* Enumerating prefixes alone is a full scan, not a skip-scan search. */
+	if ((pTemplate->wsFlags & WHERE_SKIPSCAN) != 0 &&
+	    pTemplate->nEq == whereLoopSkipEnd(pTemplate) &&
+	    pTemplate->nBtm == 0 && pTemplate->nTop == 0)
+		return 0;
+	/* Exercise complete skip-scan keys that costing may discard. */
+	ERROR_INJECT(ERRINJ_SQL_SKIP_SCAN_FULL_KEY, {
+		const struct index_def *forced =
+			pWInfo->pTabList->a[pTemplate->iTab].pIBIndex;
+		if (forced != NULL &&
+		    (pTemplate->nSkip == 0 ||
+		     pTemplate->nEq != forced->key_def->part_count))
+			return 0;
+	});
 
 	/* If pBuilder->pOrSet is defined, then only keep track of the costs
 	 * and prereqs.
@@ -2063,7 +2084,10 @@ whereLoopInsert(WhereLoopBuilder * pBuilder, WhereLoop * pTemplate)
 	/* Look for an existing WhereLoop to replace with pTemplate
 	 */
 	whereLoopAdjustCost(pWInfo->pLoops, pTemplate);
-	ppPrev = whereLoopFindLesser(&pWInfo->pLoops, pTemplate);
+	bool keep_scan_fallback =
+		pWInfo->pTabList->a[pTemplate->iTab].pIBIndex != NULL;
+	ppPrev = whereLoopFindLesser(&pWInfo->pLoops, pTemplate,
+				     keep_scan_fallback);
 
 	if (ppPrev == 0) {
 		/* There already exists a WhereLoop on the list that is better
@@ -2108,7 +2132,8 @@ whereLoopInsert(WhereLoopBuilder * pBuilder, WhereLoop * pTemplate)
 		WhereLoop **ppTail = &p->pNextLoop;
 		WhereLoop *pToDel;
 		while (*ppTail) {
-			ppTail = whereLoopFindLesser(ppTail, pTemplate);
+			ppTail = whereLoopFindLesser(ppTail, pTemplate,
+						     keep_scan_fallback);
 			if (ppTail == 0)
 				break;
 			pToDel = *ppTail;
@@ -2282,6 +2307,41 @@ whereRangeVectorLen(Parse * pParse,	/* Parsing context */
 	return i;
 }
 
+/** Return whether an INDEXED BY scan can skip its next index part. */
+static inline bool
+where_loop_can_skip_next_part(const struct SrcItem *src,
+			      const struct index_def *index,
+			      const struct WhereLoop *loop,
+			      bool has_ready_fixed_term)
+{
+	const struct key_def *key_def = index->key_def;
+	if (src->pIBIndex != index || index->type != TREE ||
+	    key_def->has_exclude_null)
+		return false;
+	/* INDEXED BY refuses indexes with JSON paths or functions. */
+	assert(sql_key_def_is_columns(key_def));
+	/*
+	 * Preserve =, IN and IS NULL bounds that add no dependencies on
+	 * other tables. IN fixes one value per iteration. ANY(...) in
+	 * EXPLAIN denotes enumerating distinct values of a skipped part.
+	 * A range bound also prevents skipping the current part.
+	 */
+	if (has_ready_fixed_term ||
+	    (loop->wsFlags & (WHERE_BTM_LIMIT | WHERE_TOP_LIMIT)) != 0)
+		return false;
+	/* Leave a following part for a search bound. */
+	if (loop->nEq + 1U >= key_def->part_count)
+		return false;
+	/* A skipped part is read as a column, so it needs a format field. */
+	if (key_def->parts[loop->nEq].fieldno >= src->space->def->field_count)
+		return false;
+	/*
+	 * A skip block may follow a constrained prefix. Only one contiguous
+	 * block is supported: after using a bound, a second block cannot start.
+	 */
+	return loop->nSkip == 0 || loop->nEq == whereLoopSkipEnd(loop);
+}
+
 /*
  * We have so far matched pBuilder->pNew->nEq terms of the
  * index pIndex. Try to match one more.
@@ -2313,6 +2373,7 @@ whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
 	u16 saved_nBtm;		/* Original value of pNew->nBtm */
 	u16 saved_nTop;		/* Original value of pNew->nTop */
 	u16 saved_nSkip;	/* Original value of pNew->nSkip */
+	u16 saved_nSkipStart;	/* Original value of pNew->nSkipStart */
 	u32 saved_wsFlags;	/* Original value of pNew->wsFlags */
 	LogEst saved_nOut;	/* Original value of pNew->nOut */
 	int rc = 0;	/* Return code */
@@ -2320,6 +2381,7 @@ whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
 	LogEst rLogSize;	/* Logarithm of table size */
 	WhereTerm *pTop = 0, *pBtm = 0;	/* Top and bottom range constraints */
 	uint32_t probe_part_count = probe->key_def->part_count;
+	bool has_ready_fixed_term = false;
 
 	pNew = pBuilder->pNew;
 	WHERETRACE(0x800, ("BEGIN addBtreeIdx(%s), nEq=%d\n",
@@ -2356,6 +2418,7 @@ whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
 	saved_nBtm = pNew->nBtm;
 	saved_nTop = pNew->nTop;
 	saved_nSkip = pNew->nSkip;
+	saved_nSkipStart = pNew->nSkipStart;
 	saved_nLTerm = pNew->nLTerm;
 	saved_wsFlags = pNew->wsFlags;
 	saved_prereq = pNew->prereq;
@@ -2398,11 +2461,21 @@ whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
 		    && (eOp & WO_ISNULL) != 0) {
 			continue;
 		}
+		/*
+		 * Preserve a fixed part when its bound needs no tables beyond
+		 * the current prerequisites (dependencies on other tables).
+		 * Do not replace it with ANY(...).
+		 */
+		if ((eOp & (WO_EQ | WO_IN | WO_ISNULL)) != 0 &&
+		    (pTerm->prereqRight & ~saved_prereq) == 0)
+			has_ready_fixed_term = true;
 
 		pNew->wsFlags = saved_wsFlags;
 		pNew->nEq = saved_nEq;
 		pNew->nBtm = saved_nBtm;
 		pNew->nTop = saved_nTop;
+		pNew->nSkip = saved_nSkip;
+		pNew->nSkipStart = saved_nSkipStart;
 		pNew->nLTerm = saved_nLTerm;
 		whereLoopResize(pNew, pNew->nLTerm + 1);
 		pNew->aLTerm[pNew->nLTerm++] = pTerm;
@@ -2593,6 +2666,17 @@ whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
 		pNew->rRun += nInMul + nIn;
 		pNew->nOut += nInMul + nIn;
 		whereLoopOutputAdjust(pBuilder->pWC, pNew, rSize);
+		ERROR_INJECT(ERRINJ_SQL_SKIP_SCAN_FULL_KEY, {
+			if (pSrc->pIBIndex != NULL && pNew->nSkip != 0 &&
+			    pNew->nEq == probe_part_count) {
+				say_info("skip-scan cost: index=%s run=%d "
+					 "base=%d multiplier=%d inner=%d",
+					 probe->name, pNew->rRun,
+					 pNew->rRun - nInMul - nIn,
+					 nInMul + nIn,
+					 whereLoopInnerInStart(pNew));
+			}
+		});
 		rc = whereLoopInsert(pBuilder, pNew);
 
 		if (pNew->wsFlags & WHERE_COLUMN_RANGE) {
@@ -2614,43 +2698,34 @@ whereLoopAddBtreeIndex(WhereLoopBuilder * pBuilder,	/* The WhereLoop factory */
 	pNew->nBtm = saved_nBtm;
 	pNew->nTop = saved_nTop;
 	pNew->nSkip = saved_nSkip;
+	pNew->nSkipStart = saved_nSkipStart;
 	pNew->wsFlags = saved_wsFlags;
 	pNew->nOut = saved_nOut;
 	pNew->nLTerm = saved_nLTerm;
 
-	/* Consider using a skip-scan if there are no WHERE clause constraints
-	 * available for the left-most terms of the index, and if the average
-	 * number of repeats in the left-most terms is at least 18.
-	 *
-	 * The magic number 18 is selected on the basis that scanning 17 rows
-	 * is almost always quicker than an index seek (even though if the index
-	 * contains fewer than 2^17 rows we assume otherwise in other parts of
-	 * the code). And, even if it is not, it should not be too much slower.
-	 * On the other hand, the extra seeks could end up being significantly
-	 * more expensive.
-	 */
-	assert(42 == sqlLogEst(18));
-	if (saved_nEq == saved_nSkip && saved_nEq + 1U < probe_part_count &&
-	    stat->skip_scan_enabled == true &&
-	    /* TUNING: Minimum for skip-scan */
-	    index_field_tuple_est(probe, saved_nEq + 1) >= 42) {
+	if (where_loop_can_skip_next_part(pSrc, probe, pNew,
+					  has_ready_fixed_term)) {
 		whereLoopResize(pNew, pNew->nLTerm + 1);
-		LogEst nIter;
+		LogEst nIter = 0;
+		if (saved_nSkip == 0) {
+			pNew->nSkipStart = saved_nEq;
+			/*
+			 * Skip-prefix count is unknown. Charge for traversing
+			 * all rows under the already constrained prefix.
+			 */
+			nIter = MAX(saved_nOut, 0);
+			pNew->nOut -= nIter;
+			nIter += 5;
+		}
 		pNew->nEq++;
 		pNew->nSkip++;
 		pNew->aLTerm[pNew->nLTerm++] = 0;
 		pNew->wsFlags |= WHERE_SKIPSCAN;
-		nIter = index_field_tuple_est(probe, saved_nEq) -
-			index_field_tuple_est(probe, saved_nEq + 1);
-		pNew->nOut -= nIter;
-		/* TUNING:  Because uncertainties in the estimates for skip-scan queries,
-		 * add a 1.375 fudge factor to make skip-scan slightly less likely.
-		 */
-		nIter += 5;
 		whereLoopAddBtreeIndex(pBuilder, pSrc, probe, nIter + nInMul);
 		pNew->nOut = saved_nOut;
 		pNew->nEq = saved_nEq;
 		pNew->nSkip = saved_nSkip;
+		pNew->nSkipStart = saved_nSkipStart;
 		pNew->wsFlags = saved_wsFlags;
 	}
 
@@ -2932,6 +3007,7 @@ tnt_error:
 			if (termCanDriveIndex(pTerm, pSrc, 0)) {
 				pNew->nEq = 1;
 				pNew->nSkip = 0;
+				pNew->nSkipStart = 0;
 				pNew->index_def = NULL;
 				pNew->nLTerm = 1;
 				pNew->aLTerm[0] = pTerm;
@@ -2986,6 +3062,7 @@ tnt_error:
 		pNew->nBtm = 0;
 		pNew->nTop = 0;
 		pNew->nSkip = 0;
+		pNew->nSkipStart = 0;
 		pNew->nLTerm = 0;
 		pNew->iSortIdx = 0;
 		pNew->rSetup = 0;
@@ -3142,6 +3219,8 @@ whereLoopAddOr(WhereLoopBuilder * pBuilder, Bitmask mPrereq, Bitmask mUnusable)
 			pNew->nEq = 0;
 			pNew->nBtm = 0;
 			pNew->nTop = 0;
+			pNew->nSkip = 0;
+			pNew->nSkipStart = 0;
 			pNew->index_def = NULL;
 			for (i = 0; rc == 0 && i < sSum.n; i++) {
 				/* TUNING: Currently sSum.a[i].rRun is set to the sum of the costs
@@ -3225,6 +3304,26 @@ whereLoopAddAll(WhereLoopBuilder * pBuilder)
 
 	whereLoopClear(pNew);
 	return rc;
+}
+
+/**
+ * Return whether the same IN expression constrains another index part at
+ * or after start. For example, (a, b) IN (SELECT x, y FROM other_table)
+ * can supply terms for both a and b that refer to the same expression.
+ * This is used when checking whether index order satisfies ORDER BY.
+ * NULL entries represent skipped index parts and must be ignored.
+ */
+static bool
+whereLoopHasInTerm(const WhereLoop *loop, u16 start, const Expr *expr)
+{
+	for (u16 i = start; i < loop->nEq; i++) {
+		WhereTerm *term = loop->aLTerm[i];
+		if (term == NULL || term->pExpr != expr)
+			continue;
+		assert((term->eOperator & WO_IN) != 0);
+		return true;
+	}
+	return false;
 }
 
 /*
@@ -3318,6 +3417,19 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 		} else {
 			pLoop = pLast;
 		}
+		/*
+		 * Suffix IN loops may be inner or outer. Conservatively retain
+		 * sorting for both: their placement alone does not prove the
+		 * requested order across groups and IN values.
+		 */
+		if (pLoop->nSkip != 0) {
+			for (j = whereLoopSkipEnd(pLoop); j < pLoop->nEq; j++) {
+				WhereTerm *term = pLoop->aLTerm[j];
+				if (term != NULL &&
+				    (term->eOperator & WO_IN) != 0)
+					return 0;
+			}
+		}
 		iCur = pWInfo->pTabList->a[pLoop->iTab].iCursor;
 
 		/* Mark off any ORDER BY term X that is a column in the table of
@@ -3393,11 +3505,12 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 			distinctColumns = 0;
 			for (j = 0; j < nColumn; j++) {
 				u8 bOnce = 1;	/* True to run the ORDER BY search loop */
+				bool is_skipped = whereLoopIsSkipped(pLoop, j);
+				bool is_nullable = false;
 
-				assert(j >= pLoop->nEq
-				       || (pLoop->aLTerm[j] == 0) == (j < pLoop->nSkip)
-				    );
-				if (j < pLoop->nEq && j >= pLoop->nSkip) {
+				assert(j >= pLoop->nEq ||
+				       (pLoop->aLTerm[j] == 0) == is_skipped);
+				if (j < pLoop->nEq && !is_skipped) {
 					u16 eOp = pLoop->aLTerm[j]->eOperator;
 
 					/* Skip over == and IS NULL terms.  (Also skip IN terms when
@@ -3422,20 +3535,8 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 						 */
 						Expr *pX =
 						    pLoop->aLTerm[j]->pExpr;
-						for (i = j + 1; i < pLoop->nEq;
-						     i++) {
-							if (pLoop->aLTerm[i]->
-							    pExpr == pX) {
-								assert((pLoop->
-									aLTerm
-									[i]->
-									eOperator
-									&
-									WO_IN));
-								bOnce = 0;
-								break;
-							}
-						}
+						bOnce = !whereLoopHasInTerm(
+							pLoop, j + 1, pX);
 					}
 				}
 
@@ -3451,17 +3552,36 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 					revIdx = 0;
 				}
 
-				/* An unconstrained column that might be NULL means that this
-				 * WhereLoop is not well-ordered
+				/*
+				 * Skipped parts count towards nEq but are not
+				 * fixed, so check their nullability too. A
+				 * UNIQUE index can contain duplicate keys with
+				 * NULLs; its order alone does not make the rows
+				 * distinct.
+				 *
+				 * A nullable skipped part also prevents the
+				 * MIN/MAX optimization from stopping after the
+				 * first row. For index (bucket_id, key),
+				 * MIN(bucket_id) WHERE key = 10 may visit
+				 * (NULL, 10) before (2, 10). The minimum is 2,
+				 * so it must continue past NULL.
 				 */
-				if (isOrderDistinct && iColumn >= 0 &&
-				    j >= pLoop->nEq && idx_def != NULL) {
+				bool is_min_max =
+					(wctrlFlags & (WHERE_ORDERBY_MIN |
+						       WHERE_ORDERBY_MAX)) != 0;
+				if ((isOrderDistinct ||
+				     (is_skipped && is_min_max)) &&
+				    iColumn >= 0 && idx_def != NULL &&
+				    (j >= pLoop->nEq || is_skipped)) {
 					struct space *space =
 						space_by_id(idx_def->space_id);
 					assert(space != NULL);
-					if (space->def->fields[iColumn].is_nullable)
-						isOrderDistinct = 0;
+					struct field_def *field =
+						&space->def->fields[iColumn];
+					is_nullable = field->is_nullable;
 				}
+				if (isOrderDistinct && is_nullable)
+					isOrderDistinct = 0;
 
 				/* Find the ORDER BY term that corresponds to the j-th column
 				 * of the index and mark that ORDER BY term off
@@ -3499,6 +3619,13 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 					isMatch = 1;
 					break;
 				}
+				/*
+				 * A NULL skip prefix must not end MIN/MAX
+				 * evaluation.
+				 */
+				if (isMatch && is_skipped && is_nullable &&
+				    is_min_max)
+					isMatch = 0;
 				if (isMatch
 				    && (wctrlFlags & WHERE_GROUPBY) == 0) {
 					/* Make sure the sort order is compatible in an ORDER BY clause.
@@ -3651,6 +3778,25 @@ whereSortingCost(WhereInfo * pWInfo, LogEst nRow, int nOrderBy, int nSorted)
 	return rSortCost;
 }
 
+/**
+ * Return whether a full scan can be replaced with an index search of the
+ * same source using values from the already selected outer tables.
+ * All dependencies of the search must be among these tables.
+ */
+static bool
+where_can_replace_scan_with_search(const struct WhereInfo *info,
+				   const struct WhereLoop *scan,
+				   Bitmask outer_tables)
+{
+	for (const struct WhereLoop *loop = info->pLoops; loop != NULL;
+	     loop = loop->pNextLoop) {
+		if (loop->iTab == scan->iTab && where_loop_is_search(loop) &&
+		    (loop->prereq & ~outer_tables) == 0)
+			return true;
+	}
+	return false;
+}
+
 /*
  * Given the list of WhereLoop objects at pWInfo->pLoops, this routine
  * attempts to find the lowest cost path that visits each WhereLoop
@@ -3784,6 +3930,19 @@ wherePathSolver(WhereInfo * pWInfo, LogEst nRowEst)
 					assert(10 == sqlLogEst(2));
 					continue;
 				}
+				/*
+				 * For INDEXED BY, a full scan is a fallback
+				 * only. Decide here: a search may depend on
+				 * outer tables.
+				 */
+				struct SrcItem *src =
+					&pWInfo->pTabList->a[pWLoop->iTab];
+				if (src->pIBIndex != NULL &&
+				    !where_loop_is_search(pWLoop) &&
+				    where_can_replace_scan_with_search(
+						pWInfo, pWLoop,
+						pFrom->maskLoop))
+					continue;
 				/* At this point, pWLoop is a candidate to be the next loop.
 				 * Compute its cost
 				 */
@@ -4160,6 +4319,7 @@ where_loop_builder_shortcut(struct WhereLoopBuilder *builder)
 	struct WhereLoop *loop = builder->pNew;
 	loop->wsFlags = 0;
 	loop->nSkip = 0;
+	loop->nSkipStart = 0;
 	loop->index_def = NULL;
 	struct WhereTerm *term = sqlWhereFindTerm(clause, cursor, -1, 0,
 						      WO_EQ, 0);
@@ -4818,6 +4978,29 @@ where_loop_replace_columns(Vdbe *v, WhereLevel *pLevel,
 	}
 }
 
+/**
+ * Emit termination code for IN entries in [begin, end). An empty IN
+ * list jumps to addr_empty, or past its own loop when that is zero.
+ */
+static void
+whereCodeInLoopEnd(Vdbe *v, WhereLevel *level, int begin, int end,
+		   int addr_empty)
+{
+	for (int j = end; j > begin; j--) {
+		struct InLoop *in = &level->u.in.aInLoop[j - 1];
+		sqlVdbeJumpHere(v, in->addrInTop + 1);
+		if (in->eEndLoopOp == OP_Noop) {
+			sqlVdbeJumpHere(v, in->addrInTop - 1);
+			continue;
+		}
+		sqlVdbeAddOp2(v, in->eEndLoopOp, in->iCur, in->addrInTop);
+		if (addr_empty != 0)
+			sqlVdbeChangeP2(v, in->addrInTop - 1, addr_empty);
+		else
+			sqlVdbeJumpHere(v, in->addrInTop - 1);
+	}
+}
+
 /*
  * Generate the end of the WHERE loop.  See comments on
  * sqlWhereBegin() for additional information.
@@ -4854,29 +5037,33 @@ sqlWhereEnd(WhereInfo * pWInfo)
 					  pLevel->p3);
 			sqlVdbeChangeP5(v, pLevel->p5);
 		}
-		if (pLoop->wsFlags & WHERE_IN_ABLE && pLevel->u.in.nIn > 0) {
-			struct InLoop *pIn;
-			int j;
+		if (pLevel->addrSkip != 0) {
 			sqlVdbeResolveLabel(v, pLevel->addrNxt);
-			for (j = pLevel->u.in.nIn, pIn =
-			     &pLevel->u.in.aInLoop[j - 1]; j > 0; j--, pIn--) {
-				sqlVdbeJumpHere(v, pIn->addrInTop + 1);
-				if (pIn->eEndLoopOp != OP_Noop) {
-					sqlVdbeAddOp2(v, pIn->eEndLoopOp,
-							  pIn->iCur,
-							  pIn->addrInTop);
-				}
-				sqlVdbeJumpHere(v, pIn->addrInTop - 1);
+			/*
+			 * The NULL row of a LEFT JOIN arrives here without
+			 * an active prefix. Inner IN cursors may still hold
+			 * values of a previous outer row: do not advance them.
+			 */
+			if (pLevel->iLeftJoin != 0) {
+				sqlVdbeAddOp2(v, OP_IfNot, pLevel->regSkip,
+					      pLevel->addrBrk);
 			}
-		}
-		sqlVdbeResolveLabel(v, pLevel->addrBrk);
-		if (pLevel->addrSkip) {
+			int nOuter = pLevel->u.in.nInBeforeSkip;
+			/* An empty inner IN list matches nothing: finish. */
+			whereCodeInLoopEnd(v, pLevel, nOuter, pLevel->u.in.nIn,
+					   pLevel->addrSkipEnd);
 			sqlVdbeGoto(v, pLevel->addrSkip);
 			VdbeComment((v, "next skip-scan on %s",
 				     pLoop->index_def->name));
-			sqlVdbeJumpHere(v, pLevel->addrSkip);
-			sqlVdbeJumpHere(v, pLevel->addrSkip - 2);
+			sqlVdbeResolveLabel(v, pLevel->addrSkipEnd);
+			sqlVdbeAddOp2(v, OP_Bool, false, pLevel->regSkip);
+			whereCodeInLoopEnd(v, pLevel, 0, nOuter, 0);
+		} else if ((pLoop->wsFlags & WHERE_IN_ABLE) != 0 &&
+			   pLevel->u.in.nIn > 0) {
+			sqlVdbeResolveLabel(v, pLevel->addrNxt);
+			whereCodeInLoopEnd(v, pLevel, 0, pLevel->u.in.nIn, 0);
 		}
+		sqlVdbeResolveLabel(v, pLevel->addrBrk);
 		if (pLevel->iLeftJoin) {
 			int ws = pLoop->wsFlags;
 			if (item->fg.viaCoroutine) {
