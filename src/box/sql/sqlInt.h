@@ -2506,6 +2506,12 @@ sql_explain_check_facets(struct Parse *parse);
 /* OP_Open** cursor uses EQ seek only */
 #define OPFLAG_SEEKEQ        0x02
 
+/* OP_Seek*: the result is at or ahead of the current cursor position. */
+#define OPFLAG_SEEK_FORWARD  0x01
+
+/* OP_Seek*: select the second of two independent probing states. */
+#define OPFLAG_SEEK_SITE     0x02
+
 /* OP_Open should use BTREE_FORDELETE */
 #define OPFLAG_FORDELETE     0x08
 

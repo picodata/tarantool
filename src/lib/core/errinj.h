@@ -150,6 +150,7 @@ struct errinj {
 	_(ERRINJ_SNAP_WRITE_MISSING_SPACE_ROW, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_SNAP_WRITE_UNKNOWN_ROW_TYPE, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_SQL_SKIP_SCAN_FULL_KEY, ERRINJ_BOOL, {.bparam = false}) \
+	_(ERRINJ_SQL_SKIP_SCAN_TRACE, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_SWIM_FD_ONLY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_SYNC_WAL_COUNT, ERRINJ_INT, {.iparam = 0}) \
 	_(ERRINJ_SYNC_WAL_DELAY, ERRINJ_BOOL, {.bparam = false}) \

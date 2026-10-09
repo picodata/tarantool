@@ -850,6 +850,7 @@ codeSkipScanStart(Parse *parse, WhereLevel *level, int reverse, int reg_base)
 	sqlVdbeJumpHere(v, level->addrSkip);
 	sqlVdbeAddOp4Int(v, reverse ? OP_SeekLT : OP_SeekGT, level->iIdxCur,
 			 level->addrSkipEnd, reg_base, end);
+	sqlVdbeChangeP5(v, OPFLAG_SEEK_FORWARD);
 	if (start != 0) {
 		sqlVdbeAddOp4Int(v, reverse ? OP_IdxLT : OP_IdxGT,
 				 level->iIdxCur, level->addrSkipEnd, reg_base,
@@ -892,7 +893,7 @@ codeSkipScanFirst(Parse *parse, WhereLevel *level, int reverse, int reg_base,
 /** Validate the reached key before any skip-scan movement or conversion. */
 static void
 codeSeek(Parse *parse, WhereLevel *level, int op, int addr_next,
-	 int addr_inexact, int reg_base, int n_eq, int n_key)
+	 int addr_inexact, int reg_base, int n_eq, int n_key, uint8_t flags)
 {
 	Vdbe *v = parse->pVdbe;
 	int key = reg_base;
@@ -907,6 +908,7 @@ codeSeek(Parse *parse, WhereLevel *level, int op, int addr_next,
 		sqlVdbeAddOp3(v, OP_Copy, reg_base, key, n_key - 1);
 	}
 	sqlVdbeAddOp4Int(v, op, level->iIdxCur, addr_next, key, n_key);
+	sqlVdbeChangeP5(v, flags);
 	if (key != reg_base)
 		sqlReleaseTempRange(parse, key, n_key);
 }
@@ -958,7 +960,7 @@ static void
 codeRangeKey(Parse *parse, WhereLevel *level,
 	     const struct key_def *key_def, int op,
 	     int addr_next, int addr_inexact, int reg_base, int n_eq,
-	     int n_key)
+	     int n_key, uint8_t flags)
 {
 	Vdbe *v = parse->pVdbe;
 	assert(op == OP_SeekGE || op == OP_SeekLE);
@@ -984,14 +986,14 @@ codeRangeKey(Parse *parse, WhereLevel *level,
 		int addr_not_null =
 			sqlVdbeAddOp2(v, OP_NotNull, reg_base + i, 0);
 		codeSeek(parse, level, seek_op, addr_next, addr_inexact,
-			 reg_base, n_eq, i);
+			 reg_base, n_eq, i, flags);
 		/* Stop at the first forbidden NULL. */
 		sqlVdbeGoto(v, addr_done);
 		sqlVdbeJumpHere(v, addr_not_null);
 	}
 	/* No forbidden NULL was found, so use the full key. */
 	codeSeek(parse, level, op, addr_next, addr_inexact, reg_base, n_eq,
-		 n_key);
+		 n_key, flags);
 	if (addr_done != 0)
 		sqlVdbeResolveLabel(v, addr_done);
 }
@@ -1302,14 +1304,16 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 				      (startEq << 1) + bRev];
 			assert(op != 0);
 			int seek_end = inner_in ? pLevel->addrSkipEnd : addrNxt;
+			uint8_t flags = pLoop->nSkip > 0 ?
+				OPFLAG_SEEK_FORWARD | OPFLAG_SEEK_SITE : 0;
 			if (pRangeStart != NULL && nBtm > 1) {
 				codeRangeKey(pParse, pLevel, idx_def->key_def,
 					     op, seek_end, addrRangeNull,
-					     regBase, nEq, nConstraint);
+					     regBase, nEq, nConstraint, flags);
 			} else {
 				codeSeek(pParse, pLevel, op, seek_end,
 					 addrRangeNull, regBase, nEq,
-					 nConstraint);
+					 nConstraint, flags);
 			}
 		}
 		if (pLoop->nSkip > 0 && pRangeEnd != NULL) {

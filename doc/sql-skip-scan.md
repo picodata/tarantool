@@ -127,6 +127,15 @@ An `IN` whose comparison rules differ from the index, for example
 `COLLATE "unicode_ci"` over a binary index, is not used for the search at all.
 It stays a filter, so no matching rows are lost.
 
+## Cheap moves
+
+Each new index search costs an iterator and a lookup of the start position.
+When the next target is close to the current position, a few steps forward
+are cheaper. So before a new search the cursor checks the current row and
+takes up to 8 steps. If that misses, it does a real search and stops trying
+steps for a while. The pause grows after each miss, up to 63 searches, and
+resets after a successful step. Results are the same either way.
+
 ## Limits
 
 - Only TREE indexes. Indexes with `exclude_null` are not used for skip-scan,
@@ -145,3 +154,10 @@ It stays a filter, so no matching rows are lost.
   `ORDER BY bucket, k` sorts.
 - The cost estimate is rough. Skip-scan is not guaranteed to be faster on any
   given data; check it on yours.
+
+## Transaction conflicts
+
+The steps between groups may read rows that are not in the result. The engine
+records these reads to detect conflicts with other transactions, so vinyl and
+memtx MVCC may report more conflicts than the same query without skip-scan.
+This is expected: hiding the reads from the engine would break isolation.

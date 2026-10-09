@@ -110,6 +110,11 @@ struct VdbeTableFuncCursor {
  *      * A one-row "pseudotable" stored in a single register
  */
 typedef struct VdbeCursor VdbeCursor;
+/** Try a forward skip-scan seek; see the implementation for its contract. */
+int
+vdbe_seek_probe(struct VdbeCursor *cur, struct Mem *mems, uint32_t len,
+		uint8_t flags, bool *done, int *res);
+
 struct VdbeCursor {
 	u8 eCurType;		/* One of the CURTYPE_* values above */
 	u8 nullRow;		/* True if pointing to a row with no data */
@@ -130,6 +135,11 @@ struct VdbeCursor {
 	/* NB: seekResult does not distinguish between "no seeks have ever occurred
 	 * on this cursor" and "the most recent seek was an exact match".
 	 */
+	/** Adaptive probing state for the two skip-scan seek sites. */
+	uint8_t seek_skip[2];
+	uint8_t seek_backoff[2];
+	/** The first suffix seek of a new pass may only compare the row. */
+	bool seek_probe_first;
 
 	/* When a new VdbeCursor is allocated, only the fields above are zeroed.
 	 * The fields that follow are uninitialized, and must be individually

@@ -46,6 +46,7 @@
 #include "box/port.h"
 #include "clock.h"
 #include "errinj.h"
+#include "mp_util.h"
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
@@ -164,6 +165,132 @@ int sql_found_count = 0;
 #define isSorter(x) ((x)->eCurType==CURTYPE_SORTER)
 
 uint64_t OPCODE_YIELD_COUNT = 1024;
+
+/* Maximum cursor steps before falling back to a regular seek. */
+#ifndef SQL_SEEK_STEP_LIMIT
+#define SQL_SEEK_STEP_LIMIT 8
+#endif
+
+enum { SQL_SEEK_BACKOFF_MAX = 63 };
+
+/**
+ * Try a skip-scan seek using the current row and ordinary cursor steps.
+ * The generated program guarantees that the result is at or ahead of
+ * the current position in the live range iterator's direction.
+ *
+ * Failed probes back off independently at the two seek sites. During
+ * backoff only compare the current row. Reset the backoff only after
+ * reaching the target with cursor steps: a zero-step hit says nothing
+ * about whether stepping is useful at this seek site.
+ *
+ * @param[out] done Whether the seek finished, including EOF.
+ * @param[out] res The usual cursor result: 0 for a row, 1 for EOF.
+ * @retval -1 A cursor error, see diag.
+ * @retval 0 Success, or a regular seek is needed when !done.
+ */
+int
+vdbe_seek_probe(struct VdbeCursor *cur, struct Mem *mems, uint32_t len,
+		uint8_t flags, bool *done, int *res)
+{
+	*done = false;
+	struct BtCursor *bt = cur->uc.pCursor;
+	/*
+	 * The cursor may have gone stale while we yielded. The key needs no
+	 * check: Seek has already matched its types against the index, and
+	 * codegen never puts NULL into a non-nullable part.
+	 */
+	if (sql_cursor_validate(bt) != 0)
+		return -1;
+	if (bt->iter == NULL)
+		return 0;
+	if (bt->eState == CURSOR_INVALID) {
+		if (bt->last_tuple != NULL)
+			return 0;
+		*done = true;
+		*res = 1;
+		return 0;
+	}
+	if (bt->eState != CURSOR_VALID)
+		return 0;
+	int site = (flags & OPFLAG_SEEK_SITE) != 0;
+	int limit = SQL_SEEK_STEP_LIMIT;
+	/*
+	 * After failed probes, avoid spending steps on every seek.
+	 * During this pause, still check whether the current row fits.
+	 */
+	if (cur->seek_skip[site] > 0) {
+		cur->seek_skip[site]--;
+		limit = 0;
+	}
+	if (site == 1 && cur->seek_probe_first) {
+		cur->seek_probe_first = false;
+		limit = 0;
+	}
+	struct UnpackedRecord key;
+	key.key_def = cur->key_def;
+	key.nField = len;
+	key.aMem = mems;
+	key.default_rc = 0;
+	enum iterator_type type = bt->iter_type;
+	assert(type == ITER_GE || type == ITER_GT ||
+	       type == ITER_LE || type == ITER_LT);
+	bool reverse = iterator_type_is_reverse(type);
+	bool inclusive = type == ITER_GE || type == ITER_LE;
+	/*
+	 * Check the current row, then take at most limit steps towards the
+	 * bound. Finding a matching row or EOF completes the seek.
+	 */
+	for (int step = 0; ; step++) {
+		int cmp = tarantoolsqlIdxKeyCompare(bt, &key);
+		bool found = len == 0 || (reverse ? cmp < 0 : cmp > 0) ||
+			     (inclusive && cmp == 0);
+		if (found) {
+			if (step > 0) {
+				cur->seek_skip[site] = 0;
+				cur->seek_backoff[site] = 0;
+			}
+			*done = true;
+			*res = 0;
+			return 0;
+		}
+		if (step == limit)
+			break;
+		*res = 0;
+		int rc = reverse ? sqlCursorPrevious(bt, res) :
+				   sqlCursorNext(bt, res);
+		if (rc != 0)
+			return -1;
+		if (*res != 0) {
+			*done = true;
+			return 0;
+		}
+		/* Record actual probe reads for transaction-conflict tests. */
+		ERROR_INJECT(ERRINJ_SQL_SKIP_SCAN_TRACE, {
+			assert(bt->space != NULL);
+			struct key_def *pk = bt->space->index[0]->def->key_def;
+			size_t svp = region_used(&fiber()->gc);
+			uint32_t size;
+			struct tuple *row = bt->last_tuple;
+			const char *key = tuple_extract_key(row, pk,
+							    MULTIKEY_NONE,
+							    &size);
+			if (key != NULL)
+				say_info("skip-scan probe: space=%s key=%s",
+					 bt->space->def->name, mp_str(key));
+			region_truncate(&fiber()->gc, svp);
+		});
+#ifdef SQL_TEST
+		sql_search_count++;
+#endif
+	}
+	if (limit > 0) {
+		uint8_t backoff = MIN(2 * cur->seek_backoff[site] + 1,
+				      SQL_SEEK_BACKOFF_MAX);
+		cur->seek_backoff[site] = backoff;
+		cur->seek_skip[site] = backoff;
+	}
+	return 0;
+}
 
 /* Default vdbe yield callback is empty. */
 int
@@ -2970,6 +3097,11 @@ case OP_IteratorOpen: {
 	bt_cur->hints = pOp->p5;
 	/* Key info still contains sorter order and collation. */
 	cur->key_def = index->def->key_def;
+	/*
+	 * Only compare the current row on the first range-start seek.
+	 * A short query may finish before probing any later prefix.
+	 */
+	cur->seek_probe_first = true;
 	cur->nullRow = 1;
 	break;
 }
@@ -3149,6 +3281,11 @@ case OP_Close: {
  * configured to use Prev, not Next.
  *
  * See also: Found, NotFound, SeekGt, SeekGe, SeekLe
+ *
+ * P5 may contain OPFLAG_SEEK_FORWARD when the result is at or ahead of
+ * the current position in the live iterator's direction. VDBE then tries
+ * ordinary cursor steps before calling seek. OPFLAG_SEEK_SITE selects
+ * the second of two independent probing states.
  */
 /* Opcode: SeekGT P1 P2 P3 P4 *
  * Synopsis: c[P1].seek_gt(r[P3@P4]); IF none THEN GOTO P2 END
@@ -3165,11 +3302,18 @@ case OP_Close: {
  * This opcode leaves the cursor configured to move in forward order,
  * from the beginning toward the end.  In other words, the cursor is
  * configured to use Next, not Prev.
+ *
+ * P5 may contain OPFLAG_SEEK_FORWARD when the result is at or ahead of
+ * the current position in the live iterator's direction. VDBE then tries
+ * ordinary cursor steps before calling seek. OPFLAG_SEEK_SITE selects
+ * the second of two independent probing states.
  */
 case OP_SeekLT:         /* jump, in3 */
 case OP_SeekGT: {       /* jump, in3 */
 	bool is_lt = pOp->opcode == OP_SeekLT;
 	struct VdbeCursor *cur = p->apCsr[pOp->p1];
+	if ((pOp->p5 & OPFLAG_SEEK_FORWARD) == 0)
+		cur->seek_probe_first = true;
 #ifdef SQL_DEBUG
 	cur->seekOp = pOp->opcode;
 #endif
@@ -3199,7 +3343,11 @@ case OP_SeekGT: {       /* jump, in3 */
 		cur->uc.pCursor->iter_type = is_lt ? ITER_LE : ITER_GE;
 
 	int res;
-	if (sql_cursor_seek(cur->uc.pCursor, mems, len, &res) != 0)
+	bool done = false;
+	if ((pOp->p5 & OPFLAG_SEEK_FORWARD) != 0 &&
+	    vdbe_seek_probe(cur, mems, len, pOp->p5, &done, &res) != 0)
+		goto abort_due_to_error;
+	if (!done && sql_cursor_seek(cur->uc.pCursor, mems, len, &res) != 0)
 		goto abort_due_to_error;
 	assert((res != 0) == (cur->uc.pCursor->eState == CURSOR_INVALID));
 	cur->cacheStatus = CACHE_STALE;
@@ -3236,6 +3384,11 @@ case OP_SeekGT: {       /* jump, in3 */
  * IdxGE opcode will be used on subsequent loop iterations.
  *
  * See also: Found, NotFound, SeekGt, SeekGe, SeekLt
+ *
+ * P5 may contain OPFLAG_SEEK_FORWARD when the result is at or ahead of
+ * the current position in the live iterator's direction. VDBE then tries
+ * ordinary cursor steps before calling seek. OPFLAG_SEEK_SITE selects
+ * the second of two independent probing states.
  */
 /* Opcode: SeekGE P1 P2 P3 P4 *
  * Synopsis: c[P1].seek_ge(r[P3@P4]); IF none THEN GOTO P2 END
@@ -3261,11 +3414,18 @@ case OP_SeekGT: {       /* jump, in3 */
  * configured to use Next, not Prev.
  *
  * See also: Found, NotFound, SeekLt, SeekGt, SeekLe
+ *
+ * P5 may contain OPFLAG_SEEK_FORWARD when the result is at or ahead of
+ * the current position in the live iterator's direction. VDBE then tries
+ * ordinary cursor steps before calling seek. OPFLAG_SEEK_SITE selects
+ * the second of two independent probing states.
  */
 case OP_SeekLE:         /* jump, in3 */
 case OP_SeekGE: {       /* jump, in3 */
 	bool is_le = pOp->opcode == OP_SeekLE;
 	struct VdbeCursor *cur = p->apCsr[pOp->p1];
+	if ((pOp->p5 & OPFLAG_SEEK_FORWARD) == 0)
+		cur->seek_probe_first = true;
 #ifdef SQL_DEBUG
 	cur->seekOp = pOp->opcode;
 #endif
@@ -3311,7 +3471,11 @@ case OP_SeekGE: {       /* jump, in3 */
 		cur->uc.pCursor->iter_type = is_le ? ITER_LT : ITER_GT;
 
 	int res;
-	if (sql_cursor_seek(cur->uc.pCursor, mems, len, &res) != 0)
+	bool done = false;
+	if ((pOp->p5 & OPFLAG_SEEK_FORWARD) != 0 &&
+	    vdbe_seek_probe(cur, mems, len, pOp->p5, &done, &res) != 0)
+		goto abort_due_to_error;
+	if (!done && sql_cursor_seek(cur->uc.pCursor, mems, len, &res) != 0)
 		goto abort_due_to_error;
 	assert((res != 0) == (cur->uc.pCursor->eState == CURSOR_INVALID));
 	cur->cacheStatus = CACHE_STALE;
@@ -3834,6 +3998,7 @@ case OP_Last: {        /* jump */
 	assert(pOp->p1>=0 && pOp->p1<p->nCursor);
 	pC = p->apCsr[pOp->p1];
 	assert(pC!=0);
+	pC->seek_probe_first = true;
 	assert(pC->eCurType==CURTYPE_TARANTOOL);
 	pCrsr = pC->uc.pCursor;
 	res = 0;
@@ -3914,6 +4079,7 @@ case OP_Rewind: {        /* jump */
 	assert(pOp->p1>=0 && pOp->p1<p->nCursor);
 	pC = p->apCsr[pOp->p1];
 	assert(pC!=0);
+	pC->seek_probe_first = true;
 	assert(isSorter(pC)==(pOp->opcode==OP_SorterSort));
 	res = 1;
 #ifdef SQL_DEBUG

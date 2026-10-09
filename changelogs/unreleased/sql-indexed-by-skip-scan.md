@@ -4,4 +4,6 @@
   index when leading parts, or a contiguous block after a fixed prefix, have
   no equality bounds. `EXPLAIN QUERY PLAN` marks those parts with `ANY(...)`.
   A ready index search takes precedence over a full scan of the named index;
-  ordinary searches and skip-scan are compared by cost.
+  ordinary searches and skip-scan are compared by cost. Close search targets
+  reuse the cursor with bounded sequential steps. These extra reads may cause
+  additional transaction conflicts in Vinyl and memtx MVCC.

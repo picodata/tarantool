@@ -464,6 +464,60 @@ g.test_in_values_visit_all_buckets = function(cg)
     end)
 end
 
+g.test_in_prefix_lookups = function(cg)
+    cg.server:exec(function()
+        local h = _G.skip_scan_test
+        h.sql('DELETE FROM t')
+        -- 100 prefixes with 32 consecutive suffix values each.
+        h.sql([[WITH RECURSIVE seq(id) AS (
+                    VALUES(1) UNION ALL SELECT id+1 FROM seq WHERE id<3200
+                )
+                INSERT INTO t
+                SELECT id,(id-1)/32+1,(id-1)%32+1,'row' FROM seq]], {},
+              {{sql_vdbe_max_steps = 10000000}})
+        h.sql('CREATE INDEX bkd ON t(bucket_id,k DESC)')
+        for _, name in ipairs({'BK', 'BKD'}) do
+            for _, first in ipairs({1, 33}) do
+                local values, expected = {}, {}
+                for k = first, first + 99 do
+                    table.insert(values, k)
+                end
+                if first == 1 then
+                    for id = 1, 3200 do
+                        table.insert(expected, {id})
+                    end
+                end
+                for _, reverse in ipairs({false, true}) do
+                    h.sql(('SET SESSION "sql_reverse_unordered_selects"=%s')
+                          :format(tostring(reverse)))
+                    -- Separate cache entries for the two compiled directions.
+                    local sql = ('SELECT id FROM t INDEXED BY %s ' ..
+                                 'WHERE k IN (%s) /* reverse=%s */')
+                                :format(name, table.concat(values, ','),
+                                        tostring(reverse))
+                    t.assert_str_contains(h.plan(sql), 'ANY(BUCKET_ID)')
+                    local index = box.space.T.index[name]
+                    local stmt = assert(box.prepare(sql))
+                    for _ = 1, 2 do
+                        local before = index:stat().lookup
+                        local result, err = stmt:execute({},
+                            {{sql_vdbe_max_steps = 10000000}})
+                        local after = index:stat().lookup
+                        t.assert(result, tostring(err))
+                        table.sort(result.rows,
+                                   function(x, y) return x[1] < y[1] end)
+                        t.assert_equals(result.rows, expected, sql)
+                        if box.space.T.engine == 'vinyl' then
+                            t.assert_lt(after - before, 416, sql)
+                        end
+                    end
+                    stmt:unprepare()
+                end
+            end
+        end
+    end)
+end
+
 g.test_in_nested_suffixes = function(cg)
     cg.server:exec(function()
         local h = _G.skip_scan_test
@@ -1191,6 +1245,1313 @@ g.test_vector_bounds_with_null = function(cg)
     end)
 end
 
+g.test_probe_lookups = function(cg)
+    t.skip_if(cg.params.engine ~= 'vinyl', 'lookup counts are vinyl-only')
+    cg.server:exec(function()
+        local h = _G.skip_scan_test
+        h.sql('DELETE FROM t')
+        h.sql([[WITH RECURSIVE seq(id) AS (
+                    VALUES(1) UNION ALL SELECT id+1 FROM seq WHERE id<320
+                )
+                INSERT INTO t
+                SELECT id,(id-1)/32+1,(id-1)%32+1,'row' FROM seq]])
+        local index = box.space.T.index.BK
+        -- The first range-start seek only compares the current row;
+        -- later prefixes can avoid that seek by probing.
+        for _, case in ipairs({
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k>=1]],
+                lookups = 1,
+                count = 320,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k>=3]],
+                lookups = 2,
+                count = 300,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k<=28]],
+                lookups = 1,
+                count = 280,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k>1]],
+                lookups = 2,
+                count = 310,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k>=2 AND k<=31]],
+                lookups = 2,
+                count = 300,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k>=20]],
+                lookups = 11,
+                count = 130,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k<=3]],
+                lookups = 11,
+                count = 30,
+            },
+            {
+                sql = [[SELECT count(*) FROM t INDEXED BY bk
+                        WHERE k=17]],
+                lookups = 21,
+                count = 10,
+            },
+        }) do
+            t.assert_str_contains(h.plan(case.sql), 'ANY(BUCKET_ID)')
+            -- Executing the same prepared statement must start fresh.
+            local stmt = assert(box.prepare(case.sql))
+            for _ = 1, 2 do
+                local before = index:stat().lookup
+                local result = stmt:execute()
+                t.assert_equals(result.rows, {{case.count}}, case.sql)
+                t.assert_equals(index:stat().lookup - before, case.lookups,
+                                case.sql)
+            end
+            stmt:unprepare()
+        end
+    end)
+end
+
+g.test_probe_short_limit = function(cg)
+    cg.server:exec(function()
+        local h = _G.skip_scan_test
+        h.sql('DELETE FROM t')
+        h.sql([[WITH RECURSIVE seq(id) AS (
+                    VALUES(1) UNION ALL SELECT id+1 FROM seq WHERE id<64
+                )
+                INSERT INTO t
+                SELECT id,(id-1)/32+1,(id-1)%32+1,'row' FROM seq]])
+        for _, case in ipairs({
+            {
+                sql = [[SELECT bucket_id,k FROM t INDEXED BY bk
+                        WHERE k>=17
+                        ORDER BY bucket_id,k LIMIT 1]],
+                reference = [[SELECT bucket_id,k FROM t NOT INDEXED
+                        WHERE k>=17
+                        ORDER BY bucket_id,k LIMIT 1]],
+                limit = 1,
+            },
+            {
+                sql = [[SELECT bucket_id,k FROM t INDEXED BY bk
+                        WHERE k>=17
+                        ORDER BY bucket_id,k LIMIT 5]],
+                reference = [[SELECT bucket_id,k FROM t NOT INDEXED
+                        WHERE k>=17
+                        ORDER BY bucket_id,k LIMIT 5]],
+                limit = 5,
+            },
+            {
+                sql = [[SELECT bucket_id,k FROM t INDEXED BY bk
+                        WHERE k>=17
+                        ORDER BY bucket_id,k LIMIT 16]],
+                reference = [[SELECT bucket_id,k FROM t NOT INDEXED
+                        WHERE k>=17
+                        ORDER BY bucket_id,k LIMIT 16]],
+                limit = 16,
+            },
+            {
+                sql = [[SELECT bucket_id,k FROM t INDEXED BY bk
+                        WHERE k<=16
+                        ORDER BY bucket_id DESC,k DESC LIMIT 1]],
+                reference = [[SELECT bucket_id,k FROM t NOT INDEXED
+                        WHERE k<=16
+                        ORDER BY bucket_id DESC,k DESC LIMIT 1]],
+                limit = 1,
+            },
+            {
+                sql = [[SELECT bucket_id,k FROM t INDEXED BY bk
+                        WHERE k<=16
+                        ORDER BY bucket_id DESC,k DESC LIMIT 5]],
+                reference = [[SELECT bucket_id,k FROM t NOT INDEXED
+                        WHERE k<=16
+                        ORDER BY bucket_id DESC,k DESC LIMIT 5]],
+                limit = 5,
+            },
+            {
+                sql = [[SELECT bucket_id,k FROM t INDEXED BY bk
+                        WHERE k<=16
+                        ORDER BY bucket_id DESC,k DESC LIMIT 16]],
+                reference = [[SELECT bucket_id,k FROM t NOT INDEXED
+                        WHERE k<=16
+                        ORDER BY bucket_id DESC,k DESC LIMIT 16]],
+                limit = 16,
+            },
+        }) do
+            local expected = h.sql(case.reference).rows
+            t.assert_str_contains(h.plan(case.sql), 'ANY(BUCKET_ID)')
+            local stmt = assert(box.prepare(case.sql))
+            for _ = 1, 2 do
+                local before = box.stat.sql().sql_search_count
+                local result = stmt:execute()
+                local count = box.stat.sql().sql_search_count - before
+                t.assert_equals(result.rows, expected, case.sql)
+                -- One Seek and limit-1 Next/Prev, with no probe steps.
+                t.assert_equals(count, case.limit, case.sql)
+            end
+            stmt:unprepare()
+        end
+    end)
+end
+
+g.test_probe_bounds_and_direction = function(cg)
+    cg.server:exec(function()
+        local h = _G.skip_scan_test
+        h.sql([[CREATE TABLE u(id INTEGER PRIMARY KEY,
+                              bucket_id INTEGER NOT NULL,k INTEGER,
+                              s STRING COLLATE "unicode_ci")]])
+        h.sql('CREATE INDEX bk ON u(bucket_id,k)')
+        h.sql('CREATE INDEX bkd ON u(bucket_id,k DESC)')
+        h.sql('CREATE INDEX bs ON u(bucket_id,s)')
+        -- Prefix b has two copies of keys 1..3*b and one NULL row.
+        -- Alternate letter case to exercise the case-insensitive index.
+        h.sql([[WITH RECURSIVE
+                buckets(b) AS (
+                    VALUES(1) UNION ALL SELECT b+1 FROM buckets WHERE b<12
+                ),
+                keys(k) AS (
+                    VALUES(1) UNION ALL SELECT k+1 FROM keys WHERE k<36
+                ),
+                copies(n) AS (VALUES(1),(2)),
+                data_rows(id,b,k) AS (
+                    SELECT 3*b*(b-1)+b-1+2*(k-1)+n,b,k
+                    FROM buckets CROSS JOIN keys CROSS JOIN copies
+                    WHERE k<=3*b
+                )
+                INSERT INTO u
+                SELECT id,b,k,CASE WHEN id%2=0 THEN upper(char(97+k%26))
+                                                  ELSE char(97+k%26) END
+                FROM data_rows
+                UNION ALL
+                SELECT 3*b*(b+1)+b,b,NULL,NULL FROM buckets]])
+        local integers = {{0}, {1}, {2}, {9}, {17}, {36}, {37}}
+        local ranges = {{9, 30}, {30, 9}}
+        local strings = {{'a'}, {'B'}, {'k'}, {'Z'}}
+        for _, case in ipairs({
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = integers,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k>=CAST(? AS INTEGER) AND k<CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = ranges,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IS NULL
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bkd
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE k IN (NULL,1,9,17,100)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s>=CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 1]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id,k,id LIMIT 19]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 1]],
+                params = strings,
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bs
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                        WHERE s<CAST(? AS STRING)
+                        ORDER BY bucket_id DESC,k DESC,id DESC LIMIT 19]],
+                params = strings,
+            },
+        }) do
+            for _, params in ipairs(case.params or {{}}) do
+                h.skip(case.sql, h.sql(case.reference, params).rows, params)
+            end
+        end
+        local _, err = box.execute([[SELECT id FROM u INDEXED BY bk
+                                     WHERE k>CAST(? AS INTEGER)]],
+                                   {'wrong type'})
+        t.assert(err)
+    end)
+end
+
+for _, probe_case in ipairs({
+    {
+        name = 'test_probe_alternating_range_0_false',
+        phase = 0,
+        bound = 17,
+        reverse = false,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k>=17
+                ORDER BY bucket_id,k]],
+    },
+    {
+        name = 'test_probe_alternating_range_0_true',
+        phase = 0,
+        bound = 1,
+        reverse = true,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k<=1
+                ORDER BY bucket_id DESC,k DESC]],
+    },
+    {
+        name = 'test_probe_alternating_range_1_false',
+        phase = 1,
+        bound = 17,
+        reverse = false,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k>=17
+                ORDER BY bucket_id,k]],
+    },
+    {
+        name = 'test_probe_alternating_range_1_true',
+        phase = 1,
+        bound = 1,
+        reverse = true,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k<=1
+                ORDER BY bucket_id DESC,k DESC]],
+    },
+    {
+        name = 'test_probe_alternating_prefix_0_false',
+        phase = 0,
+        bound = 1,
+        reverse = false,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k<=1
+                ORDER BY bucket_id,k]],
+    },
+    {
+        name = 'test_probe_alternating_prefix_0_true',
+        phase = 0,
+        bound = 17,
+        reverse = true,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k>=17
+                ORDER BY bucket_id DESC,k DESC]],
+    },
+    {
+        name = 'test_probe_alternating_prefix_1_false',
+        phase = 1,
+        bound = 1,
+        reverse = false,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k<=1
+                ORDER BY bucket_id,k]],
+    },
+    {
+        name = 'test_probe_alternating_prefix_1_true',
+        phase = 1,
+        bound = 17,
+        reverse = true,
+        sql = [[SELECT bucket_id,k FROM t INDEXED BY bk WHERE k>=17
+                ORDER BY bucket_id DESC,k DESC]],
+    },
+}) do
+    g[probe_case.name] = function(cg)
+        cg.server:exec(function(case)
+            local h = _G.skip_scan_test
+            h.sql('DELETE FROM t')
+            -- phase=0 makes even prefixes dense; phase=1 makes odd ones
+            -- dense. Other prefixes contain only the target key.
+            -- Each earlier dense prefix contributes 16 extra rows.
+            h.sql([[WITH RECURSIVE
+                    buckets(b) AS (
+                        VALUES(1) UNION ALL SELECT b+1 FROM buckets WHERE b<100
+                    ),
+                    keys(k) AS (
+                        VALUES(1) UNION ALL SELECT k+1 FROM keys WHERE k<17
+                    ),
+                    settings(phase,bound) AS (
+                        VALUES(CAST(? AS INTEGER),CAST(? AS INTEGER))
+                    )
+                    INSERT INTO t
+                    SELECT b-1+16*((b-1+phase)/2)+
+                           CASE WHEN b%2=phase THEN k ELSE 1 END,
+                           b,k,'row'
+                    FROM buckets CROSS JOIN keys CROSS JOIN settings
+                    WHERE b%2=phase OR k=bound]], {case.phase, case.bound},
+                  {{sql_vdbe_max_steps = 10000000}})
+            local expected = {}
+            for b = 1, 100 do
+                expected[case.reverse and 101-b or b] = {b, case.bound}
+            end
+            t.assert_str_contains(h.plan(case.sql), 'ANY(BUCKET_ID)')
+            local stmt = assert(box.prepare(case.sql))
+            local index = box.space.T.index.BK
+            for _ = 1, 2 do
+                local before = box.stat.sql().sql_search_count
+                local stat = index:stat()
+                local result = stmt:execute()
+                local count = box.stat.sql().sql_search_count - before
+                t.assert_equals(result.rows, expected, case.sql)
+                -- About three cursor operations per prefix leave room
+                -- for occasional probes, but not eight at every miss.
+                t.assert_le(count, 400, 'zero-step hits must keep the pause')
+                if box.space.T.engine == 'vinyl' then
+                    t.assert_le(index:stat().lookup - stat.lookup, 51,
+                                'zero-step hits must still avoid seeks')
+                end
+            end
+            stmt:unprepare()
+        end, {probe_case})
+    end
+end
+
+g.test_probe_resumes_after_backoff = function(cg)
+    cg.server:exec(function()
+        local h = _G.skip_scan_test
+        h.sql('DELETE FROM t')
+        -- First, 200 prefixes with keys 1..128 make probes fail long enough
+        -- to reach maximum backoff. Then, 200 prefixes with keys 95..102
+        -- make the target key 97 reachable in two steps.
+        h.sql([[WITH RECURSIVE
+                buckets(b) AS (
+                    VALUES(1) UNION ALL SELECT b+1 FROM buckets WHERE b<400
+                ),
+                keys(k) AS (
+                    VALUES(1) UNION ALL SELECT k+1 FROM keys WHERE k<128
+                )
+                INSERT INTO t
+                SELECT CASE WHEN b<=200 THEN (b-1)*128+k
+                                       ELSE 25600+(b-201)*8+k-94 END,
+                       b,k,'row'
+                FROM buckets CROSS JOIN keys
+                WHERE b<=200 OR k BETWEEN 95 AND 102]], {},
+              {{sql_vdbe_max_steps = 10000000}})
+        local query = [[SELECT id FROM t INDEXED BY bk WHERE k>=97
+                         ORDER BY bucket_id,k]]
+        -- The full-scan reference must read all 27200 fixture rows.
+        local expected = h.sql([[SELECT id FROM t NOT INDEXED WHERE k>=97
+                                 ORDER BY bucket_id,k]], {},
+                               {{sql_vdbe_max_steps = 10000000}}).rows
+        local index = box.space.T.index.BK
+        local before = index:stat()
+        h.skip(query, expected)
+        if box.space.T.engine == 'vinyl' then
+            local lookups = index:stat().lookup - before.lookup
+            t.assert_ge(lookups, 201)
+            t.assert_le(lookups, 264, 'probing must resume after the pause')
+        end
+    end)
+end
+
 -- A skip after a fixed prefix reads no more rows than the prefix search
 -- and filters by the next part in the index, so it is preferred.
 g.test_internal_skip_selection = function(cg)
@@ -1234,6 +2595,60 @@ g.test_internal_skip_selection = function(cg)
         }) do
             t.assert_str_contains(h.plan(case.sql), case.plan)
             h.rows(case.sql, case.rows)
+        end
+    end)
+end
+
+g.test_probe_text_prefix = function(cg)
+    cg.server:exec(function()
+        local h = _G.skip_scan_test
+        h.sql([[CREATE TABLE u(id INTEGER PRIMARY KEY,
+                              bucket_id STRING COLLATE "unicode_ci",
+                              k INTEGER)]])
+        h.sql('CREATE INDEX bk ON u(bucket_id,k)')
+        -- 13 prefixes, each with keys 1..32. The first prefix is NULL.
+        -- Other prefixes contain 'prefix' 20 times followed by the number,
+        -- with alternating letter case within each prefix.
+        h.sql([[WITH RECURSIVE
+                buckets(b) AS (
+                    VALUES(0) UNION ALL SELECT b+1 FROM buckets WHERE b<12
+                ),
+                keys(k) AS (
+                    VALUES(1) UNION ALL SELECT k+1 FROM keys WHERE k<32
+                ),
+                prefix_text(s) AS (
+                    VALUES('prefixprefixprefixprefixprefix' ||
+                           'prefixprefixprefixprefixprefix' ||
+                           'prefixprefixprefixprefixprefix' ||
+                           'prefixprefixprefixprefixprefix')
+                )
+                INSERT INTO u
+                SELECT b*32+k,
+                       CASE WHEN b=0 THEN NULL
+                            WHEN k%2=0 THEN upper(s)||CAST(b AS STRING)
+                            ELSE s||CAST(b AS STRING) END,
+                       k
+                FROM buckets CROSS JOIN keys CROSS JOIN prefix_text]])
+        for _, case in ipairs({
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER) ORDER BY bucket_id,k,id]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                              WHERE k>=CAST(? AS INTEGER)
+                              ORDER BY bucket_id,k,id]],
+            },
+            {
+                sql = [[SELECT id FROM u INDEXED BY bk
+                        WHERE k>=CAST(? AS INTEGER)
+                        ORDER BY bucket_id DESC,k DESC,id DESC]],
+                reference = [[SELECT id FROM u NOT INDEXED
+                              WHERE k>=CAST(? AS INTEGER)
+                              ORDER BY bucket_id DESC,k DESC,id DESC]],
+            },
+        }) do
+            for _, bound in ipairs({2, 9, 17, 33}) do
+                h.skip(case.sql, h.sql(case.reference, {bound}).rows, {bound})
+            end
         end
     end)
 end
@@ -2654,7 +4069,7 @@ g.test_constant_null_bound_ends_inner_in_pass = function(cg)
                     h.rows(q, {}, params)
                     if engine == 'vinyl' then
                         local delta = box.space.V.index.S:stat().lookup - before
-                        t.assert_equals(delta, case[2] and 0 or 2)
+                        t.assert_equals(delta, case[2] and 0 or 1)
                     end
                 end
             end
