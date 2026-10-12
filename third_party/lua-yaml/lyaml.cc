@@ -244,6 +244,21 @@ static void generate_error_message(struct lua_yaml_loader *loader) {
    luaL_pushresult(&b);
 }
 
+/**
+ * Reject a non-finite number the way luaL_checkfinite() does, but leave the
+ * error on the Lua stack instead of raising it: l_load() raises it once the
+ * parser has been destroyed.
+ */
+static bool check_finite(struct lua_yaml_loader *loader, double dval) {
+   if (loader->cfg->decode_invalid_numbers || isfinite(dval))
+      return true;
+   luaL_where(loader->L, 1);
+   lua_pushliteral(loader->L, "number must not be NaN or Inf");
+   lua_concat(loader->L, 2);
+   loader->error = 1;
+   return false;
+}
+
 static inline void delete_event(struct lua_yaml_loader *loader) {
    if (loader->validevent) {
       yaml_event_delete(&loader->event);
@@ -293,6 +308,13 @@ static void load_map(struct lua_yaml_loader *loader) {
          return;
       if (r != 1)
          RETURN_ERRMSG(loader, "unanticipated END event");
+      /*
+       * lua_rawset() would raise this error itself and unwind past
+       * yaml_parser_delete().
+       */
+      if (lua_type(loader->L, -2) == LUA_TNUMBER &&
+          isnan(lua_tonumber(loader->L, -2)))
+         RETURN_ERRMSG(loader, "table index is NaN");
       lua_rawset(loader->L, -3);
    }
 }
@@ -325,7 +347,8 @@ static void load_scalar(struct lua_yaml_loader *loader) {
          return;
       } else if (!strcmp(tag, "float")) {
          double dval = fpconv_strtod(str, NULL);
-         luaL_checkfinite(loader->L, loader->cfg, dval);
+         if (!check_finite(loader, dval))
+            return;
          lua_pushnumber(loader->L, dval);
          return;
       } else if (!strcmp(tag, "bool")) {
@@ -378,7 +401,8 @@ static void load_scalar(struct lua_yaml_loader *loader) {
       }
       double dval = fpconv_strtod(str, &endptr);
       if (endptr == str + length) {
-         luaL_checkfinite(loader->L, loader->cfg, dval);
+         if (!check_finite(loader, dval))
+            return;
          lua_pushnumber(loader->L, dval);
          return;
       }
@@ -536,14 +560,10 @@ usage_error:
    }
    size_t len;
    const char *document = lua_tolstring(L, 1, &len);
-   loader.L = L;
-   loader.cfg = luaL_checkserializer(L);
-   loader.validevent = 0;
-   loader.error = 0;
-   loader.document_count = 0;
-   if (!yaml_parser_initialize(&loader.parser))
-      return luaL_error(L, OOM_ERRMSG);
-   yaml_parser_set_input_string(&loader.parser, (yaml_char_t *) document, len);
+   /*
+    * Validate the options before the parser is created: a usage error
+    * raised with a parser around would unwind past yaml_parser_delete().
+    */
    bool tag_only;
    if (! lua_isnoneornil(L, 2)) {
       if (! lua_istable(L, 2))
@@ -553,6 +573,14 @@ usage_error:
    } else {
       tag_only = false;
    }
+   loader.L = L;
+   loader.cfg = luaL_checkserializer(L);
+   loader.validevent = 0;
+   loader.error = 0;
+   loader.document_count = 0;
+   if (!yaml_parser_initialize(&loader.parser))
+      return luaL_error(L, OOM_ERRMSG);
+   yaml_parser_set_input_string(&loader.parser, (yaml_char_t *) document, len);
 
    int rc;
    if (! tag_only) {
@@ -560,8 +588,12 @@ usage_error:
       lua_newtable(L);
       loader.anchortable_index = lua_gettop(L);
       load(&loader);
-      if (loader.error)
+      if (loader.error) {
+         /* The parser must be gone before the error unwinds the stack. */
+         delete_event(&loader);
+         yaml_parser_delete(&loader.parser);
          lua_error(L);
+      }
       rc = loader.document_count;
    } else {
       rc = load_tag(&loader);
