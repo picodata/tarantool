@@ -11,6 +11,8 @@ macro(libyaml_build)
         "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
         "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
         "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS}"
+        "-DBUILD_SHARED_LIBS=OFF"
+        "-DYAML_STATIC_LIB_NAME=yaml_static"
     )
 
     if(DEFINED ICU_ROOT)

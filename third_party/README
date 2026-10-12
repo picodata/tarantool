@@ -60,3 +60,43 @@ How to update murmur hash
 
 wget http://smhasher.googlecode.com/svn/trunk/PMurHash.c -O PMurHash.c
 wget http://smhasher.googlecode.com/svn/trunk/PMurHash.h -O PMurHash.h
+
+How to update libyaml
+=====================
+
+third_party/libyaml is a submodule with a fork of
+https://github.com/yaml/libyaml, the fork repository is set in
+.gitmodules. A branch of the fork is named after the Tarantool branch
+that uses it, e.g. libyaml 2.11.8-picodata is used by Tarantool
+2.11.8-picodata.
+
+The current base is upstream master
+90a56d4500aa1a1798514c5cb55c3ad4cb095f94 ("Add getter and feature macro
+for nest depth control (#335)"). It is a development snapshot, not a
+release: it has the fixes of 0.2.6-rc.1, but still reports version
+0.2.5. The previous base was 788563cb51bb71649ecf1f0a00f60b259e5372be of
+https://github.com/tarantool/libyaml (upstream 0.2.1 with Tarantool
+patches).
+
+Tarantool patches on top of the base:
+
+- Extend range of printable unicode characters (uses ICU).
+- Allow to emit invalid utf-8 scalar strings.
+- Fix decoding single-byte char codes >= 0x80.
+- cmake: lower the minimum required version to 3.5.
+- Keep the space before an empty plain scalar.
+
+The bundled libyaml rejects documents nested deeper than 1000 levels.
+The limit counts flow brackets and block indentation levels together,
+not nested collections. With ENABLE_BUNDLED_LIBYAML=OFF the system
+libyaml is used and the limit depends on it, e.g. 0.2.5 has no limit.
+
+To update:
+
+- Rebase the Tarantool patches onto the new upstream commit, don't merge
+  upstream into the branch.
+- Before replacing the tip of the branch, tag the old tip as
+  <branch>/<YYYY-MM-DD>, e.g. 2.11.8-picodata/2026-10-20. The tag keeps
+  the commits used by older Tarantool commits reachable.
+- Push only the branch and the tag, not upstream branches or tags.
+- Update the submodule in Tarantool in a separate commit.
