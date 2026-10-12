@@ -333,7 +333,7 @@ static void load_sequence(struct lua_yaml_loader *loader) {
       lua_rawseti(loader->L, -2, index++);
 }
 
-static void load_scalar(struct lua_yaml_loader *loader) {
+static NOINLINE void load_scalar(struct lua_yaml_loader *loader) {
    const char *str = (char *)loader->event.data.scalar.value;
    unsigned int length = loader->event.data.scalar.length;
    const char *tag = (char *)loader->event.data.scalar.tag;
@@ -415,7 +415,7 @@ static void load_scalar(struct lua_yaml_loader *loader) {
    handle_anchor(loader);
 }
 
-static void load_alias(struct lua_yaml_loader *loader) {
+static NOINLINE void load_alias(struct lua_yaml_loader *loader) {
    char *anchor = (char *)loader->event.data.alias.anchor;
    lua_pushstring(loader->L, anchor);
    lua_rawget(loader->L, loader->anchortable_index);
