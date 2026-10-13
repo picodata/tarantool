@@ -462,14 +462,15 @@ sql_column_add_nullable_action(struct Parse *parser,
  * statement.
  */
 void
-sqlAddDefaultValue(Parse * pParse, ExprSpan * pSpan)
+sqlAddDefaultValue(Parse *pParse, Expr *pExpr, const char *zStart,
+		   const char *zEnd)
 {
 	struct space *p = pParse->create_column_def.space;
 	if (p != NULL) {
 		assert(p->def->opts.is_ephemeral);
 		struct space_def *def = p->def;
 		if (!sqlExprIsConstantOrFunction
-		    (pSpan->pExpr, sql_get()->init.busy)) {
+		    (pExpr, sql_get()->init.busy)) {
 			const char *column_name =
 				def->fields[def->field_count - 1].name;
 			diag_set(ClientError, ER_CREATE_SPACE, def->name,
@@ -481,12 +482,17 @@ sqlAddDefaultValue(Parse * pParse, ExprSpan * pSpan)
 			struct field_def *field =
 				&def->fields[def->field_count - 1];
 			struct region *region = &pParse->region;
-			size_t len = pSpan->zEnd - pSpan->zStart + 1;
+			while (sqlIsspace(zStart[0]))
+				zStart++;
+			size_t len = zEnd - zStart;
+			while (len > 0 && sqlIsspace(zStart[len - 1]))
+				len--;
+			len++;
 			field->sql_default_value = xregion_alloc(region, len);
-			strlcpy(field->sql_default_value, pSpan->zStart, len);
+			strlcpy(field->sql_default_value, zStart, len);
 		}
 	}
-	sql_expr_delete(pSpan->pExpr);
+	sql_expr_delete(pExpr);
 }
 
 static int
@@ -693,8 +699,7 @@ void
 sql_create_check_contraint(struct Parse *parser, bool is_field_ck)
 {
 	struct create_ck_def *create_ck_def = &parser->create_ck_def;
-	struct ExprSpan *expr_span = create_ck_def->expr;
-	sql_expr_delete(expr_span->pExpr);
+	sql_expr_delete(create_ck_def->expr);
 
 	struct alter_entity_def *alter_def =
 		(struct alter_entity_def *) create_ck_def;
@@ -714,8 +719,12 @@ sql_create_check_contraint(struct Parse *parser, bool is_field_ck)
 	assert(name != NULL);
 	size_t name_len = strlen(name);
 
-	uint32_t expr_str_len = (uint32_t)(expr_span->zEnd - expr_span->zStart);
-	const char *expr_str = expr_span->zStart;
+	const char *expr_str = create_ck_def->expr_start;
+	while (sqlIsspace(expr_str[0]))
+		expr_str++;
+	uint32_t expr_str_len = (uint32_t)(create_ck_def->expr_end - expr_str);
+	while (expr_str_len > 0 && sqlIsspace(expr_str[expr_str_len - 1]))
+		expr_str_len--;
 
 	/*
 	 * Allocate memory for ck constraint parse structure and

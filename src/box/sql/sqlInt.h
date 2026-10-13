@@ -881,7 +881,6 @@ typedef struct Bitvec Bitvec;
 typedef struct Column Column;
 typedef struct Expr Expr;
 typedef struct ExprList ExprList;
-typedef struct ExprSpan ExprSpan;
 typedef struct IdList IdList;
 typedef struct KeyClass KeyClass;
 typedef struct Lookaside Lookaside;
@@ -1616,17 +1615,6 @@ struct ExprList {
 #define ENAME_NAME  0		/* The AS clause of a result set */
 #define ENAME_SPAN  1		/* Complete text of the result set expression */
 #define ENAME_TAB   2		/* "TABLE.NAME" for the result set */
-
-/*
- * An instance of this structure is used by the parser to record both
- * the parse tree for an expression and the span of input text for an
- * expression.
- */
-struct ExprSpan {
-	Expr *pExpr;		/* The expression parse tree */
-	const char *zStart;	/* First character of input text */
-	const char *zEnd;	/* One character past the end of input text */
-};
 
 /*
  * An instance of this structure can hold a simple list of identifiers,
@@ -3185,7 +3173,8 @@ void sqlExprListSetName(Parse *, ExprList *, Token *, int);
  * expression list to the text of its expression, unless it has an AS name.
  */
 void
-sqlExprListSetSpan(struct ExprList *pList, struct ExprSpan *pSpan);
+sqlExprListSetSpan(struct ExprList *pList, const char *zStart,
+		   const char *zEnd);
 
 u32 sqlExprListFlags(const ExprList *);
 
@@ -3283,7 +3272,14 @@ sqlAddPrimaryKey(struct Parse *parse);
 void
 sql_create_check_contraint(struct Parse *parser, bool is_field_ck);
 
-void sqlAddDefaultValue(Parse *, ExprSpan *);
+/**
+ * Set the default value of the column that the parser adds now.
+ * The text of the value is in [zStart, zEnd), with optional spaces
+ * at its ends. The function deletes pExpr.
+ */
+void
+sqlAddDefaultValue(Parse *pParse, Expr *pExpr, const char *zStart,
+		   const char *zEnd);
 void sqlAddCollateType(Parse *, Token *);
 
 /**

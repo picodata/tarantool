@@ -296,7 +296,11 @@ struct create_constraint_def {
 struct create_ck_def {
 	struct create_constraint_def base;
 	/** AST representing check expression. */
-	struct ExprSpan *expr;
+	struct Expr *expr;
+	/** Start of the text of the check expression. */
+	const char *expr_start;
+	/** First character past the end of the text of the expression. */
+	const char *expr_end;
 };
 
 struct create_fk_def {
@@ -438,11 +442,14 @@ create_trigger_def_init(struct create_trigger_def *trigger_def,
 
 static inline void
 create_ck_def_init(struct create_ck_def *ck_def, struct SrcList *table_name,
-		   struct Token *name, struct ExprSpan *expr)
+		   struct Token *name, struct Expr *expr,
+		   const char *expr_start, const char *expr_end)
 {
 	create_constraint_def_init(&ck_def->base, table_name, name, false,
 				   ENTITY_TYPE_CK);
 	ck_def->expr = expr;
+	ck_def->expr_start = expr_start;
+	ck_def->expr_end = expr_end;
 }
 
 static inline void

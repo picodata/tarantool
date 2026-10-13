@@ -1979,15 +1979,19 @@ sqlExprListSetName(Parse * pParse,	/* Parsing context */
 }
 
 void
-sqlExprListSetSpan(struct ExprList *pList, struct ExprSpan *pSpan)
+sqlExprListSetSpan(struct ExprList *pList, const char *zStart,
+		   const char *zEnd)
 {
 	assert(pList != NULL);
 	struct ExprList_item *pItem = &pList->a[pList->nExpr - 1];
 	assert(pList->nExpr > 0);
-	assert(pItem->pExpr == pSpan->pExpr);
 	if (pItem->zEName == NULL) {
-		pItem->zEName = sql_xstrndup(pSpan->zStart,
-					     pSpan->zEnd - pSpan->zStart);
+		while (sqlIsspace(zStart[0]))
+			zStart++;
+		int n = (int)(zEnd - zStart);
+		while (n > 0 && sqlIsspace(zStart[n - 1]))
+			n--;
+		pItem->zEName = sql_xstrndup(zStart, n);
 		pItem->fg.eEName = ENAME_SPAN;
 	}
 }
