@@ -482,14 +482,10 @@ sqlAddDefaultValue(Parse *pParse, Expr *pExpr, const char *zStart,
 			struct field_def *field =
 				&def->fields[def->field_count - 1];
 			struct region *region = &pParse->region;
-			while (sqlIsspace(zStart[0]))
-				zStart++;
-			size_t len = zEnd - zStart;
-			while (len > 0 && sqlIsspace(zStart[len - 1]))
-				len--;
-			len++;
-			field->sql_default_value = xregion_alloc(region, len);
-			strlcpy(field->sql_default_value, zStart, len);
+			int len = sql_span_trim(&zStart, zEnd);
+			field->sql_default_value =
+				xregion_alloc(region, len + 1);
+			strlcpy(field->sql_default_value, zStart, len + 1);
 		}
 	}
 	sql_expr_delete(pExpr);
@@ -720,11 +716,8 @@ sql_create_check_contraint(struct Parse *parser, bool is_field_ck)
 	size_t name_len = strlen(name);
 
 	const char *expr_str = create_ck_def->expr_start;
-	while (sqlIsspace(expr_str[0]))
-		expr_str++;
-	uint32_t expr_str_len = (uint32_t)(create_ck_def->expr_end - expr_str);
-	while (expr_str_len > 0 && sqlIsspace(expr_str[expr_str_len - 1]))
-		expr_str_len--;
+	uint32_t expr_str_len = sql_span_trim(&expr_str,
+					      create_ck_def->expr_end);
 
 	/*
 	 * Allocate memory for ck constraint parse structure and

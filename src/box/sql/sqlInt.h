@@ -3004,6 +3004,15 @@ void sqlite3TreeViewWindow(TreeView*, const Window*, u8);
 void sqlite3TreeViewWinFunc(TreeView*, const Window*, u8);
 #endif
 
+/**
+ * The text between *start and end is a phrase of an SQL statement.
+ * Move *start past the spaces at the start of the phrase.
+ *
+ * @retval The length of the phrase without the spaces at its ends.
+ */
+int
+sql_span_trim(const char **start, const char *end);
+
 void sqlDequote(char *);
 
 /**

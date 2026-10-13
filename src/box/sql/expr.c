@@ -1986,11 +1986,7 @@ sqlExprListSetSpan(struct ExprList *pList, const char *zStart,
 	struct ExprList_item *pItem = &pList->a[pList->nExpr - 1];
 	assert(pList->nExpr > 0);
 	if (pItem->zEName == NULL) {
-		while (sqlIsspace(zStart[0]))
-			zStart++;
-		int n = (int)(zEnd - zStart);
-		while (n > 0 && sqlIsspace(zStart[n - 1]))
-			n--;
+		int n = sql_span_trim(&zStart, zEnd);
 		pItem->zEName = sql_xstrndup(zStart, n);
 		pItem->fg.eEName = ENAME_SPAN;
 	}

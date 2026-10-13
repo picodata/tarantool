@@ -74,6 +74,19 @@ sqlStrlen30(const char *z)
 	return 0x3fffffff & (unsigned)strlen(z);
 }
 
+int
+sql_span_trim(const char **start, const char *end)
+{
+	const char *z = *start;
+	while (z < end && sqlIsspace(z[0]))
+		z++;
+	int n = (int)(end - z);
+	while (n > 0 && sqlIsspace(z[n - 1]))
+		n--;
+	*start = z;
+	return n;
+}
+
 /*
  * Convert an SQL-style quoted string into a normal string by removing
  * the quote characters.  The conversion is done in-place.  If the
