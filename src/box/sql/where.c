@@ -4557,7 +4557,7 @@ sqlWhereBegin(Parse * pParse,	/* The parser context */
 						iid++;
 						pJ = pTabItem->space->index[iid];
 					}
-					iIndexCur++;
+					iIndexCur += iid;
 				} else {
 					for(uint32_t i = 0;
 					    i < space->index_count; ++i) {

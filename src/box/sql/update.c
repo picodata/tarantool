@@ -112,8 +112,10 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 	}
 
 	struct space_def *def = space->def;
-	/* Allocate cursor on primary index. */
+	/* Allocate cursors on the primary index and on all the indexes. */
 	int pk_cursor = pParse->nTab++;
+	int idx_cursor = pParse->nTab;
+	pParse->nTab += space->index_count;
 	pTabList->a[0].iCursor = pk_cursor;
 	struct index *pPk = space_index(space, 0);
 	aXRef = xregion_alloc_array(&pParse->region, typeof(aXRef[0]),
@@ -226,7 +228,7 @@ sqlUpdate(Parse * pParse,		/* The parser context */
 	sqlVdbeAddOp3(v, OP_IteratorOpen, iEph, 0, reg_eph);
 
 	pWInfo = sqlWhereBegin(pParse, pTabList, pWhere, 0, 0,
-				   WHERE_ONEPASS_DESIRED, pk_cursor);
+				   WHERE_ONEPASS_DESIRED, idx_cursor);
 	if (pWInfo == 0)
 		goto update_cleanup;
 	okOnePass = sqlWhereOkOnePass(pWInfo, aiCurOnePass);

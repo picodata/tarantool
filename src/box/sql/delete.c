@@ -212,12 +212,6 @@ sql_table_delete_from(struct Parse *parse, struct SrcList *tab_list,
 		int reg_pk = parse->nMem + 1;
 		int pk_len = is_view ? 1 :
 			     space->index[0]->def->key_def->part_count;
-		/*
-		 * This increase should not be necessary, but when filling
-		 * the tab_cursor cursors, an error occurs that causes
-		 * one more cursor to be filled than expected.
-		 */
-		parse->nTab++;
 		int eph_cursor = parse->nTab++;
 		struct sql_space_info *info;
 		if (is_view) {
