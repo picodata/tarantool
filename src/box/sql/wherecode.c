@@ -49,10 +49,12 @@ sql_table_func_emit_arg_cast(struct Parse *parse, struct SrcItem *item, int reg)
 	const struct sql_table_func_def *func =
 		sql_table_func_find(item->zName, strlen(item->zName), false);
 	assert(func != NULL);
-	if (func->param_types == NULL)
+	const enum field_type *types =
+		sql_table_func_param_types(func, item->u1.pFuncArg);
+	if (types == NULL)
 		return;
-	sqlVdbeAddOp4(parse->pVdbe, OP_ApplyType, reg, func->param_count, 0,
-		      (char *)func->param_types, P4_STATIC);
+	sqlVdbeAddOp4(parse->pVdbe, OP_ApplyType, reg, item->u1.pFuncArg->nExpr,
+		      0, (char *)types, P4_STATIC);
 }
 
 void

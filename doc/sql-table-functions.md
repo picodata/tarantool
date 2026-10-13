@@ -18,13 +18,44 @@ memory, so a large range can be read with `LIMIT`.
 
 | Call | Result |
 |---|---|
-| `GENERATE_SERIES(start, stop)` | `VALUE INTEGER`, a range with a step of 1 |
+| `GENERATE_SERIES(start, stop)` | `VALUE`, a range with a step of 1 |
+| `GENERATE_SERIES(start, stop, step)` | `VALUE`, a range with a step |
 | `UNNEST(array)` | `VALUE`, elements of a SQL or JSON array |
 | `JSON_EACH(object)` | `KEY STRING`, `VALUE JSON`, pairs from a JSON object |
 
-`GENERATE_SERIES` takes two integers that fit in `int64` and includes both
-bounds. For example, `(1, 3)` gives `1, 2, 3`, and `(3, 1)` gives no rows.
-A range containing only `INT64_MAX` returns that value without overflowing.
+`GENERATE_SERIES` gives an `INTEGER` or a `DECIMAL` series. An `INTEGER`
+series takes two integers that fit in `int64` and includes both bounds. For
+example, `(1, 3)` gives `1, 2, 3`, and `(3, 1)` gives no rows. A range
+containing only `INT64_MAX` returns that value without overflowing.
+
+If an argument has the `DECIMAL` type, the result is a `DECIMAL` series. It
+starts at `start` and adds 1 while the value is not greater than `stop`. For
+example, `(1.5, 4)` gives `1.5, 2.5, 3.5`, and `(1, 2.5)` gives `1, 2` as
+`DECIMAL` values. The first value has the scale of `start`. Each next value
+is a sum, as for `+`, with the larger of the scales of the previous value and
+the step: `(1.50, 3)` gives `1.50, 2.50`, and `(0, 1, 0.25)` gives
+`0, 0.25, 0.50, 0.75, 1.00`. A series that reaches the largest `DECIMAL` value
+ends there without an error.
+
+With a third argument, each value is the previous one plus `step`. The series
+includes `stop` only if a step gives exactly that value: `(1, 10, 3)` gives
+`1, 4, 7, 10`, and `(1, 9, 3)` gives `1, 4, 7`. A negative step gives a series
+that decreases to `stop`: `(10, 1, -3)` gives `10, 7, 4, 1`. If the step goes
+away from `stop`, the series is empty. A zero step is an error. A series that
+reaches a limit of its type ends there without an error.
+
+A step that does not change a value of the series is an error when the series
+needs the next value. A `DECIMAL` step that is too small for the precision of
+the value has this effect: `GENERATE_SERIES(1.0, 2, 1e-38)`, with the step
+written as a decimal literal, gives the row `1.0` and then the error.
+
+A `DECIMAL` value has no more than 38 digits. If the sum of a value and the
+step needs more digits, it is rounded, as the result of `+` is. The series
+continues from the rounded value, so the difference of two adjacent values can
+then be different from the step, and the series can have fewer values than
+the bounds and the step give. For example, from
+`9999999999999999999999999999999999990.5` with a step of `0.25` the next
+values end with `990.8` and `991.1`. There is no error in this case.
 
 `UNNEST` reads the top-level elements in array order. It does not recursively
 expand nested arrays or objects: `[[1], [2]]` produces two array values.
@@ -59,12 +90,26 @@ Errors while evaluating an argument are also preserved. The function checks
 the types of non-NULL values before deciding that SQL `NULL` makes it empty.
 
 `GENERATE_SERIES` checks and casts its arguments as a built-in scalar function
-with `INTEGER` arguments does. A `DOUBLE` or `DECIMAL` value with an exact
-integer value is cast: `GENERATE_SERIES(1.0, 3)` gives three rows. A type that
-cannot be an integer, such as `STRING`, is an error when the statement is
-prepared. A value whose type is known only at execution, such as a bound
-parameter, gives a type mismatch then. Both bounds must be in the range of a
-signed 64-bit integer.
+does. The types of the arguments at the preparation of the statement select
+the type of the series:
+
+- With a `DECIMAL` argument, the arguments are cast to `DECIMAL`. An
+  `INTEGER` or a `DOUBLE` value is cast: `GENERATE_SERIES(1.5, 25e-1)` gives
+  `1.5, 2.5`. A `DECIMAL` step makes a `DECIMAL` series too:
+  `GENERATE_SERIES(0, 1, 0.5)` gives `0, 0.5, 1.0`.
+- In all other cases, the arguments are cast to `INTEGER`. A `DOUBLE` value
+  with an exact integer value is cast: `GENERATE_SERIES(1e0, 3)` gives three
+  rows. The bounds and the step must be in the range of a signed 64-bit
+  integer.
+
+A bound parameter has no type at the preparation, so it does not select
+a `DECIMAL` series: `GENERATE_SERIES(?, ?)` is an `INTEGER` series for all
+values. Use `CAST(? AS DECIMAL)` for one of the arguments to get a `DECIMAL`
+series.
+
+A type that cannot be a number, such as `STRING`, is an error when the
+statement is prepared. A value whose type is known only at execution, such as
+a bound parameter, gives a type mismatch then.
 
 JSON `null` is a JSON value, not SQL `NULL`. It is invalid where an array or
 object is required, but remains a value when read from a container.
@@ -377,10 +422,11 @@ There is no separate flag for an exact estimate. Preparing or explaining a
 query does not evaluate arguments, open iterators, or read data for estimates.
 
 An array constructor's length is known without evaluating its elements:
-`[t.a, t.b]` has two elements. A range size is calculated for integer literals,
-including their sign. When the size is unknown, the estimate is 100 rows for
-`UNNEST` and `JSON_EACH`, and 1000 for `GENERATE_SERIES`. Even a constant JSON
-`CAST` uses the default estimate, since the cast is not evaluated at this stage.
+`[t.a, t.b]` has two elements. A range size is calculated for integer and
+decimal literals, including their sign and a literal step. When the size is
+unknown, the estimate is 100 rows for `UNNEST` and `JSON_EACH`, and 1000 for
+`GENERATE_SERIES`. Even a constant JSON `CAST` uses the default estimate,
+since the cast is not evaluated at this stage.
 
 ```sql
 EXPLAIN QUERY PLAN SELECT * FROM GENERATE_SERIES(1, 2);
@@ -481,10 +527,10 @@ uses the table function. No data migration is needed.
 This feature uses existing SQL and JSON types. It does not introduce typed
 arrays such as `ARRAY<T>`, enforce homogeneous arrays, or add public
 registration of user-defined table functions. Full `LATERAL`, correlated
-subqueries in arguments, custom range steps, and multi-array `UNNEST` are
-outside its scope. JSON string conversion and string extraction keep their existing
-rules. Cache invalidation when replacing a scalar function used in an
-argument is also a separate concern.
+subqueries in arguments, and multi-array `UNNEST` are outside its scope. JSON
+string conversion and string extraction keep their existing rules. Cache
+invalidation when replacing a scalar function used in an argument is also a
+separate concern.
 
 Filters are not pushed into the generator, and its natural order is not
 used to eliminate an `ORDER BY`, so a full scan or sort in such a plan is

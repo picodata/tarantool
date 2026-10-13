@@ -47,6 +47,15 @@ struct sql_table_func_ops {
 	/** Estimate rows without evaluating argument expressions. */
 	uint64_t (*estimate_rows)(struct ExprList *args);
 	/**
+	 * Return the types of the arguments of this call. With the types,
+	 * the arguments get the type check and the implicit cast of a
+	 * built-in scalar function before the iterator opens. Optional:
+	 * without it, the function checks its arguments itself. The array
+	 * must be static and have one type for each argument of the call.
+	 * The function must not be variadic.
+	 */
+	const enum field_type *(*param_types)(struct ExprList *args);
+	/**
 	 * Open an iterator over trusted SQL arguments encoded as a MsgPack
 	 * array. The cursor owns these bytes until close. On error, release
 	 * partial state and leave *ctx NULL; close is called only on success.
@@ -84,11 +93,10 @@ struct sql_table_func_def {
 	/** Exact argument count, or -1 for a variadic function. */
 	int param_count;
 	/**
-	 * Types of the arguments, or NULL. With the types, the arguments get
-	 * the type check and the implicit cast of a built-in scalar function
-	 * before the iterator opens. The argument count must be exact.
+	 * If not 0, the function takes from param_count to param_count_max
+	 * arguments. It must be greater than param_count.
 	 */
-	const enum field_type *param_types;
+	int param_count_max;
 	/** Result column definitions. */
 	const struct field_def *fields;
 	/** Number of result columns. */
@@ -110,6 +118,14 @@ sql_table_func_register(const struct sql_table_func_def *defs, uint32_t count);
 /** Find a registered SQL table function by name. */
 const struct sql_table_func_def *
 sql_table_func_find(const char *name, uint32_t name_len, bool is_runtime);
+
+/**
+ * Return the types of the arguments of a call, or NULL if the function
+ * does not check and cast its arguments.
+ */
+const enum field_type *
+sql_table_func_param_types(const struct sql_table_func_def *func,
+			   struct ExprList *args);
 
 /**
  * Check that the arguments of a call can have the types that the function

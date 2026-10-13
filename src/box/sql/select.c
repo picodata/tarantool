@@ -5130,9 +5130,15 @@ sql_table_func_expand(Parse *parse, struct SrcItem *from)
 	}
 
 	int argc = from->u1.pFuncArg != NULL ? from->u1.pFuncArg->nExpr : 0;
-	if (table_func->param_count != -1 && table_func->param_count != argc) {
+	int argc_min = table_func->param_count;
+	int argc_max = table_func->param_count_max != 0 ?
+		       table_func->param_count_max : argc_min;
+	if (argc_min != -1 && (argc < argc_min || argc > argc_max)) {
+		const char *expected = argc_min == argc_max ?
+			tt_sprintf("%d", argc_min) :
+			tt_sprintf("from %d to %d", argc_min, argc_max);
 		diag_set(ClientError, ER_FUNC_WRONG_ARG_COUNT, from->zName,
-			 tt_sprintf("%d", table_func->param_count), argc);
+			 expected, argc);
 		parse->is_aborted = true;
 		return -1;
 	}

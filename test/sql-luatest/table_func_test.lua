@@ -463,8 +463,8 @@ g.test_table_func_name_is_case_sensitive = function(cg)
     end)
 end
 
--- GENERATE_SERIES checks and casts its arguments as a built-in scalar
--- function with INTEGER arguments does.
+-- Without a DECIMAL argument, GENERATE_SERIES checks and casts its
+-- arguments as a built-in scalar function with INTEGER arguments does.
 g.test_generate_series_arg_types = function(cg)
     cg.server:exec(function()
         box.execute([[CREATE TABLE T_TFUNC_ARG(ID INT PRIMARY KEY, D DOUBLE,
@@ -473,13 +473,13 @@ g.test_generate_series_arg_types = function(cg)
         box.execute([[INSERT INTO T_TFUNC_ARG VALUES(1, 2.0, 2, 2, 'a');]])
         -- A number with an exact integer value is cast to INTEGER.
         for _, case in ipairs({
-            {[[SELECT * FROM generate_series(1.0, 2);]]},
+            {[[SELECT * FROM generate_series(1e0, 2);]]},
             {[[SELECT * FROM generate_series(1, 2e0);]]},
             {[[SELECT * FROM generate_series(?, ?);]], {1, 2.0}},
+            {[[SELECT * FROM generate_series(?, ?);]],
+             {1, require('decimal').new('2.0')}},
             {[[SELECT g.VALUE FROM T_TFUNC_ARG t,
                       generate_series(1, t.D) g;]]},
-            {[[SELECT g.VALUE FROM T_TFUNC_ARG t,
-                      generate_series(1, t.C) g;]]},
         }) do
             local res = box.execute(case[1], case[2] or {})
             t.assert_equals(res.rows, {{1}, {2}}, case[1])
@@ -500,10 +500,12 @@ g.test_generate_series_arg_types = function(cg)
         end
         -- Other values give a type mismatch at the execution.
         for _, case in ipairs({
-            {[[SELECT * FROM generate_series(1.5, 3);]], {},
-             'decimal(1.5)'},
+            {[[SELECT * FROM generate_series(1.5e0, 3);]], {},
+             'double(1.5)'},
             {[[SELECT * FROM generate_series(?, ?);]], {1, 2.5},
              'double(2.5)'},
+            {[[SELECT * FROM generate_series(?, ?);]],
+             {require('decimal').new('1.5'), 3}, 'decimal(1.5)'},
             {[[SELECT * FROM generate_series(?, ?);]], {'a', 2},
              "string('a')"},
             {[[SELECT g.VALUE FROM T_TFUNC_ARG t,
@@ -518,6 +520,378 @@ g.test_generate_series_arg_types = function(cg)
             [[SELECT * FROM generate_series(1, 18446744073709551615);]])
         t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
                         'integer is overflowed')
+    end)
+end
+
+-- With a DECIMAL argument, GENERATE_SERIES gives DECIMAL values with
+-- a step of 1. The series starts at the first argument and includes the
+-- second one only if a step gives it.
+g.test_generate_series_decimal = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        local function dec(values)
+            local rows = {}
+            for i, value in ipairs(values) do
+                rows[i] = {decimal.new(value)}
+            end
+            return rows
+        end
+        for _, case in ipairs({
+            {'1.5, 3.5', {'1.5', '2.5', '3.5'}},
+            {'1.5, 4', {'1.5', '2.5', '3.5'}},
+            {'1, 3.99', {'1', '2', '3'}},
+            {'1.0, 2', {'1', '2'}},
+            {'-1.25, 1.25', {'-1.25', '-0.25', '0.75'}},
+            {'2.5, 2.5', {'2.5'}},
+            {'3.5, 1.5', {}},
+            {'CAST(1 AS DECIMAL), 2', {'1', '2'}},
+        }) do
+            local sql = ('SELECT * FROM generate_series(%s);'):format(case[1])
+            local res = box.execute(sql)
+            t.assert_equals(res.metadata, {{name = 'VALUE', type = 'decimal'}},
+                            sql)
+            t.assert_equals(res.rows, dec(case[2]), sql)
+        end
+        -- The values have the scale of the first argument.
+        local res = box.execute([[SELECT CAST(VALUE AS STRING)
+                                  FROM generate_series(1.50, 3);]])
+        t.assert_equals(res.rows, {{'1.50'}, {'2.50'}})
+        -- The values are usual DECIMAL values.
+        res = box.execute([[SELECT count(*), sum(VALUE), max(VALUE) + 1
+                            FROM generate_series(0.5, 1000);]])
+        t.assert_equals(res.rows, {{1000, decimal.new('500000'),
+                                    decimal.new('1000.5')}})
+        res = box.execute([[SELECT * FROM generate_series(1.5, 3)
+                            WITH ORDINALITY;]])
+        t.assert_equals(res.rows, {{decimal.new('1.5'), 1},
+                                   {decimal.new('2.5'), 2}})
+        local stmt = box.prepare([[SELECT * FROM generate_series(1.5, 2);]])
+        t.assert_equals(stmt.metadata[1].type, 'decimal')
+        stmt:unprepare()
+    end)
+end
+
+-- An argument of a DECIMAL series that is not a DECIMAL is cast to
+-- DECIMAL, as an argument of a built-in scalar function is.
+g.test_generate_series_decimal_arg_types = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        box.execute([[CREATE TABLE T_TFUNC_DEC(ID INT PRIMARY KEY, D DOUBLE,
+                                               C DECIMAL, N NUMBER,
+                                               S STRING);]])
+        box.execute([[INSERT INTO T_TFUNC_DEC VALUES(1, 2.5, 1.5, 3, 'a');]])
+        local rows = {{decimal.new('1.5')}, {decimal.new('2.5')}}
+        for _, case in ipairs({
+            {[[SELECT * FROM generate_series(1.5, 3);]]},
+            {[[SELECT * FROM generate_series(1.5, 25e-1);]]},
+            {[[SELECT * FROM generate_series(1.5, ?);]], {3}},
+            {[[SELECT * FROM generate_series(1.5, ?);]], {2.5}},
+            {[[SELECT * FROM generate_series(CAST(? AS DECIMAL), ?);]],
+             {1.5, 3}},
+            {[[SELECT g.VALUE FROM T_TFUNC_DEC t,
+                      generate_series(t.C, 3) g;]]},
+            {[[SELECT g.VALUE FROM T_TFUNC_DEC t,
+                      generate_series(t.C, t.D) g;]]},
+            {[[SELECT b.VALUE FROM generate_series(1.5, 1.5) a,
+                      generate_series(a.VALUE, 3) b;]]},
+        }) do
+            local res = box.execute(case[1], case[2] or {})
+            t.assert_equals(res.metadata[1].type, 'decimal', case[1])
+            t.assert_equals(res.rows, rows, case[1])
+        end
+        -- A parameter with no cast does not make a DECIMAL series.
+        local res = box.execute([[SELECT * FROM generate_series(?, ?);]],
+                                {decimal.new('1.0'), decimal.new('2')})
+        t.assert_equals(res.metadata[1].type, 'integer')
+        t.assert_equals(res.rows, {{1}, {2}})
+        -- SQL NULL as an argument gives no rows.
+        for _, args in ipairs({'1.5, NULL', 'NULL, 1.5'}) do
+            res = box.execute('SELECT * FROM generate_series(' .. args .. ');')
+            t.assert_equals(res.metadata[1].type, 'decimal')
+            t.assert_equals(res.rows, {})
+        end
+        -- A wrong type is an error of the preparation when it is known.
+        for _, sql in ipairs({
+            [[SELECT * FROM generate_series(1.5, 'a');]],
+            [[SELECT * FROM generate_series(true, 1.5);]],
+            [[SELECT * FROM generate_series(1.5, [1]);]],
+            [[SELECT g.VALUE FROM T_TFUNC_DEC t,
+                     generate_series(1.5, t.S) g;]],
+        }) do
+            local stmt, err = box.prepare(sql)
+            t.assert_equals(stmt, nil)
+            t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                            'wrong arguments for function GENERATE_SERIES()',
+                            sql)
+        end
+        -- Other values give a type mismatch at the execution.
+        for _, case in ipairs({
+            {[[SELECT * FROM generate_series(1.5, ?);]], {'a'},
+             "string('a')"},
+            {[[SELECT g.VALUE FROM T_TFUNC_DEC t,
+                      generate_series(1.5, t.N) g;]], {}, 'number(3)'},
+        }) do
+            local _, err = box.execute(case[1], case[2])
+            t.assert_equals(err.message, 'Type mismatch: can not convert ' ..
+                            case[3] .. ' to decimal', case[1])
+        end
+        box.execute([[DROP TABLE T_TFUNC_DEC;]])
+    end)
+end
+
+-- A DECIMAL series ends without an error at the largest DECIMAL value.
+g.test_generate_series_decimal_limits = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        local max = '99999999999999999999999999999999999999'
+        local res = box.execute(([[SELECT * FROM generate_series(%s.0 - 1,
+                                                                 %s.0);]])
+                                :format(max, max))
+        t.assert_equals(res.rows, {{decimal.new(max) - 1},
+                                   {decimal.new(max)}})
+        res = box.execute(([[SELECT * FROM generate_series(-%s.0,
+                                                           -%s.0 + 1);]])
+                          :format(max, max))
+        t.assert_equals(res.rows, {{-decimal.new(max)},
+                                   {-decimal.new(max) + 1}})
+        -- A large series is not kept in memory.
+        res = box.execute(([[SELECT * FROM generate_series(0.5, %s.0)
+                             LIMIT 2;]]):format(max))
+        t.assert_equals(res.rows, {{decimal.new('0.5')},
+                                   {decimal.new('1.5')}})
+    end)
+end
+
+-- The row estimate of a DECIMAL series comes from its literal bounds.
+g.test_generate_series_decimal_plan_estimate = function(cg)
+    cg.server:exec(function()
+        for _, case in ipairs({
+            {'-0.5, 2', '~3 rows'},
+            {'1.5, 2.4', '~1 row'},
+            {'1.5, 1000000', '~983040 rows'},
+            -- The estimate of a series that is not a literal one.
+            {'1.5, abs(2)', '~960 rows'},
+        }) do
+            local res = box.execute('EXPLAIN QUERY PLAN SELECT * FROM ' ..
+                                    'generate_series(' .. case[1] .. ');')
+            t.assert_equals(res.rows, {
+                {0, 0, 0, 'SCAN TABLE GENERATE_SERIES (' .. case[2] .. ')'},
+            }, case[1])
+        end
+    end)
+end
+
+-- With a third argument, GENERATE_SERIES has this argument as the step:
+-- each value is the previous one plus the step. A negative step gives
+-- a series that decreases.
+g.test_generate_series_step = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        for _, case in ipairs({
+            {'1, 10, 3', {1, 4, 7, 10}},
+            {'1, 9, 3', {1, 4, 7}},
+            {'10, 1, -3', {10, 7, 4, 1}},
+            {'-1, 1, 1', {-1, 0, 1}},
+            {'5, 5, 2', {5}},
+            {'5, 5, -2', {5}},
+            -- The step goes away from the last bound.
+            {'1, 10, -1', {}},
+            {'10, 1, 1', {}},
+        }) do
+            local sql = ('SELECT * FROM generate_series(%s);'):format(case[1])
+            local res = box.execute(sql)
+            t.assert_equals(res.metadata, {{name = 'VALUE', type = 'integer'}},
+                            sql)
+            local rows = {}
+            for i, value in ipairs(case[2]) do
+                rows[i] = {value}
+            end
+            t.assert_equals(res.rows, rows, sql)
+        end
+        -- A DECIMAL argument, the step included, gives a DECIMAL series.
+        for _, case in ipairs({
+            {'1, 2, 0.5', {'1', '1.5', '2.0'}},
+            {'0, 1, 0.25', {'0', '0.25', '0.50', '0.75', '1.00'}},
+            {'1.5, 0, -0.5', {'1.5', '1.0', '0.5', '0.0'}},
+            {'1.5, 4, 2', {'1.5', '3.5'}},
+            {'1.5, 4, -2', {}},
+        }) do
+            local sql = ('SELECT CAST(VALUE AS STRING), typeof(VALUE) ' ..
+                         'FROM generate_series(%s);'):format(case[1])
+            local rows = {}
+            for i, value in ipairs(case[2]) do
+                rows[i] = {value, 'decimal'}
+            end
+            t.assert_equals(box.execute(sql).rows, rows, sql)
+        end
+        local res = box.execute([[SELECT * FROM generate_series(1, 7, 3)
+                                  WITH ORDINALITY;]])
+        t.assert_equals(res.rows, {{1, 1}, {4, 2}, {7, 3}})
+        res = box.execute([[SELECT sum(VALUE) FROM
+                            generate_series(0, 1, 0.001);]])
+        t.assert_equals(res.rows, {{decimal.new('500.5')}})
+    end)
+end
+
+-- The step is cast to the type of the series. A zero step is an error.
+g.test_generate_series_step_arg_types = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        for _, case in ipairs({
+            {[[SELECT * FROM generate_series(1, 5, 2e0);]]},
+            {[[SELECT * FROM generate_series(1, 5, ?);]], {2}},
+            {[[SELECT * FROM generate_series(?, ?, ?);]], {1, 5, 2}},
+            {[[SELECT * FROM generate_series(?, ?, ?);]],
+             {1, 5, decimal.new('2.0')}},
+        }) do
+            local res = box.execute(case[1], case[2] or {})
+            t.assert_equals(res.metadata[1].type, 'integer', case[1])
+            t.assert_equals(res.rows, {{1}, {3}, {5}}, case[1])
+        end
+        local res = box.execute([[SELECT * FROM generate_series(1.5, 4, ?);]],
+                                {2})
+        t.assert_equals(res.rows, {{decimal.new('1.5')}, {decimal.new('3.5')}})
+        -- SQL NULL as the step gives no rows, also with other arguments
+        -- that give an error with a step that is not NULL.
+        for _, args in ipairs({'1, 5, NULL', '1.5, 4, NULL',
+                               'NULL, 5, 0', '1, NULL, 0'}) do
+            res = box.execute('SELECT * FROM generate_series(' .. args .. ');')
+            t.assert_equals(res.rows, {}, args)
+        end
+        for _, args in ipairs({'1, 5, 0', '1, 5, 0.0', '1.5, 4, 0',
+                               '5, 1, 0'}) do
+            local _, err = box.execute('SELECT * FROM generate_series(' ..
+                                       args .. ');')
+            t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                            'the step of generate_series cannot be zero', args)
+        end
+        local _, err = box.execute([[SELECT * FROM generate_series(1, 5, ?);]],
+                                   {0})
+        t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                        'the step of generate_series cannot be zero')
+        -- A wrong type is an error of the preparation when it is known.
+        for _, args in ipairs({"1, 5, 'a'", '1, 5, true', '1.5, 4, [1]'}) do
+            local sql = ('SELECT * FROM generate_series(%s);'):format(args)
+            local stmt
+            stmt, err = box.prepare(sql)
+            t.assert_equals(stmt, nil)
+            t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                            'wrong arguments for function GENERATE_SERIES()',
+                            sql)
+        end
+        -- Other values give a type mismatch at the execution.
+        for _, case in ipairs({
+            {[[SELECT * FROM generate_series(1, 5, 15e-1);]], {},
+             'double(1.5) to integer'},
+            {[[SELECT * FROM generate_series(1, 5, ?);]], {'a'},
+             "string('a') to integer"},
+            {[[SELECT * FROM generate_series(1.5, 4, ?);]], {'a'},
+             "string('a') to decimal"},
+        }) do
+            _, err = box.execute(case[1], case[2])
+            t.assert_equals(err.message, 'Type mismatch: can not convert ' ..
+                            case[3], case[1])
+        end
+    end)
+end
+
+-- A series with a step ends without an error at the limits of its type.
+g.test_generate_series_step_limits = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        local res = box.execute([[SELECT * FROM generate_series(
+            9223372036854775800, 9223372036854775807, 5);]])
+        t.assert_equals(res.rows, {{9223372036854775800LL},
+                                   {9223372036854775805LL}})
+        res = box.execute([[SELECT * FROM generate_series(
+            -9223372036854775800, -9223372036854775808, -5);]])
+        t.assert_equals(res.rows, {{-9223372036854775800LL},
+                                   {-9223372036854775805LL}})
+        res = box.execute([[SELECT * FROM generate_series(
+            9223372036854775807, 0, -9223372036854775807) ;]])
+        t.assert_equals(res.rows, {{9223372036854775807LL}, {0}})
+        local max = '99999999999999999999999999999999999999'
+        res = box.execute(([[SELECT * FROM generate_series(%s.0 - 9, %s.0,
+                                                           6);]])
+                          :format(max, max))
+        t.assert_equals(res.rows, {{decimal.new(max) - 9},
+                                   {decimal.new(max) - 3}})
+    end)
+end
+
+-- A DECIMAL value has no more than 38 digits. A sum of a value and the
+-- step that needs more digits is rounded, as the result of `+` is, and
+-- the series continues from the rounded value with no error.
+g.test_generate_series_decimal_rounding = function(cg)
+    cg.server:exec(function()
+        local start = '9999999999999999999999999999999999990.5'
+        local stop = '9999999999999999999999999999999999999.5'
+        local sql = ('SELECT CAST(VALUE AS STRING) FROM generate_series(' ..
+                     '%s, %s, 0.25)'):format(start, stop)
+        local res = box.execute(sql .. ' LIMIT 3;')
+        t.assert_equals(res.rows, {
+            {'9999999999999999999999999999999999990.5'},
+            {'9999999999999999999999999999999999990.8'},
+            {'9999999999999999999999999999999999991.1'},
+        })
+        -- The same result as for the addition.
+        res = box.execute(('SELECT CAST(%s + 0.25 AS STRING);'):format(start))
+        t.assert_equals(res.rows,
+                        {{'9999999999999999999999999999999999990.8'}})
+        -- The exact series has 37 values.
+        res = box.execute('SELECT count(*) FROM (' .. sql .. ');')
+        t.assert_equals(res.rows, {{31}})
+    end)
+end
+
+-- A step that is too small to change a value of the series is an error
+-- when the series needs the next value.
+g.test_generate_series_step_does_not_change_value = function(cg)
+    cg.server:exec(function()
+        local decimal = require('decimal')
+        local message = 'Failed to execute SQL statement: the step of ' ..
+                        'generate_series does not change the value'
+        local tiny = '0.00000000000000000000000000000000000001'
+        for _, args in ipairs({
+            '1.0, 2, ' .. tiny,
+            '10000000000000000000000000000000000000.0, ' ..
+            '10000000000000000000000000000000000002.0, 0.00001',
+        }) do
+            local sql = ('SELECT * FROM generate_series(%s);'):format(args)
+            local _, err = box.execute(sql)
+            t.assert_equals(err.message, message, sql)
+        end
+        -- There is no error if the series does not need the next value.
+        local res = box.execute(('SELECT * FROM generate_series(1.0, 2, %s) ' ..
+                                 'LIMIT 1;'):format(tiny))
+        t.assert_equals(res.rows, {{decimal.new('1.0')}})
+        res = box.execute(('SELECT * FROM generate_series(1.0, 1.0, %s);')
+                          :format(tiny))
+        t.assert_equals(res.rows, {{decimal.new('1.0')}})
+    end)
+end
+
+-- The row estimate of a series with a step comes from its literal
+-- arguments.
+g.test_generate_series_step_plan_estimate = function(cg)
+    cg.server:exec(function()
+        for _, case in ipairs({
+            {'1, 10, 3', '~4 rows'},
+            {'10, 1, -3', '~4 rows'},
+            {'1, 10, -1', '~1 row'},
+            {'1, 1000000, 10', '~98304 rows'},
+            {'0, 1, 0.25', '~5 rows'},
+            {'1.5, 0, -0.5', '~4 rows'},
+            {'1, 10, NULL', '~1 row'},
+            -- The estimate of a series that is not a literal one.
+            {'1, 10, abs(1)', '~960 rows'},
+        }) do
+            local res = box.execute('EXPLAIN QUERY PLAN SELECT * FROM ' ..
+                                    'generate_series(' .. case[1] .. ');')
+            t.assert_equals(res.rows, {
+                {0, 0, 0, 'SCAN TABLE GENERATE_SERIES (' .. case[2] .. ')'},
+            }, case[1])
+        end
     end)
 end
 
@@ -872,8 +1246,11 @@ g.test_errors = function(cg)
                               'GENERATE_SERIES()')
 
         _, err = box.execute([[SELECT * FROM generate_series(1);]])
-        t.assert_str_contains(err.message,
-                              'Wrong number of arguments')
+        t.assert_equals(err.message, 'Wrong number of arguments is passed ' ..
+                        'to GENERATE_SERIES(): expected from 2 to 3, got 1')
+        _, err = box.execute([[SELECT * FROM generate_series(1, 2, 3, 4);]])
+        t.assert_equals(err.message, 'Wrong number of arguments is passed ' ..
+                        'to GENERATE_SERIES(): expected from 2 to 3, got 4')
     end)
 end
 
@@ -1311,7 +1688,7 @@ g.test_extended_types_and_containers = function(cg)
         end
         for _, source in ipairs({"JSON_EACH({'x':1})",
                                  'JSON_EACH(JSON_NULL())',
-                                 'GENERATE_SERIES(1.5,2)',
+                                 'GENERATE_SERIES(1.5e0,2)',
                                  'GENERATE_SERIES(0,9223372036854775808)'}) do
             local _, err = box.execute('SELECT * FROM ' .. source)
             t.assert(err)

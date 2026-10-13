@@ -36,6 +36,7 @@
  */
 #include "sqlInt.h"
 #include "mem.h"
+#include "mp_decimal.h"
 #include "mp_json.h"
 #include "port.h"
 #include "func.h"
@@ -114,13 +115,48 @@ unnest_resolve_schema(struct ExprList *args, struct field_def *fields)
 	return 0;
 }
 
-/** Set the fixed INTEGER column type of a series. */
+/** Number of the arguments of a series with a step. */
+#define GENERATE_SERIES_STEP_ARGC 3
+
+/**
+ * Return the type of the values of a series, from the types of the
+ * arguments at the preparation of the statement:
+ *  - DECIMAL, if an argument has the DECIMAL type;
+ *  - INTEGER in all other cases.
+ */
+static enum field_type
+generate_series_type(struct ExprList *args)
+{
+	enum field_type type = FIELD_TYPE_INTEGER;
+	for (int i = 0; i < args->nExpr; i++) {
+		struct Expr *arg = sqlExprSkipCollate(args->a[i].pExpr);
+		enum field_type arg_type = sql_expr_type(arg);
+		if (arg_type == FIELD_TYPE_DECIMAL)
+			type = FIELD_TYPE_DECIMAL;
+	}
+	return type;
+}
+
+/** Set the column type of a series. */
 static int
 generate_series_resolve_schema(struct ExprList *args, struct field_def *fields)
 {
-	(void)args;
-	fields[0].type = FIELD_TYPE_INTEGER;
+	fields[0].type = generate_series_type(args);
 	return 0;
+}
+
+/** Cast the bounds and the step of a series to the types of the series. */
+static const enum field_type *
+generate_series_param_types(struct ExprList *args)
+{
+	static const enum field_type integer_types[] = {
+		FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER,
+	};
+	static const enum field_type decimal_types[] = {
+		FIELD_TYPE_DECIMAL, FIELD_TYPE_DECIMAL, FIELD_TYPE_DECIMAL,
+	};
+	enum field_type type = generate_series_type(args);
+	return type == FIELD_TYPE_DECIMAL ? decimal_types : integer_types;
 }
 
 /** Set the fixed key and value types of a JSON object iterator. */
@@ -173,22 +209,98 @@ expr_read_int(struct Expr *expr, int64_t *value)
 	return true;
 }
 
-/** Estimate a range size from literal bounds without evaluating them. */
+/** Read only a decimal literal, optionally preceded by a sign. */
+static bool
+expr_read_decimal(struct Expr *expr, decimal_t *value)
+{
+	expr = sqlExprSkipCollate(expr);
+	bool neg = expr->op == TK_UMINUS;
+	if (neg || expr->op == TK_UPLUS)
+		expr = expr->pLeft;
+	if (expr->op != TK_DECIMAL ||
+	    decimal_from_string(value, expr->u.zToken) == NULL)
+		return false;
+	if (neg)
+		decimal_minus(value, value);
+	return true;
+}
+
+/** Read a literal argument of a DECIMAL series: a decimal or an integer. */
+static bool
+expr_read_decimal_arg(struct Expr *expr, decimal_t *value)
+{
+	int64_t integer;
+	if (expr_read_int(expr, &integer)) {
+		decimal_from_int64(value, integer);
+		return true;
+	}
+	return expr_read_decimal(expr, value);
+}
+
+/** Return the number of the values of a series of integers. */
+static uint64_t
+generate_series_count_integers(int64_t start, int64_t stop, int64_t step)
+{
+	bool is_descending = step < 0;
+	if (step == 0 || (is_descending ? start < stop : start > stop))
+		return 0;
+	uint64_t diff = is_descending ? (uint64_t)start - (uint64_t)stop :
+					(uint64_t)stop - (uint64_t)start;
+	uint64_t abs_step = is_descending ? -(uint64_t)step : (uint64_t)step;
+	uint64_t count = diff / abs_step;
+	return count == UINT64_MAX ? UINT64_MAX : count + 1;
+}
+
+/** Return the number of the values of a series of decimals. */
+static uint64_t
+generate_series_count_decimals(const decimal_t *start, const decimal_t *stop,
+			       const decimal_t *step)
+{
+	decimal_t zero;
+	decimal_zero(&zero);
+	int sign = decimal_compare(step, &zero);
+	int cmp = decimal_compare(start, stop);
+	if (sign == 0 || (sign < 0 ? cmp < 0 : cmp > 0))
+		return 0;
+	/* The series has floor((stop - start) / step) + 1 values. */
+	decimal_t quotient;
+	uint64_t count;
+	if (decimal_sub(&quotient, stop, start) == NULL ||
+	    decimal_div(&quotient, &quotient, step) == NULL ||
+	    decimal_floor(&quotient, 0) == NULL ||
+	    decimal_to_uint64(&quotient, &count) == NULL ||
+	    count == UINT64_MAX)
+		return UINT64_MAX;
+	return count + 1;
+}
+
+/** Estimate a range size from literal arguments without evaluating them. */
 static uint64_t
 generate_series_estimate_rows(struct ExprList *args)
 {
+	for (int i = 0; i < args->nExpr; i++) {
+		if (sqlExprSkipCollate(args->a[i].pExpr)->op == TK_NULL)
+			return 0;
+	}
 	struct Expr *start_expr = args->a[0].pExpr;
 	struct Expr *stop_expr = args->a[1].pExpr;
-	if (start_expr->op == TK_NULL || stop_expr->op == TK_NULL)
-		return 0;
+	/* A series with no step has a step of 1. */
+	struct Expr *step_expr = args->nExpr == GENERATE_SERIES_STEP_ARGC ?
+				 args->a[2].pExpr : NULL;
 	int64_t start, stop;
-	if (!expr_read_int(start_expr, &start) ||
-	    !expr_read_int(stop_expr, &stop))
-		return 1000;
-	if (start > stop)
-		return 0;
-	uint64_t diff = (uint64_t)stop - (uint64_t)start;
-	return diff == UINT64_MAX ? UINT64_MAX : diff + 1;
+	int64_t step = 1;
+	if (expr_read_int(start_expr, &start) &&
+	    expr_read_int(stop_expr, &stop) &&
+	    (step_expr == NULL || expr_read_int(step_expr, &step)))
+		return generate_series_count_integers(start, stop, step);
+	decimal_t dec_start, dec_stop, dec_step;
+	decimal_from_int64(&dec_step, 1);
+	if (expr_read_decimal_arg(start_expr, &dec_start) &&
+	    expr_read_decimal_arg(stop_expr, &dec_stop) &&
+	    (step_expr == NULL || expr_read_decimal_arg(step_expr, &dec_step)))
+		return generate_series_count_decimals(&dec_start, &dec_stop,
+						      &dec_step);
+	return 1000;
 }
 
 /** Count constructor elements, or use the default array size estimate. */
@@ -211,38 +323,161 @@ json_each_estimate_rows(struct ExprList *args)
 }
 
 /*
- * MsgPack fixarray(1) plus the largest encoded int64/uint64 value.
+ * MsgPack fixarray(1) plus the largest encoded value: a decimal with
+ * DECIMAL_MAX_DIGITS digits.
  */
-#define GENERATE_SERIES_ROW_BUF_SIZE 10
+#define GENERATE_SERIES_ROW_BUF_SIZE 32
 
-/** Iterator state for generate_series(start, stop). */
+/*
+ * A decimal is an ext8 (a 3-byte header) of a scale, an int32 of up to 5
+ * bytes, and the digits with the sign, 2 per byte.
+ */
+static_assert(GENERATE_SERIES_ROW_BUF_SIZE >=
+	      1 + 3 + 5 + DECIMAL_MAX_DIGITS / 2 + 1,
+	      "generate_series row buffer is too small for a decimal");
+
+/** A bound or the step of a series. */
+union generate_series_value {
+	/** A bound or the step of an INTEGER series. */
+	int64_t integer;
+	/** A bound or the step of a DECIMAL series. */
+	decimal_t decimal;
+};
+
+/** Iterator state for generate_series(start, stop[, step]). */
 struct generate_series_ctx {
 	/** Value to return in the next row. */
-	int64_t current;
-	/** Inclusive upper bound. */
-	int64_t stop;
+	union generate_series_value current;
+	/** Inclusive last bound. */
+	union generate_series_value stop;
+	/** Difference between two adjacent values. */
+	union generate_series_value step;
+	/** Type of the values of the series. */
+	enum field_type type;
+	/** True if the step makes the values smaller. */
+	bool is_descending;
+	/**
+	 * True if the step does not change the current value. The next
+	 * row is then an error.
+	 */
+	bool is_stalled;
 	/** True once the iterator reached EOF. */
 	bool done;
 	/** Reusable MsgPack row buffer. */
 	char row[GENERATE_SERIES_ROW_BUF_SIZE];
 };
 
-/** Read a generate_series integer argument from MsgPack. */
+/**
+ * Read a generate_series argument from MsgPack and set its type. Set
+ * @a is_null and no type if the argument is NULL.
+ */
 static int
-generate_series_read_i64(const char **data, int64_t *value, bool *is_null)
+generate_series_read_arg(const char **data, union generate_series_value *value,
+			 enum field_type *type, bool *is_null)
 {
-	if (mp_typeof(**data) == MP_NIL) {
+	switch (mp_typeof(**data)) {
+	case MP_NIL:
 		mp_decode_nil(data);
 		*is_null = true;
 		return 0;
+	case MP_UINT:
+	case MP_INT:
+		if (mp_read_int64(data, &value->integer) != 0) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "integer is overflowed");
+			return -1;
+		}
+		*type = FIELD_TYPE_INTEGER;
+		return 0;
+	case MP_EXT: {
+		const char *pos = *data;
+		int8_t ext_type;
+		mp_decode_extl(&pos, &ext_type);
+		if (ext_type == MP_DECIMAL &&
+		    mp_decode_decimal(data, &value->decimal) != NULL) {
+			*type = FIELD_TYPE_DECIMAL;
+			return 0;
+		}
+		break;
 	}
-	/* The arguments are integers after the implicit cast. */
-	assert(mp_typeof(**data) == MP_UINT || mp_typeof(**data) == MP_INT);
-	if (mp_read_int64(data, value) != 0) {
-		diag_set(ClientError, ER_SQL_EXECUTE, "integer is overflowed");
-		return -1;
+	default:
+		break;
 	}
-	return 0;
+	diag_set(ClientError, ER_PROC_C,
+		 "generate_series got invalid arguments");
+	return -1;
+}
+
+/** Compare two values of a series of the given type. */
+static int
+generate_series_compare(enum field_type type,
+			const union generate_series_value *lhs,
+			const union generate_series_value *rhs)
+{
+	switch (type) {
+	case FIELD_TYPE_DECIMAL:
+		return decimal_compare(&lhs->decimal, &rhs->decimal);
+	default:
+		return (lhs->integer > rhs->integer) -
+		       (lhs->integer < rhs->integer);
+	}
+}
+
+/**
+ * Add the step of a series to a value. Return a negative value if the
+ * result is too small for the type of the series, a positive value if it
+ * is too large, and 0 if it is correct. Set @a next in the last case.
+ */
+static int
+generate_series_add_step(const struct generate_series_ctx *state,
+			 const union generate_series_value *value,
+			 union generate_series_value *next)
+{
+	switch (state->type) {
+	case FIELD_TYPE_DECIMAL:
+		if (decimal_add(&next->decimal, &value->decimal,
+				&state->step.decimal) != NULL)
+			return 0;
+		return decimal_is_neg(&state->step.decimal) ? -1 : 1;
+	default: {
+		int64_t step = state->step.integer;
+		if (step > 0 && value->integer > INT64_MAX - step)
+			return 1;
+		if (step < 0 && value->integer < INT64_MIN - step)
+			return -1;
+		next->integer = value->integer + step;
+		return 0;
+	}
+	}
+}
+
+/**
+ * Return the direction of a series: a positive value if the step makes
+ * the values larger, a negative value if it makes them smaller, and 0 if
+ * the step is zero.
+ */
+static int
+generate_series_direction(const struct generate_series_ctx *state)
+{
+	switch (state->type) {
+	case FIELD_TYPE_DECIMAL: {
+		decimal_t zero;
+		decimal_zero(&zero);
+		return decimal_compare(&state->step.decimal, &zero);
+	}
+	default:
+		return (state->step.integer > 0) - (state->step.integer < 0);
+	}
+}
+
+/** Set the default step of a series with no step argument: 1. */
+static void
+generate_series_set_default_step(struct generate_series_ctx *state)
+{
+	if (state->type == FIELD_TYPE_DECIMAL)
+		decimal_from_int64(&state->step.decimal, 1);
+	else
+		state->step.integer = 1;
 }
 
 /** Open a generate_series iterator. */
@@ -255,28 +490,66 @@ generate_series_open(const char *args, const char *args_end, void **ctx)
 		return -1;
 	}
 	uint32_t argc = mp_decode_array(&args);
-	if (argc != 2) {
+	if (argc != 2 && argc != GENERATE_SERIES_STEP_ARGC) {
 		diag_set(ClientError, ER_PROC_C,
-			 "generate_series expects 2 arguments");
+			 "generate_series expects 2 or 3 arguments");
 		return -1;
 	}
-	int64_t start = 0;
-	int64_t stop = 0;
+	union generate_series_value values[GENERATE_SERIES_STEP_ARGC];
+	enum field_type types[GENERATE_SERIES_STEP_ARGC];
 	bool has_null_arg = false;
-	if (generate_series_read_i64(&args, &start, &has_null_arg) != 0 ||
-	    generate_series_read_i64(&args, &stop, &has_null_arg) != 0)
-		return -1;
+	for (uint32_t i = 0; i < argc; i++) {
+		if (generate_series_read_arg(&args, &values[i], &types[i],
+					     &has_null_arg) != 0)
+			return -1;
+	}
 	if (args != args_end) {
 		diag_set(ClientError, ER_PROC_C,
 			 "generate_series got invalid arguments");
 		return -1;
 	}
 	struct generate_series_ctx *state = xmalloc(sizeof(*state));
-	state->current = start;
-	state->stop = stop;
-	state->done = has_null_arg || start > stop;
+	state->type = FIELD_TYPE_INTEGER;
+	state->is_descending = false;
+	state->is_stalled = false;
+	state->done = true;
 	*ctx = state;
+	if (has_null_arg)
+		return 0;
+	/*
+	 * After the implicit cast the bounds have the type of the series,
+	 * and the step has the type of the difference of two values.
+	 */
+	state->type = types[0];
+	state->current = values[0];
+	state->stop = values[1];
+	enum field_type step_type = state->type;
+	bool has_step = argc == GENERATE_SERIES_STEP_ARGC;
+	if (types[1] != state->type || (has_step && types[2] != step_type) ||
+	    (!has_step && step_type != state->type)) {
+		diag_set(ClientError, ER_PROC_C,
+			 "generate_series got invalid arguments");
+		goto error;
+	}
+	if (has_step)
+		state->step = values[2];
+	else
+		generate_series_set_default_step(state);
+	int direction = generate_series_direction(state);
+	if (direction == 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE,
+			 "the step of generate_series cannot be zero");
+		goto error;
+	}
+	state->is_descending = direction < 0;
+	int cmp = generate_series_compare(state->type, &state->current,
+					  &state->stop);
+	state->done = state->is_descending ? cmp < 0 : cmp > 0;
 	return 0;
+error:
+	free(state);
+	*ctx = NULL;
+	return -1;
 }
 
 /** Return the next generate_series row. */
@@ -284,6 +557,11 @@ static int
 generate_series_next(void *ctx, const char **row, const char **row_end)
 {
 	struct generate_series_ctx *state = ctx;
+	if (state->is_stalled) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "the step of "
+			 "generate_series does not change the value");
+		return -1;
+	}
 	if (state->done) {
 		*row = NULL;
 		*row_end = NULL;
@@ -291,16 +569,51 @@ generate_series_next(void *ctx, const char **row, const char **row_end)
 	}
 	char *pos = state->row;
 	pos = mp_encode_array(pos, 1);
-	if (state->current < 0)
-		pos = mp_encode_int(pos, state->current);
-	else
-		pos = mp_encode_uint(pos, state->current);
+	switch (state->type) {
+	case FIELD_TYPE_DECIMAL:
+		assert(mp_sizeof_decimal(&state->current.decimal) <
+		       GENERATE_SERIES_ROW_BUF_SIZE);
+		pos = mp_encode_decimal(pos, &state->current.decimal);
+		break;
+	default:
+		if (state->current.integer < 0)
+			pos = mp_encode_int(pos, state->current.integer);
+		else
+			pos = mp_encode_uint(pos, state->current.integer);
+		break;
+	}
 	*row = state->row;
 	*row_end = pos;
-	if (state->current == state->stop || state->current == INT64_MAX)
+	/*
+	 * The series ends at the last bound. It also ends when the next
+	 * value is not a correct value of the type, or when the step moves
+	 * the value against the direction of the series.
+	 */
+	union generate_series_value next;
+	if (generate_series_compare(state->type, &state->current,
+				    &state->stop) == 0 ||
+	    generate_series_add_step(state, &state->current, &next) != 0) {
 		state->done = true;
-	else
-		state->current++;
+		return 0;
+	}
+	int step_cmp = generate_series_compare(state->type, &next,
+					       &state->current);
+	int stop_cmp = generate_series_compare(state->type, &next,
+					       &state->stop);
+	if (step_cmp == 0) {
+		/*
+		 * The step does not change the value, so the series
+		 * cannot reach the last bound. A step with parts of
+		 * different signs, or a step that is too small for the
+		 * precision of the value, has this effect.
+		 */
+		state->is_stalled = true;
+	} else if (state->is_descending ? (step_cmp > 0 || stop_cmp < 0) :
+					  (step_cmp < 0 || stop_cmp > 0)) {
+		state->done = true;
+	} else {
+		state->current = next;
+	}
 	return 0;
 }
 
@@ -314,6 +627,7 @@ generate_series_close(void *ctx)
 static const struct sql_table_func_ops generate_series_ops = {
 	.resolve_schema = generate_series_resolve_schema,
 	.estimate_rows = generate_series_estimate_rows,
+	.param_types = generate_series_param_types,
 	.open = generate_series_open,
 	.next = generate_series_next,
 	.close = generate_series_close,
@@ -603,15 +917,11 @@ static const struct field_def json_each_fields[] = {
 	},
 };
 
-static const enum field_type generate_series_param_types[] = {
-	FIELD_TYPE_INTEGER, FIELD_TYPE_INTEGER,
-};
-
 static const struct sql_table_func_def sql_builtin_table_funcs[] = {
 	{
 		.name = "GENERATE_SERIES",
 		.param_count = 2,
-		.param_types = generate_series_param_types,
+		.param_count_max = GENERATE_SERIES_STEP_ARGC,
 		.fields = generate_series_fields,
 		.field_count = nelem(generate_series_fields),
 		.ops = &generate_series_ops,
@@ -682,7 +992,10 @@ sql_table_func_register(const struct sql_table_func_def *defs, uint32_t count)
 		    def->ops == NULL || def->ops->resolve_schema == NULL ||
 		    def->ops->estimate_rows == NULL || def->ops->open == NULL ||
 		    def->ops->next == NULL || def->ops->close == NULL ||
-		    (def->param_types != NULL && def->param_count <= 0)) {
+		    (def->ops->param_types != NULL && def->param_count <= 0) ||
+		    (def->param_count_max != 0 &&
+		     (def->param_count < 0 ||
+		      def->param_count_max <= def->param_count))) {
 			diag_set(IllegalParams,
 				 "invalid SQL table function definition");
 			return -1;
@@ -3187,16 +3500,26 @@ is_castable(int op, enum field_type a, enum field_type b)
 	       b == FIELD_TYPE_ANY;
 }
 
+const enum field_type *
+sql_table_func_param_types(const struct sql_table_func_def *func,
+			   struct ExprList *args)
+{
+	if (func->ops->param_types == NULL)
+		return NULL;
+	return func->ops->param_types(args);
+}
+
 int
 sql_table_func_check_arg_types(const struct sql_table_func_def *func,
 			       struct ExprList *args)
 {
-	if (func->param_types == NULL)
+	const enum field_type *types = sql_table_func_param_types(func, args);
+	if (types == NULL)
 		return 0;
-	assert(args != NULL && args->nExpr == func->param_count);
+	assert(args != NULL && args->nExpr >= func->param_count);
 	for (int i = 0; i < args->nExpr; i++) {
 		struct Expr *e = sqlExprSkipCollate(args->a[i].pExpr);
-		if (is_castable(e->op, func->param_types[i], sql_expr_type(e)))
+		if (is_castable(e->op, types[i], sql_expr_type(e)))
 			continue;
 		diag_set(ClientError, ER_SQL_EXECUTE,
 			 tt_sprintf("wrong arguments for function %s()",

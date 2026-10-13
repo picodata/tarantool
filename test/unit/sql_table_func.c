@@ -41,6 +41,14 @@ estimate_one(struct ExprList *args)
 	return 1;
 }
 
+static const enum field_type *
+integer_param_types(struct ExprList *args)
+{
+	(void)args;
+	static const enum field_type types[] = {FIELD_TYPE_INTEGER};
+	return types;
+}
+
 static int
 open_iterator(const char *args, const char *args_end, void **ctx)
 {
@@ -117,7 +125,7 @@ main(void)
 	memory_init();
 	fiber_init(fiber_c_invoke);
 	coll_init();
-	plan(62);
+	plan(66);
 	struct sql_table_func_ops saved = ops;
 #define CHECK_REQUIRED(method) do { \
 	ops = saved; \
@@ -130,6 +138,23 @@ main(void)
 	CHECK_REQUIRED(next);
 	CHECK_REQUIRED(close);
 #undef CHECK_REQUIRED
+	ops = saved;
+	struct sql_table_func_def range_def = defs[0];
+	range_def.param_count = 2;
+	range_def.param_count_max = 2;
+	is(sql_table_func_register(&range_def, 1), -1,
+	   "param_count_max must be greater than param_count");
+	range_def.param_count = -1;
+	range_def.param_count_max = 3;
+	is(sql_table_func_register(&range_def, 1), -1,
+	   "variadic function has no param_count_max");
+	ops.param_types = integer_param_types;
+	is(sql_table_func_register(defs, 1), -1,
+	   "function with param_types has arguments");
+	range_def = defs[0];
+	range_def.param_count = -1;
+	is(sql_table_func_register(&range_def, 1), -1,
+	   "variadic function has no param_types");
 	ops = saved;
 	is(sql_table_func_register(defs, 1), 0, "register during startup");
 	box_init();
