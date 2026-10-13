@@ -1036,6 +1036,7 @@ expr(A) ::= COLON|VARIABLE(X) INTEGER(Y).     {
 }
 expr(A) ::= expr(A) COLLATE id(C). {
   A = sqlExprAddCollateToken(A, &C, 1);
+  sqlExprSetHeightAndFlags(pParse, A);
 }
 
 expr(A) ::= CAST LP expr(E) AS typedef(T) RP. {
