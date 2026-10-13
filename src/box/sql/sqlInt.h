@@ -3477,6 +3477,18 @@ sqlSrcListFuncArgs(struct SrcList *p, struct ExprList *pList);
  */
 int
 sqlIndexedByLookup(struct Parse *pParse, struct SrcItem *pFrom);
+
+/**
+ * Return true if every part of the index is a whole column. The planner
+ * matches index parts to columns by field number, so it must not use an
+ * index with a JSON path part (multikey ones included) or a functional
+ * index: their keys are not the column values.
+ */
+static inline bool
+sql_key_def_is_columns(const struct key_def *key_def)
+{
+	return !key_def->has_json_paths && !key_def->for_func_index;
+}
 void sqlSrcListShiftJoinType(SrcList *);
 void sqlSrcListAssignCursors(Parse *, SrcList *);
 

@@ -5,7 +5,7 @@ local dec = require('decimal')
 local dt = require('datetime')
 
 -- Немного параноидальных тестов.
-test:plan(81)
+test:plan(87)
 test.silent = true
 
 test:do_execsql_test(
@@ -711,5 +711,92 @@ test:do_execsql_test(
         2, dt.parse("2025-11-25T18:49:17+0300"), dec.new("2.0"), 2.0,
         3, dt.parse("2025-11-25T18:50:17+0300"), dec.new("3"), 3.3,
     })
+
+--- Indexes with a JSON path, a multikey part or a function
+
+-- The planner matches index parts to columns by field number. These indexes
+-- don't hold the column values, so the planner must not use them: the queries
+-- have to return what they return without the index.
+
+local s = box.schema.space.create('TP', {format = {{'ID', 'unsigned'},
+                                                   {'P', 'any'}}})
+s:create_index('pk')
+s:create_index('pa', {unique = false, parts = {
+    {field = 'P', path = 'a', type = 'unsigned'}}})
+s:insert{1, {a = 5}}
+
+-- P is the map {a = 5}, not 5, so no row may come back.
+test:do_catchsql_test(
+    "picodata-index-usage-5.1.1",
+    [[
+        select id from tp where p = 5;
+    ]], {
+        1, 'Type mismatch: can not convert any({"a": 5}) to comparable type',
+    })
+
+s = box.schema.space.create('TM', {format = {{'ID', 'unsigned'},
+                                             {'P', 'any'}}})
+s:create_index('pk')
+s:create_index('mk', {unique = false, parts = {
+    {field = 'P', path = '[*]', type = 'unsigned'}}})
+s:insert{1, {5, 6}}
+s:insert{2, {7}}
+
+test:do_catchsql_test(
+    "picodata-index-usage-5.2.1",
+    [[
+        select id from tm where p = 5;
+    ]], {
+        1, "Type mismatch: can not convert any([5, 6]) to comparable type",
+    })
+
+-- Each row comes back once, not once per array element.
+test:do_execsql_test(
+    "picodata-index-usage-5.2.2",
+    [[
+        select id from tm order by p;
+    ]], {
+        2, 1,
+    })
+
+test:do_catchsql_test(
+    "picodata-index-usage-5.2.3",
+    [[
+        select id from tm indexed by "mk";
+    ]], {
+        1, "SQL does not support using index 'mk' with a JSON path or a "..
+           "function in INDEXED BY",
+    })
+
+s = box.schema.space.create('TF', {format = {{'ID', 'unsigned'},
+                                             {'A', 'unsigned'}}})
+s:create_index('pk', {parts = {{2, 'unsigned'}}})
+box.schema.func.create('PLUS100', {
+    body = 'function(t) return {t[2] + 100} end',
+    is_deterministic = true, is_sandboxed = true})
+s:create_index('fi', {unique = false, func = 'PLUS100',
+                      parts = {{1, 'unsigned'}}})
+s:insert{1, 1}
+
+-- The index holds 101 for this row, but column ID is 1.
+test:do_execsql_test(
+    "picodata-index-usage-5.3.1",
+    [[
+        select id from tf where id = 101;
+    ]], {
+    })
+
+test:do_execsql_test(
+    "picodata-index-usage-5.3.2",
+    [[
+        select id from tf where id = 1;
+    ]], {
+        1,
+    })
+
+box.space.TP:drop()
+box.space.TM:drop()
+box.space.TF:drop()
+box.schema.func.drop('PLUS100')
 
 test:finish_test()

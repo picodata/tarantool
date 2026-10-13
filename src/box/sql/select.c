@@ -4724,6 +4724,14 @@ sqlIndexedByLookup(struct Parse *pParse, struct SrcItem *pFrom)
 			pParse->is_aborted = true;
 			return -1;
 		}
+		if (!sql_key_def_is_columns(idx->def->key_def)) {
+			diag_set(ClientError, ER_UNSUPPORTED, "SQL",
+				 tt_sprintf("using index '%s' with a JSON "
+					    "path or a function in INDEXED BY",
+					    zIndexedBy));
+			pParse->is_aborted = true;
+			return -1;
+		}
 		pFrom->pIBIndex = idx->def;
 	}
 	return 0;

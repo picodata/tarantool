@@ -627,7 +627,8 @@ isDistinctRedundant(Parse * pParse,		/* Parsing context */
 	 */
 	for (uint32_t j = 0; j < space->index_count; ++j) {
 		struct index_def *def = space->index[j]->def;
-		if (!def->opts.is_unique)
+		if (!def->opts.is_unique ||
+		    !sql_key_def_is_columns(def->key_def))
 			continue;
 		uint32_t col_count = def->key_def->part_count;
 		uint32_t i;
@@ -2875,6 +2876,16 @@ tnt_error:
 		/* Such index may possibly contain not all tuples, so skip it */
 		if (pSrc->pIBIndex == NULL && probe->key_def->has_exclude_null)
 			continue;
+		/*
+		 * The keys of a path or functional index are not the column
+		 * values, so it can't serve a WHERE term or an ORDER BY. A
+		 * secondary one isn't needed for a full scan either, and a
+		 * multikey one would return a row once per key. A primary key
+		 * can't be multikey, so a full scan over it is still fine.
+		 */
+		bool is_columns = sql_key_def_is_columns(probe->key_def);
+		if (!is_columns && probe->iid != 0)
+			continue;
 		rSize = index_field_tuple_est(probe, 0);
 		pNew->nEq = 0;
 		pNew->nBtm = 0;
@@ -2920,6 +2931,8 @@ tnt_error:
 			if (rc)
 				break;
 		}
+		if (!is_columns)
+			continue;
 
 		rc = whereLoopAddBtreeIndex(pBuilder, pSrc, probe, 0);
 		sqlStat4ProbeFree(pBuilder->pRec);
@@ -3259,7 +3272,8 @@ wherePathSatisfiesOrderBy(WhereInfo * pWInfo,	/* The WHERE clause */
 				nColumn = 1;
 			} else if ((idx_def = pLoop->index_def) == NULL ||
 				   (idx_def->opts.stat != NULL &&
-				    idx_def->opts.stat->is_unordered)) {
+				    idx_def->opts.stat->is_unordered) ||
+				   !sql_key_def_is_columns(idx_def->key_def)) {
 				return 0;
 			} else {
 				nColumn = idx_def->key_def->part_count;
@@ -4058,7 +4072,8 @@ where_loop_builder_shortcut(struct WhereLoopBuilder *builder)
 			for (uint32_t i = 0; i < space->index_count; ++i) {
 				struct index_def *idx_def =
 					space->index[i]->def;
-				if (!idx_def->opts.is_unique)
+				if (!idx_def->opts.is_unique ||
+				    !sql_key_def_is_columns(idx_def->key_def))
 					continue;
 				if (where_loop_assign_terms(loop, clause,
 							    cursor, space_def,
