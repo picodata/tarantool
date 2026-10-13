@@ -36,7 +36,9 @@
  */
 #include "sqlInt.h"
 #include "mem.h"
+#include "mp_datetime.h"
 #include "mp_decimal.h"
+#include "mp_interval.h"
 #include "mp_json.h"
 #include "port.h"
 #include "func.h"
@@ -121,6 +123,8 @@ unnest_resolve_schema(struct ExprList *args, struct field_def *fields)
 /**
  * Return the type of the values of a series, from the types of the
  * arguments at the preparation of the statement:
+ *  - DATETIME, if the call has a step and an argument has the DATETIME or
+ *    the INTERVAL type;
  *  - DECIMAL, if an argument has the DECIMAL type;
  *  - INTEGER in all other cases.
  */
@@ -131,6 +135,10 @@ generate_series_type(struct ExprList *args)
 	for (int i = 0; i < args->nExpr; i++) {
 		struct Expr *arg = sqlExprSkipCollate(args->a[i].pExpr);
 		enum field_type arg_type = sql_expr_type(arg);
+		if ((arg_type == FIELD_TYPE_DATETIME ||
+		     arg_type == FIELD_TYPE_INTERVAL) &&
+		    args->nExpr == GENERATE_SERIES_STEP_ARGC)
+			return FIELD_TYPE_DATETIME;
 		if (arg_type == FIELD_TYPE_DECIMAL)
 			type = FIELD_TYPE_DECIMAL;
 	}
@@ -155,7 +163,12 @@ generate_series_param_types(struct ExprList *args)
 	static const enum field_type decimal_types[] = {
 		FIELD_TYPE_DECIMAL, FIELD_TYPE_DECIMAL, FIELD_TYPE_DECIMAL,
 	};
+	static const enum field_type datetime_types[] = {
+		FIELD_TYPE_DATETIME, FIELD_TYPE_DATETIME, FIELD_TYPE_INTERVAL,
+	};
 	enum field_type type = generate_series_type(args);
+	if (type == FIELD_TYPE_DATETIME)
+		return datetime_types;
 	return type == FIELD_TYPE_DECIMAL ? decimal_types : integer_types;
 }
 
@@ -330,11 +343,14 @@ json_each_estimate_rows(struct ExprList *args)
 
 /*
  * A decimal is an ext8 (a 3-byte header) of a scale, an int32 of up to 5
- * bytes, and the digits with the sign, 2 per byte.
+ * bytes, and the digits with the sign, 2 per byte. A datetime is a fixext16
+ * (a 2-byte header) of at most the size of struct datetime.
  */
 static_assert(GENERATE_SERIES_ROW_BUF_SIZE >=
 	      1 + 3 + 5 + DECIMAL_MAX_DIGITS / 2 + 1,
 	      "generate_series row buffer is too small for a decimal");
+static_assert(GENERATE_SERIES_ROW_BUF_SIZE >= 1 + 2 + sizeof(struct datetime),
+	      "generate_series row buffer is too small for a datetime");
 
 /** A bound or the step of a series. */
 union generate_series_value {
@@ -342,6 +358,10 @@ union generate_series_value {
 	int64_t integer;
 	/** A bound or the step of a DECIMAL series. */
 	decimal_t decimal;
+	/** A bound of a DATETIME series. */
+	struct datetime datetime;
+	/** The step of a DATETIME series. */
+	struct interval interval;
 };
 
 /** Iterator state for generate_series(start, stop[, step]). */
@@ -357,10 +377,10 @@ struct generate_series_ctx {
 	/** True if the step makes the values smaller. */
 	bool is_descending;
 	/**
-	 * True if the step does not change the current value. The next
-	 * row is then an error.
+	 * Not NULL if the step cannot give the value after the current
+	 * one. The next row is then an error with this message.
 	 */
-	bool is_stalled;
+	const char *error;
 	/** True once the iterator reached EOF. */
 	bool done;
 	/** Reusable MsgPack row buffer. */
@@ -398,6 +418,16 @@ generate_series_read_arg(const char **data, union generate_series_value *value,
 			*type = FIELD_TYPE_DECIMAL;
 			return 0;
 		}
+		if (ext_type == MP_DATETIME &&
+		    mp_decode_datetime(data, &value->datetime) != NULL) {
+			*type = FIELD_TYPE_DATETIME;
+			return 0;
+		}
+		if (ext_type == MP_INTERVAL &&
+		    mp_decode_interval(data, &value->interval) != NULL) {
+			*type = FIELD_TYPE_INTERVAL;
+			return 0;
+		}
 		break;
 	}
 	default:
@@ -417,6 +447,8 @@ generate_series_compare(enum field_type type,
 	switch (type) {
 	case FIELD_TYPE_DECIMAL:
 		return decimal_compare(&lhs->decimal, &rhs->decimal);
+	case FIELD_TYPE_DATETIME:
+		return datetime_compare(&lhs->datetime, &rhs->datetime);
 	default:
 		return (lhs->integer > rhs->integer) -
 		       (lhs->integer < rhs->integer);
@@ -439,6 +471,10 @@ generate_series_add_step(const struct generate_series_ctx *state,
 				&state->step.decimal) != NULL)
 			return 0;
 		return decimal_is_neg(&state->step.decimal) ? -1 : 1;
+	case FIELD_TYPE_DATETIME:
+		next->datetime = value->datetime;
+		return datetime_increment_by(&next->datetime, 1,
+					     &state->step.interval);
 	default: {
 		int64_t step = state->step.integer;
 		if (step > 0 && value->integer > INT64_MAX - step)
@@ -449,6 +485,30 @@ generate_series_add_step(const struct generate_series_ctx *state,
 		return 0;
 	}
 	}
+}
+
+/**
+ * Return the sign of an INTERVAL: a positive or a negative value, or 0.
+ * The effect of an INTERVAL with parts of different signs depends on the
+ * date: one month minus 30 days is 1 day from January 1 and 0 days from
+ * March 31. So the sign comes from a fixed rule, the same as in PostgreSQL:
+ * a year is 12 months, a month is 30 days and a day is 24 hours.
+ */
+static int
+interval_sign(const struct interval *itv)
+{
+	/*
+	 * All parts are integer numbers, and the sum is much less than
+	 * 2^53, so the result in double is exact.
+	 */
+	double months = (double)itv->year * 12 + itv->month;
+	double days = months * 30 + (double)itv->week * 7 + itv->day;
+	double secs = days * 24 * 3600 + itv->hour * 3600 + itv->min * 60 +
+		      itv->sec + itv->nsec / NANOS_PER_SEC;
+	int nsec = itv->nsec % NANOS_PER_SEC;
+	if (secs != 0)
+		return secs > 0 ? 1 : -1;
+	return (nsec > 0) - (nsec < 0);
 }
 
 /**
@@ -465,6 +525,8 @@ generate_series_direction(const struct generate_series_ctx *state)
 		decimal_zero(&zero);
 		return decimal_compare(&state->step.decimal, &zero);
 	}
+	case FIELD_TYPE_DATETIME:
+		return interval_sign(&state->step.interval);
 	default:
 		return (state->step.integer > 0) - (state->step.integer < 0);
 	}
@@ -511,22 +573,37 @@ generate_series_open(const char *args, const char *args_end, void **ctx)
 	struct generate_series_ctx *state = xmalloc(sizeof(*state));
 	state->type = FIELD_TYPE_INTEGER;
 	state->is_descending = false;
-	state->is_stalled = false;
+	state->error = NULL;
 	state->done = true;
 	*ctx = state;
 	if (has_null_arg)
 		return 0;
 	/*
 	 * After the implicit cast the bounds have the type of the series,
-	 * and the step has the type of the difference of two values.
+	 * and the step has the type of the difference of two values. The
+	 * iterator does not trust the caller for this: a value of a wrong
+	 * type must not be read as a value of the series.
 	 */
 	state->type = types[0];
 	state->current = values[0];
 	state->stop = values[1];
-	enum field_type step_type = state->type;
 	bool has_step = argc == GENERATE_SERIES_STEP_ARGC;
-	if (types[1] != state->type || (has_step && types[2] != step_type) ||
-	    (!has_step && step_type != state->type)) {
+	bool is_valid = types[1] == state->type;
+	switch (state->type) {
+	case FIELD_TYPE_INTEGER:
+	case FIELD_TYPE_DECIMAL:
+		/* The step of a series of numbers is optional. */
+		is_valid = is_valid && (!has_step || types[2] == state->type);
+		break;
+	case FIELD_TYPE_DATETIME:
+		is_valid = is_valid && has_step &&
+			   types[2] == FIELD_TYPE_INTERVAL;
+		break;
+	default:
+		is_valid = false;
+		break;
+	}
+	if (!is_valid) {
 		diag_set(ClientError, ER_PROC_C,
 			 "generate_series got invalid arguments");
 		goto error;
@@ -557,9 +634,8 @@ static int
 generate_series_next(void *ctx, const char **row, const char **row_end)
 {
 	struct generate_series_ctx *state = ctx;
-	if (state->is_stalled) {
-		diag_set(ClientError, ER_SQL_EXECUTE, "the step of "
-			 "generate_series does not change the value");
+	if (state->error != NULL) {
+		diag_set(ClientError, ER_SQL_EXECUTE, state->error);
 		return -1;
 	}
 	if (state->done) {
@@ -575,6 +651,11 @@ generate_series_next(void *ctx, const char **row, const char **row_end)
 		       GENERATE_SERIES_ROW_BUF_SIZE);
 		pos = mp_encode_decimal(pos, &state->current.decimal);
 		break;
+	case FIELD_TYPE_DATETIME:
+		assert(mp_sizeof_datetime(&state->current.datetime) <
+		       GENERATE_SERIES_ROW_BUF_SIZE);
+		pos = mp_encode_datetime(pos, &state->current.datetime);
+		break;
 	default:
 		if (state->current.integer < 0)
 			pos = mp_encode_int(pos, state->current.integer);
@@ -584,16 +665,24 @@ generate_series_next(void *ctx, const char **row, const char **row_end)
 	}
 	*row = state->row;
 	*row_end = pos;
-	/*
-	 * The series ends at the last bound. It also ends when the next
-	 * value is not a correct value of the type, or when the step moves
-	 * the value against the direction of the series.
-	 */
+	/* The series ends at the last bound. */
 	union generate_series_value next;
 	if (generate_series_compare(state->type, &state->current,
-				    &state->stop) == 0 ||
-	    generate_series_add_step(state, &state->current, &next) != 0) {
+				    &state->stop) == 0) {
 		state->done = true;
+		return 0;
+	}
+	if (generate_series_add_step(state, &state->current, &next) != 0) {
+		/*
+		 * A number out of the range of its type is past the last
+		 * bound, so the series ends. A DATETIME step is added part
+		 * by part, and a part out of the range does not mean that
+		 * the full step is: this is an error, as for `+`.
+		 */
+		if (state->type == FIELD_TYPE_DATETIME)
+			state->error = "datetime is overflowed";
+		else
+			state->done = true;
 		return 0;
 	}
 	int step_cmp = generate_series_compare(state->type, &next,
@@ -607,9 +696,18 @@ generate_series_next(void *ctx, const char **row, const char **row_end)
 		 * different signs, or a step that is too small for the
 		 * precision of the value, has this effect.
 		 */
-		state->is_stalled = true;
-	} else if (state->is_descending ? (step_cmp > 0 || stop_cmp < 0) :
-					  (step_cmp < 0 || stop_cmp > 0)) {
+		state->error = "the step of generate_series does not change "
+			       "the value";
+	} else if (state->is_descending ? step_cmp > 0 : step_cmp < 0) {
+		/*
+		 * The step moves the value away from the last bound. Only
+		 * a step of a DATETIME series with parts of different
+		 * signs has this effect: its sign comes from a fixed rule,
+		 * and for some dates the step goes the other way.
+		 */
+		state->error = "the step of generate_series moves the value "
+			       "against the direction of the series";
+	} else if (state->is_descending ? stop_cmp < 0 : stop_cmp > 0) {
 		state->done = true;
 	} else {
 		state->current = next;

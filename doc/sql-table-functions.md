@@ -41,8 +41,8 @@ With a third argument, each value is the previous one plus `step`. The series
 includes `stop` only if a step gives exactly that value: `(1, 10, 3)` gives
 `1, 4, 7, 10`, and `(1, 9, 3)` gives `1, 4, 7`. A negative step gives a series
 that decreases to `stop`: `(10, 1, -3)` gives `10, 7, 4, 1`. If the step goes
-away from `stop`, the series is empty. A zero step is an error. A series that
-reaches a limit of its type ends there without an error.
+away from `stop`, the series is empty. A zero step is an error. A series of
+numbers that reaches a limit of its type ends there without an error.
 
 A step that does not change a value of the series is an error when the series
 needs the next value. A `DECIMAL` step that is too small for the precision of
@@ -56,6 +56,44 @@ then be different from the step, and the series can have fewer values than
 the bounds and the step give. For example, from
 `9999999999999999999999999999999999990.5` with a step of `0.25` the next
 values end with `990.8` and `991.1`. There is no error in this case.
+
+With a step, `GENERATE_SERIES` can also give a `DATETIME` series. The bounds
+are `DATETIME` values and `step` is an `INTERVAL`. The step is necessary. Each
+value is the previous one plus `step`, so a step of one month from January 31
+gives February 28 and then March 28. The values have the time zone of `start`.
+
+```sql
+SELECT * FROM GENERATE_SERIES(CAST('2026-01-01T00:00:00Z' AS DATETIME),
+                              CAST('2026-01-01T12:00:00Z' AS DATETIME),
+                              CAST({'hour': 5} AS INTERVAL));
+-- 2026-01-01T00:00:00Z, 2026-01-01T05:00:00Z, 2026-01-01T10:00:00Z
+```
+
+A negative step gives a series that decreases to `stop`, and a zero step is
+an error. The sign of a step with parts of different signs comes from a fixed
+rule, the same as in PostgreSQL: a year is 12 months, a month is 30 days and
+a day is 24 hours. So one month minus 29 days is a positive step for all
+dates, and one month minus 30 days is a zero step.
+
+Such a step can leave a value unchanged for some dates: January 31 plus one
+month minus 29 days is January 31. This is the same error as for a series of
+numbers. Such a step can also move a value against the direction of the
+series: in a year that is not a leap year, the same step from January 31 gives
+January 30. This is an error too, when the series needs the next value.
+
+If the sum of a value and the step is out of the range of `DATETIME`, years
+from -5879610 to 5879611, this is an error when the series needs the next
+value: `datetime is overflowed`, as for `+`. The parts of the step are added
+one by one, so this is also the case when only a part of the step is out of
+the range: from `5879611-01-01`, a step of one year minus 13 months is an
+error.
+
+```sql
+SELECT * FROM GENERATE_SERIES(CAST('2026-01-01T00:00:00Z' AS DATETIME),
+                              CAST('9999-12-31T00:00:00Z' AS DATETIME),
+                              CAST({'year': 6000000} AS INTERVAL));
+-- the row 2026-01-01T00:00:00Z, then the error
+```
 
 `UNNEST` reads the top-level elements in array order. It does not recursively
 expand nested arrays or objects: `[[1], [2]]` produces two array values.
@@ -93,7 +131,11 @@ the types of non-NULL values before deciding that SQL `NULL` makes it empty.
 does. The types of the arguments at the preparation of the statement select
 the type of the series:
 
-- With a `DECIMAL` argument, the arguments are cast to `DECIMAL`. An
+- With three arguments, one of which has the `DATETIME` or the `INTERVAL`
+  type, the arguments are cast to `DATETIME`, `DATETIME` and `INTERVAL`.
+  There is no implicit cast of a string to `DATETIME` or of a map to
+  `INTERVAL`, so these arguments need an explicit `CAST`.
+- If not, with a `DECIMAL` argument, the arguments are cast to `DECIMAL`. An
   `INTEGER` or a `DOUBLE` value is cast: `GENERATE_SERIES(1.5, 25e-1)` gives
   `1.5, 2.5`. A `DECIMAL` step makes a `DECIMAL` series too:
   `GENERATE_SERIES(0, 1, 0.5)` gives `0, 0.5, 1.0`.
@@ -105,11 +147,18 @@ the type of the series:
 A bound parameter has no type at the preparation, so it does not select
 a `DECIMAL` series: `GENERATE_SERIES(?, ?)` is an `INTEGER` series for all
 values. Use `CAST(? AS DECIMAL)` for one of the arguments to get a `DECIMAL`
-series.
+series, and `CAST(? AS DATETIME)` or `CAST(? AS INTERVAL)` to get
+a `DATETIME` series.
 
-A type that cannot be a number, such as `STRING`, is an error when the
-statement is prepared. A value whose type is known only at execution, such as
-a bound parameter, gives a type mismatch then.
+The same is true for the other types that do not select a series: `SCALAR`,
+`NUMBER`, `ANY` and `DOUBLE` give an `INTEGER` series. `MIN` and `MAX` of a
+`DATETIME` column have the `SCALAR` type, so
+`GENERATE_SERIES((SELECT MIN(ts) FROM t), (SELECT MAX(ts) FROM t), ?)` is an
+error. Cast them: `CAST((SELECT MAX(ts) FROM t) AS DATETIME)`.
+
+A type that cannot be cast, such as `STRING` for a number, is an error when
+the statement is prepared. A value whose type is known only at execution, such
+as a bound parameter, gives a type mismatch then.
 
 JSON `null` is a JSON value, not SQL `NULL`. It is invalid where an array or
 object is required, but remains a value when read from a container.
@@ -424,9 +473,10 @@ query does not evaluate arguments, open iterators, or read data for estimates.
 An array constructor's length is known without evaluating its elements:
 `[t.a, t.b]` has two elements. A range size is calculated for integer and
 decimal literals, including their sign and a literal step. When the size is
-unknown, the estimate is 100 rows for `UNNEST` and `JSON_EACH`, and 1000 for
-`GENERATE_SERIES`. Even a constant JSON `CAST` uses the default estimate,
-since the cast is not evaluated at this stage.
+unknown, which includes each `DATETIME` series, the estimate is 100 rows for
+`UNNEST` and `JSON_EACH`, and 1000 for `GENERATE_SERIES`. Even a constant
+JSON `CAST` uses the default estimate, since the cast is not evaluated at
+this stage.
 
 ```sql
 EXPLAIN QUERY PLAN SELECT * FROM GENERATE_SERIES(1, 2);

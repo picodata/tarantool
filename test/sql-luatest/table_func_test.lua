@@ -795,7 +795,8 @@ g.test_generate_series_step_arg_types = function(cg)
     end)
 end
 
--- A series with a step ends without an error at the limits of its type.
+-- A series of numbers with a step ends without an error at the limits of
+-- its type.
 g.test_generate_series_step_limits = function(cg)
     cg.server:exec(function()
         local decimal = require('decimal')
@@ -885,6 +886,391 @@ g.test_generate_series_step_plan_estimate = function(cg)
             {'1, 10, NULL', '~1 row'},
             -- The estimate of a series that is not a literal one.
             {'1, 10, abs(1)', '~960 rows'},
+        }) do
+            local res = box.execute('EXPLAIN QUERY PLAN SELECT * FROM ' ..
+                                    'generate_series(' .. case[1] .. ');')
+            t.assert_equals(res.rows, {
+                {0, 0, 0, 'SCAN TABLE GENERATE_SERIES (' .. case[2] .. ')'},
+            }, case[1])
+        end
+    end)
+end
+
+-- With DATETIME bounds and an INTERVAL step, GENERATE_SERIES gives DATETIME
+-- values. Each value is the previous one plus the step.
+g.test_generate_series_datetime = function(cg)
+    cg.server:exec(function()
+        local function series(args)
+            local sql = ('SELECT * FROM generate_series(%s);'):format(args)
+            local res, err = box.execute(sql)
+            t.assert_equals(err, nil, sql)
+            t.assert_equals(res.metadata, {{name = 'VALUE', type = 'datetime'}},
+                            sql)
+            local values = {}
+            for i, row in ipairs(res.rows) do
+                values[i] = tostring(row[1])
+            end
+            return values
+        end
+        local function dt(text)
+            return ("CAST('%s' AS DATETIME)"):format(text)
+        end
+        local function itv(map)
+            return ('CAST(%s AS INTERVAL)'):format(map)
+        end
+        local function args(start, stop, step)
+            return dt(start) .. ', ' .. dt(stop) .. ', ' .. itv(step)
+        end
+        t.assert_equals(
+            series(args('2026-01-01T00:00:00Z', '2026-01-04T00:00:00Z',
+                        "{'day': 1}")),
+            {'2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z',
+             '2026-01-03T00:00:00Z', '2026-01-04T00:00:00Z'})
+        -- The last bound is in the series only if a step gives it.
+        t.assert_equals(
+            series(args('2026-01-01T00:00:00Z', '2026-01-01T12:00:00Z',
+                        "{'hour': 5}")),
+            {'2026-01-01T00:00:00Z', '2026-01-01T05:00:00Z',
+             '2026-01-01T10:00:00Z'})
+        t.assert_equals(
+            series(args('2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z',
+                        "{'nsec': 400000000}")),
+            {'2026-01-01T00:00:00Z', '2026-01-01T00:00:00.400Z',
+             '2026-01-01T00:00:00.800Z'})
+        t.assert_equals(
+            series(args('2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z',
+                        "{'day': 1}")),
+            {'2026-01-01T00:00:00Z'})
+        -- A negative step gives a series that decreases.
+        t.assert_equals(
+            series(args('2026-01-04T00:00:00Z', '2026-01-01T00:00:00Z',
+                        "{'day': -1}")),
+            {'2026-01-04T00:00:00Z', '2026-01-03T00:00:00Z',
+             '2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z'})
+        -- The series is empty if the step goes away from the last bound.
+        t.assert_equals(
+            series(args('2026-01-01T00:00:00Z', '2026-01-04T00:00:00Z',
+                        "{'day': -1}")), {})
+        t.assert_equals(
+            series(args('2026-01-04T00:00:00Z', '2026-01-01T00:00:00Z',
+                        "{'day': 1}")), {})
+        -- The step is added to the previous value, not to the start.
+        t.assert_equals(
+            series(args('2026-01-31T00:00:00Z', '2026-05-31T00:00:00Z',
+                        "{'month': 1}")),
+            {'2026-01-31T00:00:00Z', '2026-02-28T00:00:00Z',
+             '2026-03-28T00:00:00Z', '2026-04-28T00:00:00Z',
+             '2026-05-28T00:00:00Z'})
+        t.assert_equals(
+            series(args('2026-01-31T00:00:00Z', '2026-04-30T00:00:00Z',
+                        "{'month': 1, 'adjust': 'last'}")),
+            {'2026-01-31T00:00:00Z', '2026-02-28T00:00:00Z',
+             '2026-03-31T00:00:00Z', '2026-04-30T00:00:00Z'})
+        -- The values have the time zone of the start.
+        t.assert_equals(
+            series(args('2026-01-01T00:00:00+0300', '2026-01-02T00:00:00Z',
+                        "{'hour': 12}")),
+            {'2026-01-01T00:00:00+0300', '2026-01-01T12:00:00+0300',
+             '2026-01-02T00:00:00+0300'})
+    end)
+end
+
+-- The arguments of a DATETIME series are cast to DATETIME, DATETIME and
+-- INTERVAL, as the arguments of a built-in scalar function are.
+g.test_generate_series_datetime_arg_types = function(cg)
+    cg.server:exec(function()
+        local datetime = require('datetime')
+        local start = datetime.new({year = 2026, month = 1, day = 1})
+        local stop = datetime.new({year = 2026, month = 1, day = 2})
+        local step = datetime.interval.new({hour = 12})
+        local rows = {{start}, {start + step}, {stop}}
+        box.execute([[CREATE TABLE T_TFUNC_DT(ID INT PRIMARY KEY, A DATETIME,
+                                              B DATETIME, S INTERVAL);]])
+        box.execute([[INSERT INTO T_TFUNC_DT VALUES(1, ?, ?, ?);]],
+                    {start, stop, step})
+        for _, case in ipairs({
+            {[[SELECT * FROM generate_series(CAST(? AS DATETIME), ?, ?);]],
+             {start, stop, step}},
+            {[[SELECT * FROM generate_series(?, ?, CAST(? AS INTERVAL));]],
+             {start, stop, step}},
+            {[[SELECT g.VALUE FROM T_TFUNC_DT t,
+                      generate_series(t.A, t.B, t.S) g;]]},
+            {[[SELECT g.VALUE FROM T_TFUNC_DT t,
+                      generate_series(t.A, ?, CAST({'hour': 12} AS INTERVAL))
+                      g;]], {stop}},
+        }) do
+            local res = box.execute(case[1], case[2] or {})
+            t.assert_equals(res.metadata[1].type, 'datetime', case[1])
+            t.assert_equals(res.rows, rows, case[1])
+        end
+        local sql = [[SELECT * FROM generate_series(CAST(? AS DATETIME), ?, ?)
+                      WITH ORDINALITY;]]
+        local res = box.execute(sql, {start, stop, step})
+        t.assert_equals(res.rows, {{start, 1}, {start + step, 2}, {stop, 3}})
+        -- SQL NULL as an argument gives no rows, also with a zero step.
+        sql = [[SELECT * FROM generate_series(CAST(? AS DATETIME), ?, ?);]]
+        for _, params in ipairs({
+            {box.NULL, stop, step}, {start, box.NULL, step},
+            {start, stop, box.NULL},
+            {start, box.NULL, datetime.interval.new()},
+        }) do
+            res = box.execute(sql, params)
+            t.assert_equals(res.metadata[1].type, 'datetime')
+            t.assert_equals(res.rows, {})
+        end
+        -- Parameters with no cast do not make a DATETIME series.
+        local _, err = box.execute(
+            [[SELECT * FROM generate_series(?, ?, ?);]], {start, stop, step})
+        t.assert_str_matches(err.message, 'Type mismatch: can not convert ' ..
+                             'datetime%(.*%) to integer')
+        -- A wrong type is an error of the preparation when it is known.
+        -- A string is not cast to DATETIME, and a map is not cast to
+        -- INTERVAL. The step is necessary.
+        local dt = "CAST('2026-01-01T00:00:00Z' AS DATETIME)"
+        local itv = "CAST({'day': 1} AS INTERVAL)"
+        for _, args in ipairs({
+            ("'2026-01-01T00:00:00Z', %s, %s"):format(dt, itv),
+            ("%s, '2026-01-01T00:00:00Z', %s"):format(dt, itv),
+            ("%s, %s, {'day': 1}"):format(dt, dt),
+            ("%s, %s, 1"):format(dt, dt),
+            ("%s, %s, %s"):format(dt, itv, itv),
+            ("%s, %s"):format(dt, dt),
+            ("1, %s, %s"):format(dt, itv),
+            ("%s, 1.5, %s"):format(dt, itv),
+        }) do
+            sql = ('SELECT * FROM generate_series(%s);'):format(args)
+            local stmt
+            stmt, err = box.prepare(sql)
+            t.assert_equals(stmt, nil)
+            t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                            'wrong arguments for function GENERATE_SERIES()',
+                            sql)
+        end
+        -- Other values give a type mismatch at the execution.
+        local with_step = [[SELECT * FROM generate_series(
+                                ?, ?, CAST(? AS INTERVAL));]]
+        local with_start = [[SELECT * FROM generate_series(
+                                 CAST(? AS DATETIME), ?, ?);]]
+        for _, case in ipairs({
+            {with_step, {'a', stop, step}, "string('a') to datetime"},
+            {with_step, {start, 1, step}, 'integer(1) to datetime'},
+            {with_start, {start, 'a', step}, "string('a') to datetime"},
+            {with_start, {start, stop, 1}, 'integer(1) to interval'},
+        }) do
+            _, err = box.execute(case[1], case[2])
+            t.assert_equals(err.message, 'Type mismatch: can not convert ' ..
+                            case[3])
+        end
+        box.execute([[DROP TABLE T_TFUNC_DT;]])
+    end)
+end
+
+-- A step with the sign zero is an error. The sign of a step with parts of
+-- different signs comes from a fixed rule: a year is 12 months, a month is
+-- 30 days and a day is 24 hours.
+g.test_generate_series_datetime_zero_step = function(cg)
+    cg.server:exec(function()
+        local sql = [[SELECT * FROM generate_series(
+                          CAST('2026-01-01T00:00:00Z' AS DATETIME),
+                          CAST('2026-01-04T00:00:00Z' AS DATETIME),
+                          CAST(%s AS INTERVAL));]]
+        for _, step in ipairs({
+            '{}', "{'day': 0}", "{'adjust': 'last'}",
+            "{'month': 1, 'day': -30}", "{'year': 1, 'month': -12}",
+            "{'year': 1, 'day': -360}", "{'week': 1, 'day': -7}",
+            "{'day': 1, 'hour': -24}", "{'hour': 1, 'min': -60}",
+            "{'sec': 1, 'nsec': -1000000000}",
+        }) do
+            local _, err = box.execute(sql:format(step))
+            t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                            'the step of generate_series cannot be zero', step)
+        end
+        -- The statement with a zero step is prepared without an error.
+        local stmt = box.prepare(sql:format('{}'))
+        t.assert_equals(stmt.metadata[1].type, 'datetime')
+        stmt:unprepare()
+    end)
+end
+
+-- The sign of the step gives the direction of a DATETIME series. The
+-- direction does not depend on the start.
+g.test_generate_series_datetime_step_sign = function(cg)
+    cg.server:exec(function()
+        local sql = [[SELECT CAST(VALUE AS STRING) FROM generate_series(
+                          CAST('%s' AS DATETIME), CAST('%s' AS DATETIME),
+                          CAST(%s AS INTERVAL)) LIMIT 2;]]
+        local starts = {'2024-01-01T00:00:00Z', '2024-01-31T00:00:00Z',
+                        '2024-02-01T00:00:00Z', '2024-03-31T00:00:00Z'}
+        -- A positive step with a bound before the start gives no rows.
+        for _, step in ipairs({"{'month': 1, 'day': -29}",
+                               "{'year': 1, 'day': -359}",
+                               "{'sec': 1, 'nsec': -999999999}",
+                               "{'month': -1, 'day': 30, 'nsec': 1}"}) do
+            for _, start in ipairs(starts) do
+                local res = box.execute(sql:format(
+                    start, '2023-12-01T00:00:00Z', step))
+                t.assert_equals(res.rows, {}, step .. ' ' .. start)
+            end
+        end
+        -- A negative step with a bound after the start gives no rows.
+        for _, step in ipairs({"{'month': 1, 'day': -31}",
+                               "{'year': 1, 'day': -365}",
+                               "{'day': 1, 'hour': -25}"}) do
+            for _, start in ipairs(starts) do
+                local res = box.execute(sql:format(
+                    start, '2024-12-01T00:00:00Z', step))
+                t.assert_equals(res.rows, {}, step .. ' ' .. start)
+            end
+        end
+        local res = box.execute(sql:format(
+            '2024-01-01T00:00:00Z', '2024-12-01T00:00:00Z',
+            "{'month': 1, 'day': -29}"))
+        t.assert_equals(res.rows, {{'2024-01-01T00:00:00Z'},
+                                   {'2024-01-03T00:00:00Z'}})
+        res = box.execute(sql:format(
+            '2024-03-31T00:00:00Z', '2024-12-01T00:00:00Z',
+            "{'month': 1, 'day': -29}"))
+        t.assert_equals(res.rows, {{'2024-03-31T00:00:00Z'},
+                                   {'2024-04-01T00:00:00Z'}})
+        res = box.execute(sql:format(
+            '2024-02-01T00:00:00Z', '2023-12-01T00:00:00Z',
+            "{'month': 1, 'day': -31}"))
+        t.assert_equals(res.rows, {{'2024-02-01T00:00:00Z'},
+                                   {'2024-01-30T00:00:00Z'}})
+        res = box.execute(sql:format(
+            '2024-01-10T00:00:00Z', '2024-01-12T00:00:00Z',
+            "{'sec': 1, 'nsec': -999999999}"))
+        t.assert_equals(res.rows, {{'2024-01-10T00:00:00Z'},
+                                   {'2024-01-10T00:00:00.000000001Z'}})
+    end)
+end
+
+-- A step of a DATETIME series that does not change a value of the series
+-- is an error when the series needs the next value. A step with parts of
+-- different signs can have this effect.
+g.test_generate_series_datetime_step_does_not_change_value = function(cg)
+    cg.server:exec(function()
+        -- January 31 plus one month minus 29 days is January 31.
+        local sql = [[SELECT CAST(VALUE AS STRING) FROM generate_series(
+                          CAST('2024-01-01T00:00:00Z' AS DATETIME),
+                          CAST('%s' AS DATETIME),
+                          CAST({'month': 1, 'day': -29} AS INTERVAL))%s;]]
+        local _, err = box.execute(sql:format('2024-12-01T00:00:00Z', ''))
+        t.assert_equals(err.message, 'Failed to execute SQL statement: ' ..
+                        'the step of generate_series does not change the ' ..
+                        'value')
+        -- There is no error if the series does not need the next value.
+        local res = box.execute(sql:format('2024-12-01T00:00:00Z',
+                                           ' LIMIT 16'))
+        t.assert_equals(#res.rows, 16)
+        t.assert_equals(res.rows[16], {'2024-01-31T00:00:00Z'})
+        res = box.execute(sql:format('2024-01-31T00:00:00Z', ''))
+        t.assert_equals(#res.rows, 16)
+    end)
+end
+
+-- A step of a DATETIME series that moves a value against the direction of
+-- the series is an error when the series needs the next value. A step with
+-- parts of different signs can have this effect: its sign comes from
+-- a fixed rule, and for some dates the step goes the other way.
+g.test_generate_series_datetime_step_against_direction = function(cg)
+    cg.server:exec(function()
+        local sql = [[SELECT CAST(VALUE AS STRING) FROM generate_series(
+                          CAST('%s' AS DATETIME), CAST('%s' AS DATETIME),
+                          CAST(%s AS INTERVAL))%s;]]
+        local message = 'Failed to execute SQL statement: the step of ' ..
+                        'generate_series moves the value against the ' ..
+                        'direction of the series'
+        -- The step is positive by the rule, but January 10 minus one
+        -- month plus 30 days is January 9.
+        local step = "{'month': -1, 'day': 30, 'nsec': 1}"
+        local _, err = box.execute(sql:format(
+            '2024-01-10T00:00:00Z', '2024-01-12T00:00:00Z', step, ''))
+        t.assert_equals(err.message, message)
+        -- January 31 plus one month minus 29 days is January 30 in a year
+        -- that is not a leap year.
+        _, err = box.execute(sql:format(
+            '2023-01-31T00:00:00Z', '2023-06-01T00:00:00Z',
+            "{'month': 1, 'day': -29}", ''))
+        t.assert_equals(err.message, message)
+        -- The same for a negative step: March 1 plus one month minus
+        -- 30 days is March 2.
+        _, err = box.execute(sql:format(
+            '2023-03-01T00:00:00Z', '2023-01-01T00:00:00Z',
+            "{'month': 1, 'day': -31, 'hour': 23}", ''))
+        t.assert_equals(err.message, message)
+        -- There is no error if the series does not need the next value.
+        local res = box.execute(sql:format(
+            '2024-01-10T00:00:00Z', '2024-01-12T00:00:00Z', step,
+            ' LIMIT 1'))
+        t.assert_equals(res.rows, {{'2024-01-10T00:00:00Z'}})
+        res = box.execute(sql:format(
+            '2024-01-10T00:00:00Z', '2024-01-10T00:00:00Z', step, ''))
+        t.assert_equals(res.rows, {{'2024-01-10T00:00:00Z'}})
+    end)
+end
+
+-- The sum of a value of a DATETIME series and the step out of the range of
+-- DATETIME is an error, as for `+`, also if only a part of the step is out
+-- of the range. A large series is not kept in memory.
+g.test_generate_series_datetime_limits = function(cg)
+    cg.server:exec(function()
+        local sql = [[SELECT CAST(VALUE AS STRING) FROM generate_series(
+                          %s, CAST('%s' AS DATETIME),
+                          CAST(%s AS INTERVAL))%s;]]
+        local function dt(s)
+            return ("CAST('%s' AS DATETIME)"):format(s)
+        end
+        for _, case in ipairs({
+            {dt('5879611-07-01T00:00:00Z'), '5879611-07-11T00:00:00Z',
+             "{'day': 7}",
+             {'5879611-07-01T00:00:00Z', '5879611-07-08T00:00:00Z'}},
+            {dt('-5879610-06-25T00:00:00Z'), '-5879610-06-22T00:00:00Z',
+             "{'day': -2}",
+             {'-5879610-06-25T00:00:00Z', '-5879610-06-23T00:00:00Z'}},
+            -- The dates of these cases are in the range of all parsers.
+            {dt('2026-01-01T00:00:00Z'), '9999-12-31T00:00:00Z',
+             "{'year': 6000000}", {'2026-01-01T00:00:00Z'}},
+            {dt('2026-01-01T00:00:00Z'), '0001-01-01T00:00:00Z',
+             "{'year': -6000000}", {'2026-01-01T00:00:00Z'}},
+            -- The step is minus one month, but plus one year is out of the
+            -- range. The start is 5879611-01-01: the days are added, since
+            -- the check of a sum of years is approximate.
+            {dt('2026-01-01T00:00:00Z') ..
+             " + CAST({'day': 2146743839} AS INTERVAL)",
+             '2026-01-01T00:00:00Z', "{'year': 1, 'month': -13}",
+             {'5879611-01-01T00:00:00Z'}},
+        }) do
+            local rows = {}
+            for i, value in ipairs(case[4]) do
+                rows[i] = {value}
+            end
+            local res = box.execute(sql:format(case[1], case[2], case[3],
+                                               ' LIMIT ' .. #rows))
+            t.assert_equals(res.rows, rows, case[3])
+            local _, err = box.execute(sql:format(case[1], case[2], case[3],
+                                                  ''))
+            t.assert_equals(err.message, 'Failed to execute SQL ' ..
+                            'statement: datetime is overflowed', case[3])
+        end
+        local res = box.execute(sql:format(
+            dt('2026-01-01T00:00:00Z'), '9999-01-01T00:00:00Z', "{'sec': 1}",
+            ' LIMIT 2'))
+        t.assert_equals(res.rows, {{'2026-01-01T00:00:00Z'},
+                                   {'2026-01-01T00:00:01Z'}})
+    end)
+end
+
+-- The row estimate of a DATETIME series is the default one, and 0 with
+-- a NULL literal as an argument.
+g.test_generate_series_datetime_plan_estimate = function(cg)
+    cg.server:exec(function()
+        local dt = "CAST('2026-01-01T00:00:00Z' AS DATETIME)"
+        local itv = "CAST({'day': 1} AS INTERVAL)"
+        for _, case in ipairs({
+            {("%s, %s, %s"):format(dt, dt, itv), '~960 rows'},
+            {("%s, %s, NULL"):format(dt, dt), '~1 row'},
+            {("NULL, %s, %s"):format(dt, itv), '~1 row'},
         }) do
             local res = box.execute('EXPLAIN QUERY PLAN SELECT * FROM ' ..
                                     'generate_series(' .. case[1] .. ');')

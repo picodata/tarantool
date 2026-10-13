@@ -11,6 +11,9 @@
 #include "box/sql/vdbeInt.h"
 #include "box/sql/mem.h"
 #include "msgpuck.h"
+#include "mp_datetime.h"
+#include "mp_decimal.h"
+#include "mp_interval.h"
 
 #define UNIT_TAP_COMPATIBLE 1
 #include "unit.h"
@@ -119,13 +122,83 @@ execute(const char *query, int expected_rows, bool expect_error)
 	is(live_contexts, 0, "%s: contexts released", query);
 }
 
+/**
+ * GENERATE_SERIES does not open with arguments whose types do not make
+ * a series, also when the caller did not cast them.
+ */
+static void
+check_generate_series_open(void)
+{
+	const struct sql_table_func_def *series =
+		sql_table_func_find("GENERATE_SERIES", 15, false);
+	struct datetime dt;
+	memset(&dt, 0, sizeof(dt));
+	struct interval itv;
+	memset(&itv, 0, sizeof(itv));
+	itv.day = 1;
+	decimal_t dec;
+	decimal_from_int64(&dec, 1);
+	char args[128];
+	char *end;
+	void *ctx = NULL;
+
+	end = mp_encode_array(args, 2);
+	end = mp_encode_interval(end, &itv);
+	end = mp_encode_interval(end, &itv);
+	is(series->ops->open(args, end, &ctx), -1,
+	   "GENERATE_SERIES rejects INTERVAL bounds");
+	is(ctx, NULL, "failed GENERATE_SERIES open leaves ctx empty");
+
+	end = mp_encode_array(args, 3);
+	end = mp_encode_interval(end, &itv);
+	end = mp_encode_interval(end, &itv);
+	end = mp_encode_interval(end, &itv);
+	is(series->ops->open(args, end, &ctx), -1,
+	   "GENERATE_SERIES rejects INTERVAL bounds with a step");
+
+	end = mp_encode_array(args, 2);
+	end = mp_encode_datetime(end, &dt);
+	end = mp_encode_datetime(end, &dt);
+	is(series->ops->open(args, end, &ctx), -1,
+	   "GENERATE_SERIES rejects DATETIME bounds with no step");
+
+	end = mp_encode_array(args, 3);
+	end = mp_encode_datetime(end, &dt);
+	end = mp_encode_datetime(end, &dt);
+	end = mp_encode_uint(end, 1);
+	is(series->ops->open(args, end, &ctx), -1,
+	   "GENERATE_SERIES rejects a number as the step of DATETIME");
+
+	end = mp_encode_array(args, 3);
+	end = mp_encode_uint(end, 1);
+	end = mp_encode_uint(end, 2);
+	end = mp_encode_interval(end, &itv);
+	is(series->ops->open(args, end, &ctx), -1,
+	   "GENERATE_SERIES rejects INTERVAL as the step of numbers");
+
+	end = mp_encode_array(args, 2);
+	end = mp_encode_uint(end, 1);
+	end = mp_encode_decimal(end, &dec);
+	is(series->ops->open(args, end, &ctx), -1,
+	   "GENERATE_SERIES rejects bounds of different types");
+	is(ctx, NULL, "failed GENERATE_SERIES open leaves ctx empty");
+
+	end = mp_encode_array(args, 3);
+	end = mp_encode_datetime(end, &dt);
+	end = mp_encode_datetime(end, &dt);
+	end = mp_encode_interval(end, &itv);
+	is(series->ops->open(args, end, &ctx), 0,
+	   "GENERATE_SERIES opens with DATETIME bounds and INTERVAL step");
+	series->ops->close(ctx);
+}
+
 int
 main(void)
 {
 	memory_init();
 	fiber_init(fiber_c_invoke);
 	coll_init();
-	plan(66);
+	plan(75);
 	struct sql_table_func_ops saved = ops;
 #define CHECK_REQUIRED(method) do { \
 	ops = saved; \
@@ -237,6 +310,7 @@ main(void)
 	is(each->ops->open(json_args, json_args + 5, &ctx), -1,
 	   "JSON_EACH rejects a JSON scalar after allocation");
 	is(ctx, NULL, "partial JSON_EACH state is not transferred");
+	check_generate_series_open();
 	is(live_contexts, 0, "all iterator contexts released");
 	space_cache_destroy();
 	return check_plan();
