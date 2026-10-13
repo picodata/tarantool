@@ -5,8 +5,9 @@
 	branch = 2.11.8-picodata
 [submodule "third_party/libyaml"]
 	path = third_party/libyaml
-	url = https://github.com/tarantool/libyaml.git
+	url = https://git.picodata.io/core/libyaml.git
 	ignore = dirty
+	branch = 2.11.8-picodata
 [submodule "src/lib/msgpuck"]
 	path = src/lib/msgpuck
 	url = https://git.picodata.io/core/msgpuck.git
