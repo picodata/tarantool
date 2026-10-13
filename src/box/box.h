@@ -187,8 +187,14 @@ box_is_orphan(void);
 
 /**
  * Wait until the instance switches to a desired mode.
+ *
+ * With \a ro set, also wait until every write submitted before the
+ * switch to read-only has reached WAL, so that the instance vclock
+ * includes it on return. A write that fails and is rolled back is not
+ * waited for. The timeout does not bound this wait for WAL.
+ *
  * \param ro wait read-only if set or read-write if unset
- * \param timeout max time to wait
+ * \param timeout max time to wait for the mode
  * \retval -1 timeout or fiber is cancelled
  * \retval 0 success
  */

@@ -225,6 +225,8 @@ journal_queue_set_max_size(int64_t size)
 static inline void
 journal_queue_on_append(const struct journal_entry *entry)
 {
+	/* Zero size means nothing is in flight, see box_wait_ro(). */
+	assert(entry->approx_len > 0);
 	journal_queue.size += entry->approx_len;
 }
 

@@ -543,6 +543,30 @@ box_wait_ro(bool ro, double timeout)
 		if (fiber_cond_wait_deadline(&ro_cond, deadline) != 0)
 			return -1;
 	}
+	if (!ro)
+		return 0;
+	/*
+	 * Writes submitted before the switch may still be on their way
+	 * to WAL. Wait for them, so that the instance vclock includes
+	 * them on return.
+	 *
+	 * Skip the WAL round trip if nothing is in flight: every
+	 * submitted entry has completed in tx, so the instance vclock
+	 * already includes the written ones.
+	 */
+	if (journal_queue.size == 0 && stailq_empty(&journal_queue.requests))
+		return 0;
+	if (journal_sync(NULL) == 0)
+		return 0;
+	/*
+	 * A failed write is being rolled back. Every write submitted
+	 * before has either reached WAL or is rolled back and never
+	 * will, and rolled back rows don't advance the instance vclock,
+	 * so there is nothing left to wait for.
+	 */
+	if (box_error_code(diag_last_error(diag_get())) != ER_CASCADE_ROLLBACK)
+		return -1;
+	diag_clear(diag_get());
 	return 0;
 }
 
