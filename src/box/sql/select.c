@@ -2013,6 +2013,12 @@ generate_full_column_metadata(struct Parse *pParse, struct SrcList *pTabList,
 	bool is_full_meta = (pParse->sql_flags & SQL_FullMetadata) != 0;
 	if (!is_full_meta)
 		return;
+	/*
+	 * The result of EXPLAIN has its own columns, and the metadata of
+	 * the columns of the query is not allocated.
+	 */
+	if (pParse->explain != EXPLAIN_MODE_OFF)
+		return;
 	Vdbe *v = pParse->pVdbe;
 	for (i = 0; i < pEList->nExpr; i++) {
 		Expr *p;
