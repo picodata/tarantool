@@ -612,7 +612,7 @@ selcollist(A) ::= sclp(A) scanpt(B) expr(X) scanpt(Z) as(Y).     {
    if( Y.n>0 ) sqlExprListSetName(pParse, A, &Y, 1);
    sqlExprListSetSpan(A,B,Z);
 }
-selcollist(A) ::= sclp(A) STAR. {
+selcollist(A) ::= sclp(A) scanpt STAR. {
   A = sql_expr_list_append(A, sql_expr_new_anon(TK_ASTERISK));
 }
 selcollist(A) ::= sclp(A) scanpt nm(X) DOT STAR. {
