@@ -292,7 +292,7 @@ end
 
 g.test_map_7_3 = function()
     g.server:exec(function()
-        local sql = [[SELECT {5::name};]]
+        local sql = [[SELECT {5: :name};]]
         local res = {{{[5] = 1}}}
         t.assert_equals(box.execute(sql, {{[':name'] = 1}}).rows, res)
     end)

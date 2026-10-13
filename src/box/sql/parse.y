@@ -150,6 +150,7 @@ cmdx ::= cmd.
 %left COLLATE.
 %right BITNOT.
 %right LB.
+%left DCOLON.
 
 
 ///////////////////// Begin and end transactions. ////////////////////////////
@@ -1038,9 +1039,16 @@ expr(A) ::= expr(A) COLLATE id(C). {
 }
 
 expr(A) ::= CAST LP expr(E) AS typedef(T) RP. {
-  A = sql_expr_new_dequoted(TK_CAST, NULL);
+  A = sqlPExpr(pParse, TK_CAST, E, NULL);
   A->type = T.type;
-  sqlExprAttachSubtrees(A, E, 0);
+}
+
+// The PostgreSQL-style cast: `expr::type` is the same as
+// `CAST(expr AS type)`. The operator binds tighter than all other
+// operators, the unary ones included: `-a::INT` is `-(a::INT)`.
+expr(A) ::= expr(A) DCOLON typedef(T). {
+  A = sqlPExpr(pParse, TK_CAST, A, NULL);
+  A->type = T.type;
 }
 
 expr(A) ::= expr(X) LB getlist(Y) RB. {

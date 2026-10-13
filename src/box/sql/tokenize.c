@@ -472,6 +472,10 @@ sql_token(const char *z, int *type, bool *is_reserved)
 		*type = TK_VARNUM;
 		return 1;
 	case CC_COLON:
+		if (z[1] == ':') {
+			*type = TK_DCOLON;
+			return 2;
+		}
 		*type = TK_COLON;
 		return 1;
 	case CC_VARALPHA:
