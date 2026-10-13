@@ -320,16 +320,20 @@ scanpt(A) ::= . {
   assert( yyLookahead!=YYNOCODE );
   A = yyLookaheadToken.z;
 }
+scantok(A) ::= . {
+  assert( yyLookahead!=YYNOCODE );
+  A = yyLookaheadToken;
+}
 
-ccons ::= DEFAULT scanpt(A) term(X) scanpt(Z).
-                            {sqlAddDefaultValue(pParse,X,A,Z);}
+ccons ::= DEFAULT scantok(A) term(X).
+                            {sqlAddDefaultValue(pParse,X,A.z,&A.z[A.n]);}
 ccons ::= DEFAULT LP(A) expr(X) RP(Z).
                             {sqlAddDefaultValue(pParse,X,A.z+1,Z.z);}
-ccons ::= DEFAULT PLUS(A) term(X) scanpt(Z).
-                            {sqlAddDefaultValue(pParse,X,A.z,Z);}
-ccons ::= DEFAULT MINUS(A) term(X) scanpt(Z).      {
+ccons ::= DEFAULT PLUS(A) scantok(Z) term(X).
+                            {sqlAddDefaultValue(pParse,X,A.z,&Z.z[Z.n]);}
+ccons ::= DEFAULT MINUS(A) scantok(Z) term(X). {
   Expr *p = sqlPExpr(pParse, TK_UMINUS, X, 0);
-  sqlAddDefaultValue(pParse,p,A.z,Z);
+  sqlAddDefaultValue(pParse,p,A.z,&Z.z[Z.n]);
 }
 
 // In addition to the type name, we also care about the primary key and
