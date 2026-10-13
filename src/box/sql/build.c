@@ -590,41 +590,41 @@ primary_key_exit:
 }
 
 /**
- * Prepare a 0-terminated string in the wptr memory buffer that
- * does not contain a sequence of more than one whatespace
- * character. Routine enforces ' ' (space) as whitespace
- * delimiter. When character ' or " was met, the string is copied
- * without any changes until the next ' or " sign.
- * The wptr buffer is expected to have str_len + 1 bytes
- * (this is the expected scenario where no extra whitespace
- * characters in the source string).
+ * Write the text of an SQL expression to the wptr memory buffer as one
+ * line: each sequence of spaces, line breaks and comments between two
+ * tokens becomes one space, and there is none at the ends. A comment
+ * cannot stay in the text: a line comment in one line hides all that
+ * follows it. The tokens, string literals included, are copied without
+ * changes.
+ *
+ * The result is not longer than the source, so the wptr buffer must have
+ * str_len + 1 bytes.
  * @param wptr The destination memory buffer of size
  *             @a str_len + 1.
- * @param str The source string to be copied.
- * @param str_len The source string @a str length.
+ * @param str The source text. It ends at the end of a token.
+ * @param str_len The source text @a str length.
  */
 static void
 trim_space_snprintf(char *wptr, const char *str, uint32_t str_len)
 {
 	const char *str_end = str + str_len;
-	char quote_type = '\0';
-	bool is_prev_chr_space = false;
+	const char *wptr_start = wptr;
+	bool is_space_pending = false;
 	while (str < str_end) {
-		if (quote_type == '\0') {
-			if (*str == '\'' || *str == '\"') {
-				quote_type = *str;
-			} else if (isspace((unsigned char)*str)) {
-				if (!is_prev_chr_space)
-					*wptr++ = ' ';
-				is_prev_chr_space = true;
-				str++;
-				continue;
-			}
-		} else if (*str == quote_type) {
-			quote_type = '\0';
+		int type;
+		bool unused;
+		int len = sql_token(str, &type, &unused);
+		len = MIN(len, str_end - str);
+		if (type == TK_SPACE || type == TK_LINEFEED) {
+			is_space_pending = true;
+		} else {
+			if (is_space_pending && wptr != wptr_start)
+				*wptr++ = ' ';
+			is_space_pending = false;
+			memcpy(wptr, str, len);
+			wptr += len;
 		}
-		is_prev_chr_space = false;
-		*wptr++ = *str++;
+		str += len;
 	}
 	*wptr = '\0';
 }
