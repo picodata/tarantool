@@ -2269,7 +2269,11 @@ mem_add_dt(const struct Mem *left, const struct Mem *right, struct Mem *result)
 		return -1;
 	}
 	mem_set_datetime(result, &left->u.dt);
-	return datetime_increment_by(&result->u.dt, 1, &right->u.itv);
+	if (datetime_increment_by(&result->u.dt, 1, &right->u.itv) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "datetime is overflowed");
+		return -1;
+	}
+	return 0;
 }
 
 /**
@@ -2290,7 +2294,11 @@ mem_add_itv(const struct Mem *left, const struct Mem *right, struct Mem *result)
 		return -1;
 	}
 	mem_set_interval(result, &left->u.itv);
-	return interval_interval_add(&result->u.itv, &right->u.itv);
+	if (interval_interval_add(&result->u.itv, &right->u.itv) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "interval is overflowed");
+		return -1;
+	}
+	return 0;
 }
 
 int
@@ -2402,8 +2410,13 @@ mem_sub_dt(const struct Mem *left, const struct Mem *right, struct Mem *result)
 		struct interval res;
 		memset(&res, 0, sizeof(res));
 		mem_set_interval(result, &res);
-		return datetime_datetime_sub(&result->u.itv, &left->u.dt,
-					     &right->u.dt);
+		if (datetime_datetime_sub(&result->u.itv, &left->u.dt,
+					  &right->u.dt) != 0) {
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 "interval is overflowed");
+			return -1;
+		}
+		return 0;
 	}
 
 	if (!mem_is_interval(right) || mem_is_metatype(right)) {
@@ -2412,7 +2425,11 @@ mem_sub_dt(const struct Mem *left, const struct Mem *right, struct Mem *result)
 		return -1;
 	}
 	mem_set_datetime(result, &left->u.dt);
-	return datetime_increment_by(&result->u.dt, -1, &right->u.itv);
+	if (datetime_increment_by(&result->u.dt, -1, &right->u.itv) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "datetime is overflowed");
+		return -1;
+	}
+	return 0;
 }
 
 /**
@@ -2430,7 +2447,11 @@ mem_sub_itv(const struct Mem *left, const struct Mem *right, struct Mem *result)
 		return -1;
 	}
 	mem_set_interval(result, &left->u.itv);
-	return interval_interval_sub(&result->u.itv, &right->u.itv);
+	if (interval_interval_sub(&result->u.itv, &right->u.itv) != 0) {
+		diag_set(ClientError, ER_SQL_EXECUTE, "interval is overflowed");
+		return -1;
+	}
+	return 0;
 }
 
 int

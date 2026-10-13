@@ -728,7 +728,7 @@ local check_ranges = {
     [8] = {'nsec', MAX_NSEC_RANGE},
 }
 
-local function check_rc(rc, operation, obj)
+local function check_rc(rc, operation, obj, rhs)
     -- fast path
     if rc == 0 then
         return obj
@@ -739,6 +739,10 @@ local function check_rc(rc, operation, obj)
     assert(index >= 1 and index <= 8)
     local txt, max = unpack(check_ranges[index])
     local v = obj[txt]
+    if index == 8 then
+        -- An overflowing nanosecond result cannot be stored in int32_t.
+        v = operation == 'addition' and v + rhs.nsec or v - rhs.nsec
+    end
     error(('%s moves value %s of %s out of allowed range [%s, %s]'):
             format(operation, v, txt, -max, max), 3)
 end
@@ -747,7 +751,7 @@ end
 local function datetime_datetime_sub(lhs, rhs)
     local obj = interval_new()
     local rc = builtin.tnt_datetime_datetime_sub(obj, lhs, rhs)
-    return check_rc(rc, 'subtraction', obj)
+    return check_rc(rc, 'subtraction', obj, rhs)
 end
 
 -- subtract operation for both left and right operands are intervals
@@ -755,7 +759,7 @@ local function interval_interval_sub(lhs, rhs)
     local lobj = interval_decode_args(interval_new_copy(lhs))
     local robj = interval_decode_args(rhs)
     local rc = builtin.tnt_interval_interval_sub(lobj, robj)
-    return check_rc(rc, 'subtraction', lobj)
+    return check_rc(rc, 'subtraction', lobj, robj)
 end
 
 -- addition operation for both left and right operands are intervals
@@ -763,7 +767,7 @@ local function interval_interval_add(lhs, rhs)
     local lobj = interval_decode_args(interval_new_copy(lhs))
     local robj = interval_decode_args(rhs)
     local rc = builtin.tnt_interval_interval_add(lobj, robj)
-    return check_rc(rc, 'addition', lobj)
+    return check_rc(rc, 'addition', lobj, robj)
 end
 
 local function date_first(lhs, rhs)

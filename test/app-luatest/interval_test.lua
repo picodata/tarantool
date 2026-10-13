@@ -34,3 +34,19 @@ end
 g.test_check_interval_encode_ffi = function()
     t.assert_equals(bin, msgpackffi.encode(val))
 end
+
+g.test_nanosecond_overflow = function()
+    for _, delta in ipairs({1, 2, 2147483647}) do
+        local max = itv.new({nsec = 2147483647})
+        local min = itv.new({nsec = -2147483647})
+        local rhs = itv.new({nsec = delta})
+        local function message(operation, value)
+            return ('%s moves value %s of nsec out of allowed range ' ..
+                    '[-2147483647, 2147483647]'):format(operation, value)
+        end
+        t.assert_error_msg_contains(message('addition', 2147483647 + delta),
+                                    function() return max + rhs end)
+        t.assert_error_msg_contains(message('subtraction', -2147483647 - delta),
+                                    function() return min - rhs end)
+    end
+end

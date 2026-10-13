@@ -652,12 +652,12 @@ interval_to_string(const struct interval *ival, char *buf, ssize_t len)
  * - make sure it's not exceeding maximum allowed value
  */
 static void
-normalize_nsec(int64_t *psecs, int *pnsec)
+normalize_nsec(int64_t *psecs, int64_t *pnsec)
 {
 	assert(psecs != NULL);
 	assert(pnsec != NULL);
 	int64_t secs = *psecs;
-	int nsec = *pnsec;
+	int64_t nsec = *pnsec;
 
 	if (nsec < 0 || nsec >= NANOS_PER_SEC) {
 		secs += nsec / NANOS_PER_SEC;
@@ -722,7 +722,7 @@ datetime_increment_by(struct datetime *self, int direction,
 {
 	int64_t secs = local_secs(self);
 	int64_t dt = local_dt(secs);
-	int nsec = self->nsec;
+	int64_t nsec = self->nsec;
 	int offset = self->tzoffset;
 	int tzindex = self->tzindex;
 
@@ -734,7 +734,7 @@ datetime_increment_by(struct datetime *self, int direction,
 	int64_t hours = ival->hour;
 	int64_t minutes = ival->min;
 	int64_t seconds = ival->sec;
-	int nanoseconds = ival->nsec;
+	int64_t nanoseconds = ival->nsec;
 	dt_adjust_t adjust = ival->adjust;
 	int rc = 0;
 
@@ -806,7 +806,7 @@ datetime_increment_by(struct datetime *self, int direction,
 		nsec += direction * nanoseconds;
 
 	normalize_nsec(&secs, &nsec);
-	rc = verify_dt((secs + SECS_EPOCH_1970_OFFSET) / SECS_PER_DAY);
+	rc = verify_dt(DIV(secs + SECS_EPOCH_1970_OFFSET, SECS_PER_DAY));
 	if (rc != 0)
 		return rc;
 
@@ -816,7 +816,11 @@ datetime_increment_by(struct datetime *self, int direction,
 		epoch_timezone_lookup(secs, tzindex, &gmtoff, &isdst);
 		offset = gmtoff / 60;
 	}
-	self->epoch = utc_secs(secs, offset);
+	secs = utc_secs(secs, offset);
+	rc = verify_range(secs, MIN_EPOCH_SECS_VALUE, MAX_EPOCH_SECS_VALUE);
+	if (rc != 0)
+		return rc;
+	self->epoch = secs;
 	self->nsec = nsec;
 	self->tzoffset = offset;
 	return 0;
@@ -879,7 +883,11 @@ interval_interval_sub(struct interval *lhs, const struct interval *rhs)
 	lhs->hour -= rhs->hour;
 	lhs->min -= rhs->min;
 	lhs->sec -= rhs->sec;
-	lhs->nsec -= rhs->nsec;
+	int64_t nsec = (int64_t)lhs->nsec - rhs->nsec;
+	int rc = verify_range(nsec, -MAX_NSEC_RANGE, MAX_NSEC_RANGE);
+	if (rc != 0)
+		return rc * CHECK_NANOSECS;
+	lhs->nsec = nsec;
 	return interval_check_args(lhs);
 }
 
@@ -895,7 +903,11 @@ interval_interval_add(struct interval *lhs, const struct interval *rhs)
 	lhs->hour += rhs->hour;
 	lhs->min += rhs->min;
 	lhs->sec += rhs->sec;
-	lhs->nsec += rhs->nsec;
+	int64_t nsec = (int64_t)lhs->nsec + rhs->nsec;
+	int rc = verify_range(nsec, -MAX_NSEC_RANGE, MAX_NSEC_RANGE);
+	if (rc != 0)
+		return rc * CHECK_NANOSECS;
+	lhs->nsec = nsec;
 	return interval_check_args(lhs);
 }
 
