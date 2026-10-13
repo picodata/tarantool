@@ -591,7 +591,7 @@ mp_print_test(void)
 static void
 interval_from_map_test(void)
 {
-	plan(2);
+	plan(12);
 	header();
 
 	struct interval iv;
@@ -604,6 +604,28 @@ interval_from_map_test(void)
 		"\x81\xa4year\xd3\x00\xff\xff\xff\xff\xff\xff\xff";
 	rc = interval_from_map(&iv, suboptimal_data);
 	is(rc, -1, "too big year inside mp_int");
+
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "years", 1);
+	is(interval_from_map(&iv, buffer), -1, "unknown key");
+	mp_format(buffer, sizeof(buffer), "{%s%d%s%d}", "day", 1, "x", 1);
+	is(interval_from_map(&iv, buffer), -1, "unknown key after a field");
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "ye", 1);
+	is(interval_from_map(&iv, buffer), -1, "start of the name of a field");
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "", 1);
+	is(interval_from_map(&iv, buffer), -1, "empty key");
+	mp_format(buffer, sizeof(buffer), "{%d%d}", 1, 1);
+	is(interval_from_map(&iv, buffer), -1, "key is not a string");
+	mp_format(buffer, sizeof(buffer), "{%s%s}", "adjust", "la");
+	is(interval_from_map(&iv, buffer), -1, "start of an adjust value");
+	mp_format(buffer, sizeof(buffer), "{%s%s}", "adjust", "last");
+	is(interval_from_map(&iv, buffer) == 0 && iv.adjust == DT_SNAP, true,
+	   "adjust value");
+	mp_format(buffer, sizeof(buffer), "{%s%s}", "adjust", "LAST");
+	is(interval_from_map(&iv, buffer), -1, "adjust value in upper case");
+	mp_format(buffer, sizeof(buffer), "{%s%s}", "day", "1");
+	is(interval_from_map(&iv, buffer), -1, "value is a string");
+	mp_format(buffer, sizeof(buffer), "{%s%d%s%d}", "day", 1, "day", 2);
+	is(interval_from_map(&iv, buffer), -1, "repeated key");
 
 	footer();
 	check_plan();

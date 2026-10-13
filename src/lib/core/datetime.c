@@ -1014,6 +1014,36 @@ get_int32_from_mp(const char **data, int32_t *value)
 	return 0;
 }
 
+/** Return true if the string of the given size is equal to the name. */
+static bool
+str_is_name(const char *str, uint32_t size, const char *name)
+{
+	return size == strlen(name) && memcmp(str, name, size) == 0;
+}
+
+/**
+ * Return true if the key of the field of a MAP value is equal to the key of
+ * one of the fields before it. The fields of the MAP value start at the
+ * given position, and the keys of the fields before the field are strings.
+ * The search is quadratic, but the keys before the field are different
+ * names of fields, so there are only a few of them.
+ */
+static bool
+map_key_is_repeated(const char *data, const char *field)
+{
+	const char *pos = field;
+	uint32_t size;
+	const char *key = mp_decode_str(&pos, &size);
+	while (data < field) {
+		uint32_t prev_size;
+		const char *prev = mp_decode_str(&data, &prev_size);
+		if (prev_size == size && memcmp(prev, key, size) == 0)
+			return true;
+		mp_next(&data);
+	}
+	return false;
+}
+
 /** Define field of DATETIME value from field of given MAP value.*/
 static int
 map_field_to_dt_field(struct dt_fields *fields, const char **data)
@@ -1148,52 +1178,51 @@ datetime_from_map(struct datetime *dt, const char *data)
 	return datetime_from_fields(dt, &fields);
 }
 
-/** Define field of INTERVAL value from field of given MAP value.*/
+/**
+ * Define field of INTERVAL value from field of given MAP value. A key
+ * that is not the name of a field of INTERVAL is an error.
+ */
 static int
 map_field_to_itv_field(struct interval *itv, const char **data)
 {
-	if (mp_typeof(**data) != MP_STR) {
-		mp_next(data);
-		mp_next(data);
-		return 0;
-	}
+	if (mp_typeof(**data) != MP_STR)
+		return -1;
 	uint32_t size;
 	const char *str = mp_decode_str(data, &size);
 	double *dvalue = NULL;
 	int32_t *ivalue = NULL;
-	if (strncmp(str, "year", size) == 0) {
+	if (str_is_name(str, size, "year")) {
 		ivalue = &itv->year;
-	} else if (strncmp(str, "month", size) == 0) {
+	} else if (str_is_name(str, size, "month")) {
 		ivalue = &itv->month;
-	} else if (strncmp(str, "week", size) == 0) {
+	} else if (str_is_name(str, size, "week")) {
 		ivalue = &itv->week;
-	} else if (strncmp(str, "day", size) == 0) {
+	} else if (str_is_name(str, size, "day")) {
 		dvalue = &itv->day;
-	} else if (strncmp(str, "hour", size) == 0) {
+	} else if (str_is_name(str, size, "hour")) {
 		dvalue = &itv->hour;
-	} else if (strncmp(str, "min", size) == 0) {
+	} else if (str_is_name(str, size, "min")) {
 		dvalue = &itv->min;
-	} else if (strncmp(str, "sec", size) == 0) {
+	} else if (str_is_name(str, size, "sec")) {
 		dvalue = &itv->sec;
-	} else if (strncmp(str, "nsec", size) == 0) {
+	} else if (str_is_name(str, size, "nsec")) {
 		ivalue = &itv->nsec;
-	} else if (strncmp(str, "adjust", size) == 0) {
+	} else if (str_is_name(str, size, "adjust")) {
 		if (mp_typeof(**data) != MP_STR)
 			return -1;
 		uint32_t vsize;
 		const char *val = mp_decode_str(data, &vsize);
-		if (strncasecmp(val, "none", vsize) == 0)
+		if (str_is_name(val, vsize, "none"))
 			itv->adjust = DT_LIMIT;
-		else if (strncasecmp(val, "last", vsize) == 0)
+		else if (str_is_name(val, vsize, "last"))
 			itv->adjust = DT_SNAP;
-		else if (strncasecmp(val, "excess", vsize) == 0)
+		else if (str_is_name(val, vsize, "excess"))
 			itv->adjust = DT_EXCESS;
 		else
 			return -1;
 		return 0;
 	} else {
-		mp_next(data);
-		return 0;
+		return -1;
 	}
 	if (dvalue != NULL) {
 		double val;
@@ -1215,8 +1244,11 @@ interval_from_map(struct interval *itv, const char *data)
 	uint32_t len = mp_decode_map(&data);
 	memset(itv, 0, sizeof(*itv));
 	itv->adjust = DT_LIMIT;
+	const char *fields_start = data;
 	for (uint32_t i = 0; i < len; ++i) {
-		if (map_field_to_itv_field(itv, &data) != 0)
+		const char *field = data;
+		if (map_field_to_itv_field(itv, &data) != 0 ||
+		    map_key_is_repeated(fields_start, field))
 			return -1;
 	}
 	return interval_check_args(itv) == 0 ? 0 : -1;

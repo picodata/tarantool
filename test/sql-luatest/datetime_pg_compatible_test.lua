@@ -2563,7 +2563,8 @@ end
 --
 -- The result of CAST() from MAP value to INTERVAL must be equal to the result
 -- of calling require('datetime').interval.new() with the corresponding table as
--- an argument.
+-- an argument. The exception is a key that is not a field of INTERVAL: it is
+-- an error in CAST().
 --
 g.test_datetime_34_1 = function()
     g.server:exec(function()
@@ -2573,7 +2574,9 @@ g.test_datetime_34_1 = function()
         t.assert_equals(box.execute(sql, {{['#v'] = v}}).rows, {{itv.new(v)}})
 
         v.something = 1
-        t.assert_equals(box.execute(sql, {{['#v'] = v}}).rows, {{itv.new(v)}})
+        local _, err = box.execute(sql, {{['#v'] = v}})
+        t.assert_equals(err.message, [[Type mismatch: can not convert ]]..
+                        [[map({"something": 1}) to interval]])
 
         v = {year = 1, month = 1, week = 1, day = 1, hour = 1, min = 1, sec = 1,
              nsec = 1, adjust = 'none'}
