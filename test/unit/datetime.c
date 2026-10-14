@@ -632,6 +632,34 @@ interval_from_map_test(void)
 }
 
 static void
+datetime_from_map_test(void)
+{
+	plan(7);
+	header();
+
+	struct datetime dt;
+	char buffer[128];
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "day", 2);
+	is(datetime_from_map(&dt, buffer) == 0 &&
+	   dt.epoch == SECS_PER_DAY, true, "day");
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "days", 2);
+	is(datetime_from_map(&dt, buffer), -1, "unknown key");
+	mp_format(buffer, sizeof(buffer), "{%s%d%s%d}", "day", 2, "x", 1);
+	is(datetime_from_map(&dt, buffer), -1, "unknown key after a field");
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "d", 2);
+	is(datetime_from_map(&dt, buffer), -1, "start of the name of a field");
+	mp_format(buffer, sizeof(buffer), "{%s%d}", "", 2000);
+	is(datetime_from_map(&dt, buffer), -1, "empty key");
+	mp_format(buffer, sizeof(buffer), "{%d%d}", 1, 1);
+	is(datetime_from_map(&dt, buffer), -1, "key is not a string");
+	mp_format(buffer, sizeof(buffer), "{%s%d%s%d}", "day", 2, "day", 3);
+	is(datetime_from_map(&dt, buffer), -1, "repeated key");
+
+	footer();
+	check_plan();
+}
+
+static void
 datetime_parse_unterminated_test(void)
 {
 	const char *samples[] = {
@@ -766,7 +794,7 @@ datetime_parse_trailer_test(void)
 int
 main(void)
 {
-	plan(10);
+	plan(11);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -774,6 +802,7 @@ main(void)
 	mp_datetime_test();
 	mp_print_test();
 	interval_from_map_test();
+	datetime_from_map_test();
 	datetime_parse_unterminated_test();
 	datetime_parse_exact_buffer_test();
 	datetime_parse_trailer_test();

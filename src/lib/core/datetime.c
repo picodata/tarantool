@@ -1044,53 +1044,52 @@ map_key_is_repeated(const char *data, const char *field)
 	return false;
 }
 
-/** Define field of DATETIME value from field of given MAP value.*/
+/**
+ * Define field of DATETIME value from field of given MAP value. A key
+ * that is not the name of a field of DATETIME is an error.
+ */
 static int
 map_field_to_dt_field(struct dt_fields *fields, const char **data)
 {
-	if (mp_typeof(**data) != MP_STR) {
-		mp_next(data);
-		mp_next(data);
-		return 0;
-	}
+	if (mp_typeof(**data) != MP_STR)
+		return -1;
 	uint32_t size;
 	const char *str = mp_decode_str(data, &size);
 	double *value;
-	if (strncmp(str, "year", size) == 0) {
+	if (str_is_name(str, size, "year")) {
 		value = &fields->year;
 		fields->is_ymdhms = true;
-	} else if (strncmp(str, "month", size) == 0) {
+	} else if (str_is_name(str, size, "month")) {
 		value = &fields->month;
 		fields->is_ymdhms = true;
-	} else if (strncmp(str, "day", size) == 0) {
+	} else if (str_is_name(str, size, "day")) {
 		value = &fields->day;
 		fields->is_ymdhms = true;
-	} else if (strncmp(str, "hour", size) == 0) {
+	} else if (str_is_name(str, size, "hour")) {
 		value = &fields->hour;
 		fields->is_ymdhms = true;
-	} else if (strncmp(str, "min", size) == 0) {
+	} else if (str_is_name(str, size, "min")) {
 		value = &fields->min;
 		fields->is_ymdhms = true;
-	} else if (strncmp(str, "sec", size) == 0) {
+	} else if (str_is_name(str, size, "sec")) {
 		value = &fields->sec;
 		fields->is_ymdhms = true;
-	} else if (strncmp(str, "msec", size) == 0) {
+	} else if (str_is_name(str, size, "msec")) {
 		value = &fields->msec;
 		++fields->count_usec;
-	} else if (strncmp(str, "usec", size) == 0) {
+	} else if (str_is_name(str, size, "usec")) {
 		value = &fields->usec;
 		++fields->count_usec;
-	} else if (strncmp(str, "nsec", size) == 0) {
+	} else if (str_is_name(str, size, "nsec")) {
 		value = &fields->nsec;
 		++fields->count_usec;
-	} else if (strncmp(str, "timestamp", size) == 0) {
+	} else if (str_is_name(str, size, "timestamp")) {
 		value = &fields->timestamp;
 		fields->is_ts = true;
-	} else if (strncmp(str, "tzoffset", size) == 0) {
+	} else if (str_is_name(str, size, "tzoffset")) {
 		value = &fields->tzoffset;
 	} else {
-		mp_next(data);
-		return 0;
+		return -1;
 	}
 	return get_double_from_mp(data, value);
 }
@@ -1171,8 +1170,11 @@ datetime_from_map(struct datetime *dt, const char *data)
 	fields.year = 1970;
 	fields.month = 1;
 	fields.day = 1;
+	const char *fields_start = data;
 	for (uint32_t i = 0; i < len; ++i) {
-		if (map_field_to_dt_field(&fields, &data) != 0)
+		const char *field = data;
+		if (map_field_to_dt_field(&fields, &data) != 0 ||
+		    map_key_is_repeated(fields_start, field))
 			return -1;
 	}
 	return datetime_from_fields(dt, &fields);

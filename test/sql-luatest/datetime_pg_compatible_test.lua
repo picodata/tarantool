@@ -2246,7 +2246,8 @@ end
 --
 -- The result of CAST() from MAP value to DATETIME must be equal to the result
 -- of calling require('datetime').new() with the corresponding table as an
--- argument.
+-- argument. The exception is a key that is not a field of DATETIME: it is an
+-- error in CAST().
 --
 g.test_datetime_33_1 = function()
     g.server:exec(function()
@@ -2256,7 +2257,9 @@ g.test_datetime_33_1 = function()
         t.assert_equals(box.execute(sql, {{['#v'] = v}}).rows, {{dt.new(v)}})
 
         v.something = 1
-        t.assert_equals(box.execute(sql, {{['#v'] = v}}).rows, {{dt.new(v)}})
+        local _, err = box.execute(sql, {{['#v'] = v}})
+        t.assert_equals(err.message, [[Type mismatch: can not convert ]]..
+                        [[map({"something": 1}) to datetime]])
 
         v = {year = 1, month = 1, day = 1, hour = 1, min = 1, sec = 1}
         t.assert_equals(box.execute(sql, {{['#v'] = v}}).rows, {{dt.new(v)}})
