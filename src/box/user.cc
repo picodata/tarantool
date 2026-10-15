@@ -197,26 +197,6 @@ user_map_is_empty(struct user_map *map)
 }
 
 /**
- * Merge two sets of users: add all users from right argument
- * to the left one.
- */
-static void
-user_map_union(struct user_map *lhs, struct user_map *rhs)
-{
-	mh_int_t i;
-	mh_foreach(rhs->h, i)
-		mh_i32ptr_put(lhs->h, mh_i32ptr_node(rhs->h, i), NULL, NULL);
-}
-
-/** Replace the contents of the left map with a copy of the right one. */
-static inline void
-user_map_copy(struct user_map *lhs, struct user_map *rhs)
-{
-	user_map_reset(lhs);
-	user_map_union(lhs, rhs);
-}
-
-/**
  * Iterate over users in the set of users. The map must not be
  * changed while an iterator over it is alive: a hash resize
  * moves the members an unfinished iterator has not seen yet.
@@ -832,8 +812,6 @@ user_cache_free(void)
  * themselves own no resources.
  */
 struct role_graph {
-	/** The nodes a traversal has already passed. */
-	struct user_map closure;
 	/** The nodes of the layer being visited. */
 	struct user_map current;
 	/** The nodes to visit in the next layer. */
@@ -843,7 +821,6 @@ struct role_graph {
 static void
 role_graph_create(struct role_graph *graph)
 {
-	user_map_create(&graph->closure);
 	user_map_create(&graph->current);
 	user_map_create(&graph->next);
 }
@@ -853,7 +830,6 @@ role_graph_destroy(struct role_graph *graph)
 {
 	user_map_destroy(&graph->next);
 	user_map_destroy(&graph->current);
-	user_map_destroy(&graph->closure);
 }
 
 /**
@@ -865,10 +841,11 @@ static bool
 role_has_role(struct role_graph *graph, struct user *role,
 	      struct user *granted)
 {
-	user_map_reset(&graph->closure);
-	user_map_set(&graph->closure, granted);
-	user_map_copy(&graph->current, &graph->closure);
+	user_map_reset(&graph->current);
+	user_map_set(&graph->current, granted);
 	while (!user_map_is_empty(&graph->current)) {
+		if (user_map_is_set(&graph->current, role))
+			return true;
 		/*
 		 * As long as we're traversing a directed
 		 * acyclic graph, we're bound to end at some
@@ -880,10 +857,9 @@ role_has_role(struct role_graph *graph, struct user *role,
 		struct user *user;
 		while ((user = user_map_iterator_next(&it)))
 			user_map_add_users(&graph->next, &user->users);
-		user_map_union(&graph->closure, &graph->next);
 		user_map_swap(&graph->current, &graph->next);
 	}
-	return user_map_is_set(&graph->closure, role);
+	return false;
 }
 
 int
