@@ -3,7 +3,7 @@ local build_path = os.getenv("BUILDDIR")
 package.cpath = build_path..'/test/sql-tap/?.so;'..build_path..'/test/sql-tap/?.dylib;'..package.cpath
 
 local test = require("sqltester")
-test:plan(145)
+test:plan(151)
 
 local uuid = require("uuid")
 local uuid1 = uuid.fromstr("11111111-1111-1111-1111-111111111111")
@@ -1304,7 +1304,63 @@ test:do_catchsql_test(
         1, "Type mismatch: can not convert string('11111111-1111-1111-1111-11111') to uuid"
     })
 
+local uuid_e0 = uuid.fromstr("00000000-0000-0000-e000-000000000000")
+local uuid_ff = uuid.fromstr("ffffffff-ffff-ffff-ffff-ffffffffffff")
+
+test:do_execsql_test(
+    "uuid-18.1",
+    [[
+        SELECT CAST('00000000-0000-0000-e000-000000000000' AS UUID);
+    ]], {
+        uuid_e0
+    })
+
+test:do_execsql_test(
+    "uuid-18.2",
+    [[
+        SELECT CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS UUID);
+    ]], {
+        uuid_ff
+    })
+
+test:do_execsql_test(
+    "uuid-18.3",
+    [[
+        SELECT CAST(x'0000000000000000e000000000000000' AS UUID);
+    ]], {
+        uuid_e0
+    })
+
+test:do_execsql_test(
+    "uuid-18.4",
+    [[
+        SELECT CAST(x'ffffffffffffffffffffffffffffffff' AS UUID);
+    ]], {
+        uuid_ff
+    })
+
+test:do_execsql_test(
+    "uuid-18.5",
+    [[
+        CREATE TABLE t18 (i INT PRIMARY KEY, u UUID);
+        INSERT INTO t18 VALUES
+            (1, CAST('00000000-0000-0000-e000-000000000000' AS UUID)),
+            (2, CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS UUID));
+        SELECT u FROM t18 ORDER BY u;
+    ]], {
+        uuid_e0, uuid_ff
+    })
+
+test:do_test(
+    "uuid-18.6",
+    function()
+        return {box.space.T18:get(1).U, box.space.T18:get(2).U}
+    end, {
+        uuid_e0, uuid_ff
+    })
+
 test:execsql([[
+    DROP TABLE t18;
     DROP TRIGGER t;
     DROP VIEW v;
     DROP TABLE t15;

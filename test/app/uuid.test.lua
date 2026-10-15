@@ -49,6 +49,13 @@ uuid.fromstr('ba90d81514e0431d80c0ce587885bb78')
 uuid.fromstr('ba90d815-14e0-431d-80c0')
 uuid.fromstr('ba90d815-14e0-431d-80c0-tt587885bb7')
 
+uuid.fromstr('00000000-0000-0000-e000-000000000000'):str()
+uuid.fromstr('ffffffff-ffff-ffff-ffff-ffffffffffff'):str()
+msgpack = require('msgpack')
+uu = uuid.frombin(string.rep('\xff', 16))
+msgpack.decode(msgpack.encode(uu)) == uu
+uuid.fromstr(uu:str()) == uu
+
 --
 -- to/from binary
 --
