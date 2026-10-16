@@ -184,6 +184,7 @@ box_txn_stmt_new_tuple
 box_txn_stmt_old_tuple
 box_update
 box_upsert
+box_user_check_limit
 box_user_id_by_name
 box_wait_ro
 clock_monotonic

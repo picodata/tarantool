@@ -186,6 +186,21 @@ credentials_reset(struct credentials *cr, struct user *new_user)
 const char *
 user_auth_method_name(const char *name, uint32_t name_len);
 
+/**
+ * Check that the limit on the number of users is not reached,
+ * so that one more user can be created and \a reserved tokens
+ * stay free after it. A caller can keep the tokens for the users
+ * that it creates later. Roles do not count towards the limit.
+ * The users created or dropped by the transactions that are not
+ * committed yet are counted too.
+ * \param reserved the number of tokens that must stay free
+ * \retval 0 one more user can be created
+ * \retval -1 the limit is reached, ER_USER_MAX is set (check
+ *         box_error_last())
+ */
+API_EXPORT int
+box_user_check_limit(uint32_t reserved);
+
 /** \endcond public */
 
 /**

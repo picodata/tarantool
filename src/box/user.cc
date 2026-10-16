@@ -607,6 +607,19 @@ auth_token_calc_idx(uint16_t auth_token, uint8_t *bit_no)
  */
 static int min_token_idx = 0;
 
+/** The number of tokens in use, that is, of users. */
+static int token_count = 0;
+
+API_EXPORT int
+box_user_check_limit(uint32_t reserved)
+{
+	assert(token_count <= BOX_USER_MAX);
+	if (reserved + token_count < BOX_USER_MAX)
+		return 0;
+	diag_set(ClientError, ER_USER_MAX, BOX_USER_MAX);
+	return -1;
+}
+
 /**
  * Find and return a spare authentication token.
  * Raise an exception when the maximal number of users
@@ -615,6 +628,10 @@ static int min_token_idx = 0;
 static uint16_t
 auth_token_get(void)
 {
+	if (box_user_check_limit(0) != 0) {
+		diag_log();
+		diag_raise();
+	}
 	uint8_t bit_no = 0;
 	while (min_token_idx < USER_MAP_SIZE) {
 		bit_no = __builtin_ffs(tokens[min_token_idx]);
@@ -625,19 +642,14 @@ auth_token_get(void)
 	/*
 	 * find-first-set returns bit index starting from 1,
 	 * or 0 if no bit is set. Rebase the index to offset 0.
+	 * The lowest spare token is always taken, so while the
+	 * limit is not reached, the spare token is below it.
 	 */
-	uint32_t auth_token = bit_no > 0 ?
-			      min_token_idx * UMAP_INT_BITS + bit_no - 1 :
-			      BOX_USER_MAX;
-	if (auth_token >= BOX_USER_MAX) {
-		/*
-		 * A cap on the number of users was reached. The
-		 * map holds more tokens than the cap allows when
-		 * the cap is not a multiple of the word size.
-		 */
-		tnt_raise(LoggedError, ER_USER_MAX, BOX_USER_MAX);
-	}
+	assert(bit_no > 0);
+	uint32_t auth_token = min_token_idx * UMAP_INT_BITS + bit_no - 1;
+	assert(auth_token < BOX_USER_MAX);
 	tokens[min_token_idx] ^= ((umap_int_t)1) << (bit_no - 1);
+	token_count++;
 	return auth_token;
 }
 
@@ -653,6 +665,8 @@ auth_token_put(uint16_t auth_token)
 	tokens[idx] |= ((umap_int_t) 1) << bit_no;
 	if (idx < min_token_idx)
 		min_token_idx = idx;
+	assert(token_count > 0);
+	token_count--;
 }
 
 /* }}} */

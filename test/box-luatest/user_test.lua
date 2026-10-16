@@ -316,3 +316,52 @@ g.test_revoke_reaches_a_role_held_by_two_paths = function(cg)
         end))
     end)
 end
+
+--
+-- box_user_check_limit(0) is the check that the creation of a user
+-- does. It passes while a token is free, and fails with
+-- ER_USER_MAX after that. Roles take no token, so they can still
+-- be created. With reserved tokens, the check also keeps that
+-- number of tokens free.
+--
+g.test_user_check_limit = function(cg)
+    cg.server:exec(function()
+        local t = require('luatest')
+        local ffi = require('ffi')
+        ffi.cdef('int box_user_check_limit(uint32_t reserved);')
+        local err = {type = 'ClientError', code = box.error.USER_MAX}
+
+        local i = 0
+        while ffi.C.box_user_check_limit(0) == 0 do
+            i = i + 1
+            box.schema.user.create('limit' .. i)
+        end
+        t.assert_covers(box.error.last():unpack(), err)
+        t.assert_error_covers(err, box.schema.user.create, 'limit_over')
+
+        local users = 0
+        for _, tuple in box.space._user:pairs() do
+            if tuple.type == 'user' then
+                users = users + 1
+            end
+        end
+        -- BOX_USER_MAX, it is not exposed to Lua.
+        t.assert_equals(users, 512)
+
+        box.schema.role.create('limit_role')
+        t.assert_equals(ffi.C.box_user_check_limit(0), -1)
+
+        -- Two dropped users make room for two more. When one token
+        -- is reserved, only one more user can be created.
+        box.schema.user.drop('limit1')
+        box.schema.user.drop('limit2')
+        t.assert_equals(ffi.C.box_user_check_limit(1), 0)
+        t.assert_equals(ffi.C.box_user_check_limit(2), -1)
+        t.assert_covers(box.error.last():unpack(), err)
+        box.schema.user.create('limit_again')
+        t.assert_equals(ffi.C.box_user_check_limit(1), -1)
+        t.assert_equals(ffi.C.box_user_check_limit(0), 0)
+        box.schema.user.create('limit_last')
+        t.assert_equals(ffi.C.box_user_check_limit(0), -1)
+    end)
+end
