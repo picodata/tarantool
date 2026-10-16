@@ -1212,7 +1212,9 @@ end
 
 -- The sum of a value of a DATETIME series and the step out of the range of
 -- DATETIME is an error, as for `+`, also if only a part of the step is out
--- of the range. A large series is not kept in memory.
+-- of the range. A large series is not kept in memory. The cases with the
+-- datetimes near the limit of the range are pg-incompatible, see the test
+-- with the same name in datetime_pg_incompatible_test.lua.
 g.test_generate_series_datetime_limits = function(cg)
     cg.server:exec(function()
         local sql = [[SELECT CAST(VALUE AS STRING) FROM generate_series(
@@ -1222,12 +1224,6 @@ g.test_generate_series_datetime_limits = function(cg)
             return ("CAST('%s' AS DATETIME)"):format(s)
         end
         for _, case in ipairs({
-            {dt('5879611-07-01T00:00:00Z'), '5879611-07-11T00:00:00Z',
-             "{'day': 7}",
-             {'5879611-07-01T00:00:00Z', '5879611-07-08T00:00:00Z'}},
-            {dt('-5879610-06-25T00:00:00Z'), '-5879610-06-22T00:00:00Z',
-             "{'day': -2}",
-             {'-5879610-06-25T00:00:00Z', '-5879610-06-23T00:00:00Z'}},
             -- The dates of these cases are in the range of all parsers.
             {dt('2026-01-01T00:00:00Z'), '9999-12-31T00:00:00Z',
              "{'year': 6000000}", {'2026-01-01T00:00:00Z'}},

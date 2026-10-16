@@ -120,3 +120,38 @@ g.test_datetime_nanosecond_carry = function()
         t.assert_equals(res.rows, {{'2025-12-31T23:59:58.852516352Z'}})
     end)
 end
+
+-- The sum of a value of a DATETIME series and the step out of the range
+-- of DATETIME is an error. Unlike the cases of the test with the same
+-- name in table_func_test.lua, the datetimes here are near the limit of
+-- the tarantool range, so they are parsed by tarantool only.
+g.test_generate_series_datetime_limits = function()
+    g.server:exec(function()
+        local sql = [[SELECT CAST(VALUE AS STRING) FROM generate_series(
+                          %s, CAST('%s' AS DATETIME),
+                          CAST(%s AS INTERVAL))%s;]]
+        local function dt(s)
+            return ("CAST('%s' AS DATETIME)"):format(s)
+        end
+        for _, case in ipairs({
+            {dt('5879611-07-01T00:00:00Z'), '5879611-07-11T00:00:00Z',
+             "{'day': 7}",
+             {'5879611-07-01T00:00:00Z', '5879611-07-08T00:00:00Z'}},
+            {dt('-5879610-06-25T00:00:00Z'), '-5879610-06-22T00:00:00Z',
+             "{'day': -2}",
+             {'-5879610-06-25T00:00:00Z', '-5879610-06-23T00:00:00Z'}},
+        }) do
+            local rows = {}
+            for i, value in ipairs(case[4]) do
+                rows[i] = {value}
+            end
+            local res = box.execute(sql:format(case[1], case[2], case[3],
+                                               ' LIMIT ' .. #rows))
+            t.assert_equals(res.rows, rows, case[3])
+            local _, err = box.execute(sql:format(case[1], case[2], case[3],
+                                                  ''))
+            t.assert_equals(err.message, 'Failed to execute SQL ' ..
+                            'statement: datetime is overflowed', case[3])
+        end
+    end)
+end
