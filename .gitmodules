@@ -1,69 +1,69 @@
 [submodule "third_party/luajit"]
 	path = third_party/luajit
-	url = https://git.picodata.io/core/luajit.git
+	url = https://git.picodata.io/core/third_party/luajit.git
 	ignore = dirty
 	branch = 2.11.8-picodata
 [submodule "third_party/libyaml"]
 	path = third_party/libyaml
-	url = https://git.picodata.io/core/libyaml.git
+	url = https://git.picodata.io/core/third_party/libyaml.git
 	ignore = dirty
 	branch = 2.11.8-picodata
 [submodule "src/lib/msgpuck"]
 	path = src/lib/msgpuck
-	url = https://git.picodata.io/core/msgpuck.git
+	url = https://git.picodata.io/core/third_party/msgpuck.git
 	ignore = dirty
 [submodule "third_party/luafun"]
 	path = third_party/luafun
-	url = https://github.com/luafun/luafun.git
+	url = https://git.picodata.io/core/third_party/luafun.git
 	ignore = dirty
 [submodule "test-run"]
 	path = test-run
-	url = https://github.com/tarantool/test-run.git
+	url = https://git.picodata.io/core/third_party/test-run.git
 	ignore = dirty
 [submodule "src/lib/small"]
 	path = src/lib/small
-	url = https://github.com/tarantool/small.git
+	url = https://git.picodata.io/core/third_party/small.git
 	ignore = dirty
 [submodule "third_party/zstd"]
 	path = third_party/zstd
-	url = https://github.com/facebook/zstd.git
+	url = https://git.picodata.io/core/third_party/zstd.git
 	ignore = dirty
 [submodule "third_party/luarocks"]
 	path = third_party/luarocks
-	url = https://github.com/tarantool/luarocks.git
+	url = https://git.picodata.io/core/third_party/luarocks.git
 	branch = luarocks-3.9.2-tarantool
 	ignore = dirty
 [submodule "third_party/decNumber"]
 	path = third_party/decNumber
-	url = https://github.com/tarantool/decNumber.git
+	url = https://git.picodata.io/core/third_party/decNumber.git
 [submodule "third_party/curl"]
 	path = third_party/curl
-	url = https://github.com/tarantool/curl.git
+	url = https://git.picodata.io/core/third_party/curl.git
 [submodule "third_party/c-ares"]
 	path = third_party/c-ares
-	url = https://github.com/tarantool/c-ares.git
+	url = https://git.picodata.io/core/third_party/c-ares.git
 [submodule "third_party/xxHash"]
 	path = third_party/xxHash
-	url = https://github.com/tarantool/xxHash
+	url = https://git.picodata.io/core/third_party/xxHash
 [submodule "third_party/c-dt"]
 	path = third_party/c-dt
-	url = https://git.picodata.io/core/c-dt.git
+	url = https://git.picodata.io/core/third_party/c-dt.git
 [submodule "third_party/lua-zlib"]
 	path = third_party/lua-zlib
-	url = https://github.com/tarantool/lua-zlib.git
+	url = https://git.picodata.io/core/third_party/lua-zlib.git
 [submodule "third_party/luazip"]
 	path = third_party/luazip
-	url = https://github.com/tarantool/luazip.git
+	url = https://git.picodata.io/core/third_party/luazip.git
 [submodule "third_party/nghttp2"]
 	path = third_party/nghttp2
-	url = https://github.com/tarantool/nghttp2.git
+	url = https://git.picodata.io/core/third_party/nghttp2.git
 [submodule "third_party/libunwind"]
 	path = third_party/libunwind
-	url = https://github.com/tarantool/libunwind.git
+	url = https://git.picodata.io/core/third_party/libunwind.git
 	branch = libunwind-1.6.2-tarantool
 [submodule "third_party/tz"]
 	path = third_party/tz
-	url = https://github.com/tarantool/tz.git
+	url = https://git.picodata.io/core/third_party/tz.git
 [submodule "third_party/checks"]
 	path = third_party/checks
-	url = https://github.com/tarantool/checks.git
+	url = https://git.picodata.io/core/third_party/checks.git
