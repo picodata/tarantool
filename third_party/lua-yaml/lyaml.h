@@ -32,9 +32,13 @@ lua_yaml_new_serializer(lua_State *L);
  *         --- value
  *         ...
  *
- * @retval 2 Pushes two values on error: nil, error description.
+ * @retval 2 Pushes nil and a description of the error when the
+ *         libyaml emitter rejects the document, e.g. an invalid tag
+ *         directive.
  * @retval 1 Pushes one value on success: string with dumped
  *         object.
+ * @throws Lua error on serialization, nesting depth, output or
+ *         allocation failure, after cleanup.
  */
 int
 lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,

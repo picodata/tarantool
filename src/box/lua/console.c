@@ -839,19 +839,15 @@ port_msgpack_dump_plain(struct port *base, uint32_t *size)
 {
 	struct lua_State *L = tarantool_L;
 	void *ctx[2] = {(void *)base, (void *)size};
+	int top = lua_gettop(L);
 	/*
-	 * lua_cpcall() protects from errors thrown from Lua which
+	 * luaT_cpcall() protects from errors thrown from Lua which
 	 * may break a caller, not knowing about Lua and not
-	 * expecting any exceptions.
+	 * expecting any exceptions. On a plain Lua error it leaves
+	 * a string copy of the error on the stack too.
 	 */
-	if (lua_cpcall(L, port_msgpack_dump_plain_via_lua, ctx) != 0) {
-		/*
-		 * Error string is pushed in case it was a Lua
-		 * error.
-		 */
-		assert(lua_isstring(L, -1));
-		diag_set(ClientError, ER_PROC_LUA, lua_tostring(L, -1));
-		lua_pop(L, 1);
+	if (luaT_cpcall(L, port_msgpack_dump_plain_via_lua, ctx) != 0) {
+		lua_settop(L, top);
 		return NULL;
 	}
 	/*

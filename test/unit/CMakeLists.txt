@@ -328,8 +328,8 @@ endif ()
 
 if (ENABLE_BUNDLED_LIBYAML)
     create_unit_test(PREFIX libyaml
-                     SOURCES libyaml.c unit.c
-                     LIBRARIES ${LIBYAML_LIBRARIES} ${ICU_LIBRARIES}
+                     SOURCES libyaml.c
+                     LIBRARIES unit ${LIBYAML_LIBRARIES} ${ICU_LIBRARIES}
     )
     target_include_directories(libyaml.test PRIVATE ${LIBYAML_INCLUDE_DIRS})
     add_dependencies(libyaml.test bundled-libyaml)

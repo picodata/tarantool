@@ -10,6 +10,7 @@ yaml.cfg{
     encode_load_metatables = true;
     encode_use_tostring    = true;
     encode_invalid_as_nil  = true;
+    encode_deep_as_nil     = true;
 }
 
 local ffi = require('ffi') -- for iscdata

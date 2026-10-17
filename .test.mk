@@ -156,9 +156,10 @@ test-debug-asan: build run-luajit-test run-test
 # copy also suppresses the URI leaked by the luatest runner itself, which the
 # dropped rules used to hide as well. Until the instance shutdown is
 # complete (gh-3071) the run still reports unrelated leaks, so every test
-# fails only on a leak in its own code (src/box/sql/ or third_party/libyaml)
-# and the job is non-blocking. Each test was checked to fail once the fix
-# of its leak is reverted.
+# fails only on a leak in its own code (src/box/sql/, third_party/libyaml/
+# or third_party/lua-yaml/) and the job is non-blocking. The nine files
+# include YAML allocation failures and console recovery. Negative controls
+# check that removing the corresponding cleanup makes these tests fail.
 LSAN_SUPP_LEAK = ${PWD}/${BUILD_DIR}/lsan-leak.supp
 TEST_RUN_LEAK_TESTS = sql-luatest/sql_create_view_test.lua \
                       sql-luatest/mem_destroy_empty_value_test.lua \
@@ -166,7 +167,9 @@ TEST_RUN_LEAK_TESTS = sql-luatest/sql_create_view_test.lua \
                       sql-luatest/parser_space_delete_test.lua \
                       sql-luatest/ephemeral_space_test.lua \
                       app-luatest/yaml_decode_error_leak_test.lua \
-                      app-luatest/yaml_encode_error_leak_test.lua
+                      app-luatest/yaml_encode_error_leak_test.lua \
+                      app-luatest/yaml_oom_test.lua \
+                      app-luatest/yaml_console_error_test.lua
 
 .PHONY: gen-lsan-supp
 gen-lsan-supp:
