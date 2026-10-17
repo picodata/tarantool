@@ -76,6 +76,9 @@ struct lua_yaml_loader {
    yaml_event_t event;
    char validevent;
    char error;
+   bool tag_only;
+   bool checking_number;
+   char *binary;
 };
 
 struct lua_yaml_dumper {
@@ -85,8 +88,10 @@ struct lua_yaml_dumper {
    unsigned int anchor_number;
    yaml_emitter_t emitter;
    char error;
-   /** Set when the error to raise is in the diagnostics area. */
-   char diag_error;
+   bool initialized;
+   bool output_error;
+   const char *output;
+   size_t output_len;
    /** Global tag to label the result document by. */
    yaml_tag_directive_t begin_tag;
    /**
@@ -102,6 +107,8 @@ struct lua_yaml_dumper {
    lua_State *outputL;
    luaL_Buffer yamlbuf;
    int reftable_index;
+   struct luaT_table_walk walk;
+   int depth;
 };
 
 /**
@@ -246,21 +253,6 @@ static void generate_error_message(struct lua_yaml_loader *loader) {
    luaL_pushresult(&b);
 }
 
-/**
- * Reject a non-finite number the way luaL_checkfinite() does, but leave the
- * error on the Lua stack instead of raising it: l_load() raises it once the
- * parser has been destroyed.
- */
-static bool check_finite(struct lua_yaml_loader *loader, double dval) {
-   if (loader->cfg->decode_invalid_numbers || isfinite(dval))
-      return true;
-   luaL_where(loader->L, 1);
-   lua_pushliteral(loader->L, "number must not be NaN or Inf");
-   lua_concat(loader->L, 2);
-   loader->error = 1;
-   return false;
-}
-
 static inline void delete_event(struct lua_yaml_loader *loader) {
    if (loader->validevent) {
       yaml_event_delete(&loader->event);
@@ -310,13 +302,6 @@ static void load_map(struct lua_yaml_loader *loader) {
          return;
       if (r != 1)
          RETURN_ERRMSG(loader, "unanticipated END event");
-      /*
-       * lua_rawset() would raise this error itself and unwind past
-       * yaml_parser_delete().
-       */
-      if (lua_type(loader->L, -2) == LUA_TNUMBER &&
-          isnan(lua_tonumber(loader->L, -2)))
-         RETURN_ERRMSG(loader, "table index is NaN");
       lua_rawset(loader->L, -3);
    }
 }
@@ -333,6 +318,7 @@ static void load_sequence(struct lua_yaml_loader *loader) {
       lua_rawseti(loader->L, -2, index++);
 }
 
+/* Keep scalar temporaries out of the recursive load_node() stack frame. */
 static NOINLINE void load_scalar(struct lua_yaml_loader *loader) {
    const char *str = (char *)loader->event.data.scalar.value;
    unsigned int length = loader->event.data.scalar.length;
@@ -349,8 +335,9 @@ static NOINLINE void load_scalar(struct lua_yaml_loader *loader) {
          return;
       } else if (!strcmp(tag, "float")) {
          double dval = fpconv_strtod(str, NULL);
-         if (!check_finite(loader, dval))
-            return;
+         loader->checking_number = true;
+         luaL_checkfinite(loader->L, loader->cfg, dval);
+         loader->checking_number = false;
          lua_pushnumber(loader->L, dval);
          return;
       } else if (!strcmp(tag, "bool")) {
@@ -360,13 +347,14 @@ static NOINLINE void load_scalar(struct lua_yaml_loader *loader) {
          return;
       } else if (!strcmp(tag, "binary")) {
          int bufsize = base64_decode_bufsize(length);
-         char *buf = (char *)xmalloc(bufsize);
+         char *buf = loader->binary = (char *)xmalloc(bufsize);
          int size = base64_decode(str, length, buf, bufsize);
          if (yaml_decode_binary_as_string)
             lua_pushlstring(loader->L, buf, size);
          else
             luaT_pushvarbinary(loader->L, buf, size);
          free(buf);
+         loader->binary = NULL;
          return;
       }
    }
@@ -403,8 +391,9 @@ static NOINLINE void load_scalar(struct lua_yaml_loader *loader) {
       }
       double dval = fpconv_strtod(str, &endptr);
       if (endptr == str + length) {
-         if (!check_finite(loader, dval))
-            return;
+         loader->checking_number = true;
+         luaL_checkfinite(loader->L, loader->cfg, dval);
+         loader->checking_number = false;
          lua_pushnumber(loader->L, dval);
          return;
       }
@@ -468,8 +457,8 @@ static int load_node(struct lua_yaml_loader *loader) {
  * Decode YAML document global tag onto Lua stack.
  * @param loader Initialized loader to load tag from.
  * @retval 2 Tag handle and prefix are pushed. Both are not nil.
- * @retval 2 If an error occurred during decoding. Nil and error
- *         string are pushed.
+ * @retval 2 On a parser error in tag_only mode: nil and the error string.
+ * @throws Lua error after releasing the parser in other error cases.
  */
 static int load_tag(struct lua_yaml_loader *loader) {
    yaml_tag_directive_t *start, *end;
@@ -526,10 +515,11 @@ static void load(struct lua_yaml_loader *loader) {
          return;
 
       loader->document_count++;
-      if (load_node(loader) != 1)
-         RETURN_ERRMSG(loader, "unexpected END event");
+      int rc = load_node(loader);
       if (loader->error)
          return;
+      if (rc != 1)
+         RETURN_ERRMSG(loader, "unexpected END event");
 
       if (!do_parse(loader))
          return;
@@ -540,6 +530,20 @@ static void load(struct lua_yaml_loader *loader) {
       lua_newtable(loader->L);
       lua_replace(loader->L, loader->anchortable_index);
    }
+}
+
+static int load_protected(lua_State *L) {
+   struct lua_yaml_loader *loader =
+      (struct lua_yaml_loader *)lua_touserdata(L, 1);
+   lua_settop(L, 0);
+   if (loader->tag_only)
+      return load_tag(loader);
+   lua_newtable(L);
+   loader->anchortable_index = lua_gettop(L);
+   load(loader);
+   if (loader->error)
+      return lua_error(L);
+   return loader->document_count;
 }
 
 /**
@@ -554,7 +558,7 @@ static void load(struct lua_yaml_loader *loader) {
  *         string are pushed.
  */
 static int l_load(lua_State *L) {
-   struct lua_yaml_loader loader;
+   struct lua_yaml_loader loader = {};
    if (! lua_isstring(L, 1)) {
 usage_error:
       return luaL_error(L, "Usage: yaml.decode(document, "\
@@ -577,48 +581,34 @@ usage_error:
    }
    loader.L = L;
    loader.cfg = luaL_checkserializer(L);
-   loader.validevent = 0;
-   loader.error = 0;
-   loader.document_count = 0;
+   loader.tag_only = tag_only;
+   int top = lua_gettop(L);
+   lua_pushcfunction(L, load_protected);
+   lua_pushlightuserdata(L, &loader);
    if (!yaml_parser_initialize(&loader.parser))
       return luaL_error(L, OOM_ERRMSG);
    yaml_parser_set_input_string(&loader.parser, (yaml_char_t *) document, len);
 
-   int rc;
-   if (! tag_only) {
-      /* create table used to track anchors */
-      lua_newtable(L);
-      loader.anchortable_index = lua_gettop(L);
-      load(&loader);
-      if (loader.error) {
-         /* The parser must be gone before the error unwinds the stack. */
-         delete_event(&loader);
-         yaml_parser_delete(&loader.parser);
-         lua_error(L);
-      }
-      rc = loader.document_count;
-   } else {
-      rc = load_tag(&loader);
-   }
+   int status = lua_pcall(L, 1, LUA_MULTRET, 0);
    delete_event(&loader);
    yaml_parser_delete(&loader.parser);
-   return rc;
+   free(loader.binary);
+   if (status != 0) {
+      if (status == LUA_ERRRUN && loader.checking_number) {
+         /* Recover the caller location hidden by load_protected's frame. */
+         luaL_where(L, 1);
+         lua_insert(L, -2);
+         lua_concat(L, 2);
+      }
+      return lua_error(L);
+   }
+   return lua_gettop(L) - top;
 }
 
 static int dump_node(struct lua_yaml_dumper *dumper);
 
-/**
- * Record an error left in the diagnostics area by the serializer. It is
- * raised by lua_yaml_encode() once the emitter has been destroyed: raising
- * it right here would unwind the stack past yaml_emitter_delete().
- */
-static int dump_diag_error(struct lua_yaml_dumper *dumper) {
-   dumper->error = 1;
-   dumper->diag_error = 1;
-   return 0;
-}
-
-static yaml_char_t *get_yaml_anchor(struct lua_yaml_dumper *dumper) {
+static yaml_char_t *get_yaml_anchor(struct lua_yaml_dumper *dumper,
+                                    bool assign) {
    if (lua_type(dumper->L, -1) != LUA_TTABLE)
       return NULL;
    const char *s = "";
@@ -630,6 +620,10 @@ static yaml_char_t *get_yaml_anchor(struct lua_yaml_dumper *dumper) {
    }
 
    if (lua_isboolean(dumper->L, -1)) {
+      if (!assign) {
+         lua_pop(dumper->L, 1);
+         return NULL;
+      }
       /* this element is referenced more than once but has not been named */
       char buf[32];
       snprintf(buf, sizeof(buf), "%u", dumper->anchor_number++);
@@ -735,29 +729,31 @@ static int dump_node(struct lua_yaml_dumper *dumper)
    yaml_event_t ev;
    yaml_scalar_style_t style = YAML_PLAIN_SCALAR_STYLE;
    int is_binary = 0;
-   size_t region_svp = region_used(&fiber()->gc);
+   size_t region_svp = 0;
    char buf[DT_IVAL_TO_STRING_BUFSIZE];
    struct luaL_field field;
    bool unused;
    (void) unused;
 
    luaT_reftable_serialize(dumper->L, dumper->reftable_index);
-   yaml_char_t *anchor = get_yaml_anchor(dumper);
+   yaml_char_t *anchor = get_yaml_anchor(dumper, false);
    if (dumper->error)
       return 0;
    if (anchor && !*anchor)
       return 1;
 
-   int top = lua_gettop(dumper->L);
-   /*
-    * luaL_checkfield() would raise the error of the serializer, in
-    * particular the one thrown by a __serialize hook, right here.
-    */
-   if (luaL_tofield(dumper->L, dumper->cfg, top, &field) < 0)
-      return dump_diag_error(dumper);
-   if (field.type == MP_EXT && field.ext_type == MP_UNKNOWN_EXTENSION &&
-       luaL_convertfield(dumper->L, dumper->cfg, top, &field) != 0)
-      return dump_diag_error(dumper);
+   luaL_checkfield(dumper->L, dumper->cfg, -1, &field);
+   if (field.type == MP_ARRAY || field.type == MP_MAP) {
+      if (dumper->depth >= dumper->cfg->encode_max_depth) {
+         if (!dumper->cfg->encode_deep_as_nil)
+            return luaL_error(dumper->L, "Too high nest level");
+         field.type = MP_NIL;
+      } else {
+         anchor = get_yaml_anchor(dumper, true);
+         if (dumper->error)
+            return 0;
+      }
+   }
    switch(field.type) {
    case MP_UINT:
       snprintf(buf, sizeof(buf) - 1, "%" PRIu64, field.ival);
@@ -782,9 +778,13 @@ static int dump_node(struct lua_yaml_dumper *dumper)
       len = strlen(buf);
       break;
    case MP_ARRAY:
-      return dump_array(dumper, &field, anchor);
-   case MP_MAP:
-      return dump_table(dumper, &field, anchor);
+   case MP_MAP: {
+      dumper->depth++;
+      int rc = field.type == MP_ARRAY ? dump_array(dumper, &field, anchor) :
+                                       dump_table(dumper, &field, anchor);
+      dumper->depth--;
+      return rc;
+   }
    case MP_STR:
       str = field.sval.data;
       len = field.sval.len;
@@ -860,11 +860,12 @@ static int dump_node(struct lua_yaml_dumper *dumper)
           * quoted so a leading '{' or '"' stays a YAML string.
           */
          uint32_t sz;
+         region_svp = region_used(&fiber()->gc);
          const char *text = luaT_json_tostring(field.sval.data,
                                                field.sval.len, &sz);
          /* Nothing is allocated on the region on failure. */
          if (text == NULL)
-            return dump_diag_error(dumper);
+            return luaT_error(dumper->L);
          str = text;
          len = sz;
          style = YAML_SINGLE_QUOTED_SCALAR_STYLE;
@@ -876,43 +877,64 @@ static int dump_node(struct lua_yaml_dumper *dumper)
       break;
     }
 
-   int rc = 1;
-   if (!yaml_scalar_event_initialize(&ev, NULL, tag, (unsigned char *)str, len,
-                                     !is_binary, !is_binary, style) ||
-       !yaml_emitter_emit(&dumper->emitter, &ev))
-      rc = 0;
-
+   int rc = yaml_scalar_event_initialize(&ev, NULL, tag,
+                                        (unsigned char *)str, len,
+                                        !is_binary, !is_binary, style);
+   /* The event owns a copy before the output callback can raise an error. */
    if (is_binary)
       free((void *)str);
-   region_truncate(&fiber()->gc, region_svp);
-
-   return rc;
+   if (field.type == MP_EXT && field.ext_type == MP_JSON)
+      region_truncate(&fiber()->gc, region_svp);
+   return rc && yaml_emitter_emit(&dumper->emitter, &ev);
 }
 
-static void dump_document(struct lua_yaml_dumper *dumper) {
+static int dump_document(struct lua_yaml_dumper *dumper) {
    yaml_event_t ev;
 
    if (!yaml_document_start_event_initialize(&ev, NULL, &dumper->begin_tag,
                                              dumper->end_tag, 0) ||
        !yaml_emitter_emit(&dumper->emitter, &ev))
-      return;
+      return 0;
 
    if (!dump_node(dumper) || dumper->error)
-      return;
+      return 0;
 
    if (!yaml_document_end_event_initialize(&ev, 0) ||
        !yaml_emitter_emit(&dumper->emitter, &ev))
-      return;
+      return 0;
+   return 1;
+}
+
+static int output_protected(lua_State *L) {
+   struct lua_yaml_dumper *dumper =
+      (struct lua_yaml_dumper *)lua_touserdata(L, lua_upvalueindex(1));
+   if (dumper->output != NULL)
+      luaL_addlstring(&dumper->yamlbuf, dumper->output, dumper->output_len);
+   else
+      luaL_pushresult(&dumper->yamlbuf);
+   return lua_gettop(L);
 }
 
 static int append_output(void *arg, unsigned char *buf, size_t len) {
    struct lua_yaml_dumper *dumper = (struct lua_yaml_dumper *)arg;
-   luaL_addlstring(&dumper->yamlbuf, (char *)buf, len);
-   return 1;
+   lua_State *L = dumper->outputL;
+   dumper->output = (const char *)buf;
+   dumper->output_len = len;
+   /* Keep the closure at index 1 and pass every buffered fragment through. */
+   int fragments = lua_gettop(L) - 1;
+   assert(fragments == dumper->yamlbuf.lvl);
+   lua_pushvalue(L, 1);
+   lua_insert(L, 2);
+   dumper->output_error = lua_pcall(L, fragments, LUA_MULTRET, 0) != 0;
+   return !dumper->output_error;
 }
 
-static void find_references(struct lua_yaml_dumper *dumper) {
+static int find_references(struct lua_yaml_dumper *dumper, int depth,
+                          bool count_reference) {
    int newval = -1;
+   int link = INT_MAX;
+   int node;
+   bool first_visit;
 
    lua_pushvalue(dumper->L, -1); /* push copy of table */
    luaT_reftable_serialize(dumper->L, dumper->reftable_index);
@@ -923,7 +945,7 @@ static void find_references(struct lua_yaml_dumper *dumper) {
    lua_rawget(dumper->L, dumper->anchortable_index);
    if (lua_isnil(dumper->L, -1))
       newval = 0;
-   else if (!lua_toboolean(dumper->L, -1))
+   else if (count_reference && !lua_toboolean(dumper->L, -1))
       newval = 1;
    lua_pop(dumper->L, 1);
    if (newval != -1) {
@@ -931,16 +953,22 @@ static void find_references(struct lua_yaml_dumper *dumper) {
       lua_pushboolean(dumper->L, newval);
       lua_rawset(dumper->L, dumper->anchortable_index);
    }
-   if (newval)
+   node = luaT_table_walk_begin(dumper->L, &dumper->walk, depth,
+                               dumper->cfg->encode_max_depth, &link,
+                               &first_visit);
+   if (node == 0)
       goto done;
 
-   /* recursively process other table values */
+   /* Count each edge once, including when a truncated parent is revisited. */
    lua_pushnil(dumper->L);
    while (lua_next(dumper->L, -2) != 0) {
-      find_references(dumper); /* find references on value */
+      int child = find_references(dumper, depth + 1, first_visit);
+      link = MIN(link, child);
       lua_pop(dumper->L, 1);
-      find_references(dumper); /* find references on key */
+      child = find_references(dumper, depth + 1, first_visit);
+      link = MIN(link, child);
    }
+   link = luaT_table_walk_end(dumper->L, &dumper->walk, node, link);
 
 done:
    /*
@@ -952,52 +980,49 @@ done:
     * it would feed an incorrect key to lua_next().
     */
    lua_pop(dumper->L, 1);
+   return link;
 }
 
-int
-lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,
-                const char *tag_handle, const char *tag_prefix)
-{
-   struct lua_yaml_dumper dumper;
-   yaml_event_t ev;
+static int reserve_output_stack(lua_State *L) {
+   luaL_checkstack(L, 2 * LUA_MINSTACK, "YAML output buffer");
+   return 0;
+}
 
-   dumper.L = L;
-   dumper.begin_tag.handle = (yaml_char_t *) tag_handle;
-   dumper.begin_tag.prefix = (yaml_char_t *) tag_prefix;
-   assert((tag_handle == NULL) == (tag_prefix == NULL));
-   /*
-    * If a tag is specified, then tag list is not empty and
-    * consists of a single tag.
-    */
-   if (tag_prefix != NULL)
-      dumper.end_tag = &dumper.begin_tag + 1;
-   else
-      dumper.end_tag = &dumper.begin_tag;
-   dumper.cfg = serializer;
-   dumper.error = 0;
-   dumper.diag_error = 0;
+static int dump_protected(lua_State *L) {
+   struct lua_yaml_dumper &dumper =
+      *(struct lua_yaml_dumper *)lua_touserdata(L, 2);
+   lua_settop(L, 1);
+   yaml_event_t ev;
    /* create thread to use for YAML buffer */
    dumper.outputL = luaT_newthread(L);
    if (dumper.outputL == NULL) {
       return luaL_error(L, OOM_ERRMSG);
    }
    luaL_buffinit(dumper.outputL, &dumper.yamlbuf);
-
    /*
-    * Both tables are built before the emitter is created:
-    * luaT_reftable_new() serializes the whole object graph and raises the
-    * error of the serializer, which would unwind past
-    * yaml_emitter_delete().
+    * Build the closure on the protected state. Reserve space for the
+    * fragments (luaL_Buffer keeps fewer than LUA_MINSTACK/2) and calls.
     */
+   lua_pushlightuserdata(L, &dumper);
+   lua_pushcclosure(L, output_protected, 1);
+   if (lua_cpcall(dumper.outputL, reserve_output_stack, NULL) != 0) {
+      lua_xmove(dumper.outputL, L, 1);
+      return lua_error(L);
+   }
+   lua_xmove(L, dumper.outputL, 1);
+
+   if (!yaml_emitter_initialize(&dumper.emitter))
+      return luaL_error(L, OOM_ERRMSG);
+   dumper.initialized = true;
+
    lua_newtable(L);
    dumper.anchortable_index = lua_gettop(L);
    dumper.anchor_number = 0;
 
    luaT_reftable_new(L, dumper.cfg, 1);
    dumper.reftable_index = lua_gettop(L);
-
-   if (!yaml_emitter_initialize(&dumper.emitter))
-      goto error;
+   lua_newtable(L);
+   dumper.walk.index = lua_gettop(L);
 
    yaml_emitter_set_unicode(&dumper.emitter, 1);
    yaml_emitter_set_indent(&dumper.emitter, 2);
@@ -1010,43 +1035,59 @@ lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,
       goto error;
 
    lua_pushvalue(L, 1); /* push copy of arg we're processing */
-   find_references(&dumper);
-   dump_document(&dumper);
-   if (dumper.error)
+   find_references(&dumper, 0, true);
+   assert(dumper.walk.pending_count == 0);
+   if (!dump_document(&dumper))
       goto error;
-   lua_pop(L, 3); /* pop copied arg and anchor/ref tables */
+   lua_pop(L, 4); /* pop copied arg and traversal tables */
 
    if (!yaml_stream_end_event_initialize(&ev) ||
        !yaml_emitter_emit(&dumper.emitter, &ev) ||
        !yaml_emitter_flush(&dumper.emitter))
       goto error;
 
-   /* finalize and push YAML buffer */
-   luaL_pushresult(&dumper.yamlbuf);
-
-   if (dumper.error)
+   if (!append_output(&dumper, NULL, 0))
       goto error;
-
-   yaml_emitter_delete(&dumper.emitter);
    /* move buffer to original thread */
    lua_xmove(dumper.outputL, L, 1);
    return 1;
 
 error:
-   if (dumper.diag_error) {
-      yaml_emitter_delete(&dumper.emitter);
-      return luaT_error(L);
+   if (dumper.output_error) {
+      lua_xmove(dumper.outputL, L, 1);
+      return lua_error(L);
    }
    if (dumper.emitter.error == YAML_NO_ERROR ||
        dumper.emitter.error == YAML_MEMORY_ERROR) {
-      yaml_emitter_delete(&dumper.emitter);
       return luaL_error(L, OOM_ERRMSG);
    } else {
       lua_pushnil(L);
       lua_pushstring(L, dumper.emitter.problem);
-      yaml_emitter_delete(&dumper.emitter);
       return 2;
    }
+}
+
+int
+lua_yaml_encode(lua_State *L, struct luaL_serializer *serializer,
+                const char *tag_handle, const char *tag_prefix)
+{
+   struct lua_yaml_dumper dumper = {};
+   dumper.L = L;
+   dumper.cfg = serializer;
+   dumper.begin_tag.handle = (yaml_char_t *)tag_handle;
+   dumper.begin_tag.prefix = (yaml_char_t *)tag_prefix;
+   assert((tag_handle == NULL) == (tag_prefix == NULL));
+   dumper.end_tag = &dumper.begin_tag + (tag_prefix != NULL);
+   int top = lua_gettop(L);
+   lua_pushcfunction(L, dump_protected);
+   lua_pushvalue(L, 1);
+   lua_pushlightuserdata(L, &dumper);
+   int status = lua_pcall(L, 2, LUA_MULTRET, 0);
+   if (dumper.initialized)
+      yaml_emitter_delete(&dumper.emitter);
+   if (status != 0)
+      return lua_error(L);
+   return lua_gettop(L) - top;
 }
 
 /**

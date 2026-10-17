@@ -85,11 +85,22 @@ Tarantool patches on top of the base:
 - Fix decoding single-byte char codes >= 0x80.
 - cmake: lower the minimum required version to 3.5.
 - Keep the space before an empty plain scalar.
+- Preserve UTF-8 encodings of surrogates and values above U+10FFFF as
+  individual escaped bytes.
+- Test all scanner nesting boundaries and UTF-8 scalar boundaries.
 
 The bundled libyaml rejects documents nested deeper than 1000 levels.
 The limit counts flow brackets and block indentation levels together,
-not nested collections. With ENABLE_BUNDLED_LIBYAML=OFF the system
+not nested collections: 1000 flow sequences with implicit mappings can
+contain 2000 collections. With ENABLE_BUNDLED_LIBYAML=OFF the system
 libyaml is used and the limit depends on it, e.g. 0.2.5 has no limit.
+
+YAML encoding independently honors encode_max_depth (128 by default) and
+encode_deep_as_nil, with either bundled or system libyaml. Exceeding the
+encoding limit raises an error, or emits null when encode_deep_as_nil is
+enabled. References to already emitted anchors do not add depth. This
+changes the handling of deep Lua objects, including decoded documents
+printed in the console: they now produce a catchable error by default.
 
 To update:
 

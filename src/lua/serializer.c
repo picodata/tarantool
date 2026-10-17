@@ -657,6 +657,63 @@ luaL_convertfield(struct lua_State *L, struct luaL_serializer *cfg, int idx,
 
 /* {{{ luaT_reftable */
 
+int
+luaT_table_walk_begin(struct lua_State *L, struct luaT_table_walk *walk,
+		      int depth, int max_depth, int *link, bool *first_visit)
+{
+	/* true = complete, depth = truncated, -pending index = unresolved. */
+	lua_pushvalue(L, -1);
+	lua_rawget(L, walk->index);
+	bool unseen = lua_isnil(L, -1);
+	bool complete = lua_isboolean(L, -1);
+	int state = lua_tointeger(L, -1);
+	lua_pop(L, 1);
+	if (first_visit != NULL)
+		*first_visit = unseen;
+	if (complete || (!unseen && (state < 0 || state <= depth))) {
+		*link = complete ? INT_MAX : (state < 0 ? -state : 0);
+		return 0;
+	}
+	if (depth >= max_depth) {
+		*link = 0;
+		return 0;
+	}
+	int node = ++walk->pending_count;
+	lua_pushvalue(L, -1);
+	lua_rawseti(L, walk->index, 2 * node - 1);
+	lua_pushinteger(L, depth);
+	lua_rawseti(L, walk->index, 2 * node);
+	lua_pushvalue(L, -1);
+	lua_pushinteger(L, -node);
+	lua_rawset(L, walk->index);
+	*link = node;
+	return node;
+}
+
+int
+luaT_table_walk_end(struct lua_State *L, struct luaT_table_walk *walk,
+		    int node, int link)
+{
+	assert(link <= node);
+	if (link != 0 && link != node)
+		return link;
+	/* A cycle is complete only after all its pending nodes are complete. */
+	while (walk->pending_count >= node) {
+		int i = walk->pending_count--;
+		lua_rawgeti(L, walk->index, 2 * i - 1);
+		if (link == 0)
+			lua_rawgeti(L, walk->index, 2 * i);
+		else
+			lua_pushboolean(L, true);
+		lua_rawset(L, walk->index);
+		lua_pushnil(L);
+		lua_rawseti(L, walk->index, 2 * i - 1);
+		lua_pushnil(L);
+		lua_rawseti(L, walk->index, 2 * i);
+	}
+	return link == 0 ? 0 : INT_MAX;
+}
+
 /**
  * Traversal context for creating a table of references from
  * original objects to serialized ones.
@@ -666,8 +723,10 @@ struct reftable_new_ctx {
 	struct luaL_serializer *cfg;
 	/** Index of a references table on the Lua stack. */
 	int reftable_index;
-	/** Index of a visited objects table on the Lua stack. */
+	/** Types of the converted objects, including unchanged ones. */
 	int visited_index;
+	/** Completed and depth-limited walks of the converted tables. */
+	struct luaT_table_walk walk;
 };
 
 /**
@@ -679,8 +738,9 @@ struct reftable_new_ctx {
  *
  * The function leaves the Lua stack size unchanged.
  */
-static void
-luaT_reftable_new_impl(struct lua_State *L, struct reftable_new_ctx *ctx)
+static int
+luaT_reftable_new_impl(struct lua_State *L, struct reftable_new_ctx *ctx,
+		       int depth)
 {
 	struct luaL_field field;
 
@@ -691,70 +751,57 @@ luaT_reftable_new_impl(struct lua_State *L, struct reftable_new_ctx *ctx)
 	if (!lua_istable(L, -1) &&
 	    !luaL_iscdata(L, -1) &&
 	    !lua_isuserdata(L, -1))
-		return;
+		return INT_MAX;
 
-	/*
-	 * Check if the object is already visited.
-	 *
-	 * Just to don't go into the infinite recursion.
-	 */
-	if (luaT_hasfield(L, -1, ctx->visited_index))
-		return;
-
-	/* Mark the object as visited. */
 	lua_pushvalue(L, -1);
-	lua_pushboolean(L, true);
-	lua_settable(L, ctx->visited_index);
-
-	/*
-	 * Check if the object is already saved in the reference
-	 * table.
-	 */
-	if (luaT_hasfield(L, -1, ctx->reftable_index))
-		return;
-
-	/*
-	 * Copy the original object and serialize it. The
-	 * luaL_checkfield() function replaces the value on the
-	 * Lua stack with the serialized one (or left it as is).
-	 */
+	lua_rawget(L, ctx->visited_index);
+	bool visited = !lua_isnil(L, -1);
+	field.type = (enum mp_type)lua_tointeger(L, -1);
+	lua_pop(L, 1);
 	lua_pushvalue(L, -1);
-	luaL_checkfield(L, ctx->cfg, -1, &field);
-
-	/*
-	 * Save {original object -> serialized object} in the
-	 * reference table.
-	 */
-	if (!lua_rawequal(L, -1, -2)) {
-		lua_pushvalue(L, -2); /* original object */
-		lua_pushvalue(L, -2); /* serialized object */
-		lua_settable(L, ctx->reftable_index);
-	}
-
-	/*
-	 * Check if the serialized object is already saved in the
-	 * reference table.
-	 */
-	if (luaT_hasfield(L, -1, ctx->reftable_index)) {
-		lua_pop(L, 1);
-		return;
+	if (visited) {
+		/* Reuse conversions on a shallower path. */
+		luaT_reftable_serialize(L, ctx->reftable_index);
+	} else {
+		luaL_checkfield(L, ctx->cfg, -1, &field);
+		lua_pushvalue(L, -2);
+		lua_pushinteger(L, field.type);
+		lua_rawset(L, ctx->visited_index);
+		if (!lua_rawequal(L, -1, -2)) {
+			lua_pushvalue(L, -2);
+			lua_pushvalue(L, -2);
+			lua_rawset(L, ctx->reftable_index);
+		}
 	}
 
 	/*
 	 * Go down into the recursion to analyze the fields if the
 	 * serialized object is a table.
 	 */
-	if (lua_istable(L, -1)) {
-		lua_pushnil(L);
-		while (lua_next(L, -2)) {
-			luaT_reftable_new_impl(L, ctx);
-			lua_pop(L, 1);
-			luaT_reftable_new_impl(L, ctx);
+	int link = INT_MAX;
+	if (lua_istable(L, -1) &&
+	    (field.type == MP_ARRAY || field.type == MP_MAP)) {
+		int node = luaT_table_walk_begin(L, &ctx->walk, depth,
+						 ctx->cfg->encode_max_depth,
+						 &link, NULL);
+		if (node != 0) {
+			lua_pushnil(L);
+			while (lua_next(L, -2)) {
+				int child = luaT_reftable_new_impl(L, ctx,
+								   depth + 1);
+				link = MIN(link, child);
+				lua_pop(L, 1);
+				child = luaT_reftable_new_impl(L, ctx,
+							       depth + 1);
+				link = MIN(link, child);
+			}
+			link = luaT_table_walk_end(L, &ctx->walk, node, link);
 		}
 	}
 
 	/* Pop the serialized value, leave the original one. */
 	lua_pop(L, 1);
+	return link;
 }
 
 int
@@ -763,7 +810,7 @@ luaT_reftable_new(struct lua_State *L, struct luaL_serializer *cfg, int idx)
 	/*
 	 * Fill the traversal context.
 	 *
-	 * Create a reference table and a visited objects table.
+	 * Create reference, conversion and traversal cache tables.
 	 */
 	struct reftable_new_ctx ctx;
 	ctx.cfg = cfg;
@@ -771,6 +818,9 @@ luaT_reftable_new(struct lua_State *L, struct luaL_serializer *cfg, int idx)
 	ctx.reftable_index = lua_gettop(L);
 	lua_newtable(L);
 	ctx.visited_index = lua_gettop(L);
+	lua_newtable(L);
+	ctx.walk.index = lua_gettop(L);
+	ctx.walk.pending_count = 0;
 
 	/*
 	 * Copy the given object on top of the Lua stack and
@@ -780,13 +830,13 @@ luaT_reftable_new(struct lua_State *L, struct luaL_serializer *cfg, int idx)
 	 * are changed by the serialization.
 	 */
 	lua_pushvalue(L, idx);
-	luaT_reftable_new_impl(L, &ctx);
+	luaT_reftable_new_impl(L, &ctx, 0);
+	assert(ctx.walk.pending_count == 0);
 
 	/*
-	 * Pop the copy of the given object and the visited
-	 * objects table. Leave the reference table on the top.
+	 * Pop the object and traversal tables. Leave the reference table.
 	 */
-	lua_pop(L, 2);
+	lua_pop(L, 3);
 
 	return 1;
 }

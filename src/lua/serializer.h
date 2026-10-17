@@ -47,6 +47,7 @@ extern "C" {
 
 #include <assert.h>
 #include <stdbool.h>
+#include <limits.h>
 #include <math.h> /* isfinite */
 #include <lua.h>
 #include <lauxlib.h>
@@ -387,6 +388,30 @@ luaL_checkfinite(struct lua_State *L, struct luaL_serializer *cfg,
 
 /* {{{ luaT_reftable */
 
+/** Cache for a depth-limited walk of tables, including cyclic subtrees. */
+struct luaT_table_walk {
+	/** Lua table of node states and pending (node, depth) pairs. */
+	int index;
+	/** Number of nodes whose completion depends on the current walk. */
+	int pending_count;
+};
+
+/**
+ * Enter the table at the stack top. Return its pending index, or zero to
+ * skip it. Set link to INT_MAX for complete subtrees, zero for truncated
+ * ones, or the earliest pending node a cycle depends on. first_visit, if
+ * non-NULL, tells whether the table's contents have been walked before.
+ * Both helpers leave the Lua stack unchanged.
+ */
+int
+luaT_table_walk_begin(struct lua_State *L, struct luaT_table_walk *walk,
+		      int depth, int max_depth, int *link, bool *first_visit);
+
+/** Finish a node using the minimum link returned by its descendants. */
+int
+luaT_table_walk_end(struct lua_State *L, struct luaT_table_walk *walk,
+		    int node, int link);
+
 /**
  * Serialize the object at the given Lua stack index and all the
  * descendant ones recursively and create a mapping from the
@@ -401,7 +426,8 @@ luaL_checkfinite(struct lua_State *L, struct luaL_serializer *cfg,
  *
  * A table that indirectly references itself is a valid input for
  * this function: it tracks visited objects internally to break
- * the cycle.
+ * the cycle. Descendants beyond encode_max_depth are not visited;
+ * the encoder decides whether to reject, truncate or alias them.
  *
  * If an error is raised by a __serialize or __tostring
  * metamethod, it is raised by this function (not caught).

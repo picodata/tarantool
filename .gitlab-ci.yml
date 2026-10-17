@@ -156,8 +156,9 @@ test-ubuntu-asan:
     CC: clang-18
   when: manual
 
-# Runs the known leak reproducers under LSan with the leak:lj_BC_FUNCC
-# suppression dropped, see test-debug-lsan in .test.mk. Non-blocking until
+# Runs nine SQL/YAML files, including allocation failures and console errors,
+# without the Lua/fiber leak suppressions; see test-debug-lsan in .test.mk.
+# Checks both third_party/libyaml/ and third_party/lua-yaml/. Non-blocking until
 # the instance shutdown is complete, since the reports still contain
 # unrelated Lua/LSan noise.
 test-ubuntu-lsan:

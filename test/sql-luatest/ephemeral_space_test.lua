@@ -8,22 +8,8 @@ g.before_all(function()
     g.server:start()
 end)
 
--- Server:stop() fails on any LeakSanitizer report in the instance stderr.
--- Until the instance shutdown is complete (see the lj_BC_FUNCC comment in
--- asan/lsan.supp), an ASAN build running with the SQL LSan profile reports
--- unrelated leaks as well, so only the SQL ones are checked here.
 g.after_all(function()
-    local ok, err = pcall(g.server.stop, g.server)
-    if ok then
-        return
-    end
-    err = tostring(err)
-    if not err:find('Memory leak during process execution', 1, true) then
-        error(err)
-    end
-    g.server:save_artifacts()
-    t.assert_not_str_contains(err, 'src/box/sql/', false,
-                              'LSan reported a leak in SQL')
+    require('test.lsan').stop(g.server, {'src/box/sql/'})
 end)
 
 -- A space created by OP_OpenTEphemeral is owned by nothing until

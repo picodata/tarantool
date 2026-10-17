@@ -4,6 +4,25 @@ local yaml_helper = require('test.app-luatest.yaml_helper')
 
 local g = t.group()
 
+local g_build = t.group('yaml_build_options')
+
+g_build.test_build_options = function()
+    local build = require('tarantool').build
+    local saved = build.options
+    for _, value in ipairs({'TRUE', 'FALSE', ''}) do
+        build.options = '-DENABLE_BUNDLED_LIBYAML=' .. value
+        local ok, result = pcall(yaml_helper.is_bundled_libyaml)
+        build.options = saved
+        if value == '' then
+            t.assert_not(ok)
+            t.assert_str_contains(result, 'ENABLE_BUNDLED_LIBYAML is missing')
+        else
+            t.assert(ok)
+            t.assert_equals(result, value == 'TRUE')
+        end
+    end
+end
+
 -- The syntax fixes came with the update of the bundled libyaml, a system
 -- one may lack them.
 g.before_all(function()
@@ -16,6 +35,24 @@ g.test_empty_value_spaces = function()
     t.assert_equals(yaml.encode(''), '--- \n...\n')
     t.assert_equals(yaml.encode({''}), '---\n- \n...\n')
     t.assert_equals(yaml.encode({key = ''}), '---\nkey: \n...\n')
+end
+
+g.test_utf8_scalar_boundaries = function()
+    local cases = {
+        {'\237\160\128', '\\xED\\xA0\\x80'},
+        {'\237\191\191', '\\xED\\xBF\\xBF'},
+        {'\244\144\128\128', '\\xF4\\x90\\x80\\x80'},
+        {'\237\159\191'}, -- U+D7FF
+        {'\238\128\128'}, -- U+E000
+        {'\244\143\191\191'}, -- U+10FFFF
+    }
+    for _, case in ipairs(cases) do
+        local encoded = yaml.encode(case[1])
+        if case[2] ~= nil then
+            t.assert_str_contains(encoded, case[2])
+        end
+        t.assert_equals(yaml.decode(encoded), case[1])
+    end
 end
 
 g.test_yaml_1_2_directive = function()

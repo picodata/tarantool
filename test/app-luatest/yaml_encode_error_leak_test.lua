@@ -11,24 +11,8 @@ g.before_each(function(cg)
     cg.server:start()
 end)
 
--- Server:stop() fails on any LeakSanitizer report in the instance stderr.
--- Until the instance shutdown is complete (see the lj_BC_FUNCC comment in
--- asan/lsan.supp), an ASAN build running with the LSan profile reports
--- unrelated leaks as well: the error objects the tests below leave for the
--- Lua garbage collector, among others. Only what libyaml itself allocated
--- is checked here.
 g.after_each(function(cg)
-    local ok, err = pcall(cg.server.stop, cg.server)
-    if ok then
-        return
-    end
-    err = tostring(err)
-    if not err:find('Memory leak during process execution', 1, true) then
-        error(err)
-    end
-    cg.server:save_artifacts()
-    t.assert_not_str_contains(err, 'third_party/libyaml', false,
-                              'LSan reported a leak in libyaml')
+    require('test.lsan').stop(cg.server, {'third_party/libyaml/', 'third_party/lua-yaml/'})
 end)
 
 -- Each error is repeated from the same place in one fiber: a pointer left
@@ -38,8 +22,7 @@ end)
 
 -- An error raised by __serialize is turned into a diagnostic by the
 -- serializer, and luaL_checkfield() used to raise it right from dump_node(),
--- unwinding past yaml_emitter_delete() and losing the emitter. Now the
--- hook is called before the emitter is created.
+-- unwinding past yaml_emitter_delete() and losing the emitter.
 g.test_encode_serialize_error = function(cg)
     cg.server:exec(function()
         local yaml = require('yaml')
@@ -55,6 +38,82 @@ g.test_encode_serialize_error = function(cg)
         local res = yaml.decode(yaml.encode({a = shared, b = shared}))
         t.assert_equals(res.a, shared)
         t.assert(rawequal(res.a, res.b), 'the reference is kept')
+    end)
+end
+
+g.test_encode_tostring_error = function(cg)
+    cg.server:exec(function()
+        local yaml = require('yaml')
+        yaml.cfg{encode_use_tostring = true}
+        local function fail()
+            error('tostring error')
+        end
+        for _ = 1, 20 do
+            for _, value in ipairs({function() end, coroutine.create(fail)}) do
+                local mt = debug.getmetatable(value)
+                debug.setmetatable(value, {__tostring = fail})
+                local ok, err = pcall(yaml.encode, value)
+                debug.setmetatable(value, mt)
+                t.assert_equals(ok, false)
+                t.assert_str_contains(err, 'tostring error')
+            end
+            local saved = _G.tostring
+            _G.tostring = fail
+            local ok, err = pcall(yaml.encode, function() end)
+            _G.tostring = saved
+            t.assert_equals(ok, false)
+            t.assert_str_contains(err, 'tostring error')
+        end
+        t.assert_equals(yaml.decode(yaml.encode({1, 2})), {1, 2})
+    end)
+end
+
+g.test_encode_mutating_serialize = function(cg)
+    cg.server:exec(function()
+        local yaml = require('yaml')
+        local calls, value
+        local child = setmetatable({}, {__serialize = function()
+            calls = calls + 1
+            if calls == 2 then
+                value.child = nil
+                for i = 1, 64 do
+                    value['k' .. i] = i
+                end
+            end
+        end})
+        for _ = 1, 20 do
+            calls, value = 0, {child = child}
+            t.assert_error_msg_contains("invalid key to 'next'", yaml.encode,
+                                        value)
+        end
+        local shared = {1, 2}
+        local res = yaml.decode(yaml.encode({shared, shared}))
+        t.assert_equals(res[1], shared)
+        t.assert(rawequal(res[1], res[2]))
+    end)
+end
+
+g.test_encode_invalid_number = function(cg)
+    cg.server:exec(function()
+        local yaml = require('yaml')
+        yaml.cfg{encode_invalid_numbers = false}
+        for _ = 1, 20 do
+            t.assert_error_msg_contains('number must not be NaN or Inf',
+                                        yaml.encode, {a = 0 / 0})
+        end
+        t.assert_equals(yaml.decode(yaml.encode({a = 1})), {a = 1})
+    end)
+end
+
+g.test_encode_too_deep = function(cg)
+    cg.server:exec(function()
+        local yaml = require('yaml')
+        yaml.cfg{encode_max_depth = 2, encode_deep_as_nil = false}
+        for _ = 1, 20 do
+            t.assert_error_msg_contains('Too high nest level', yaml.encode,
+                                        {{{1}}})
+        end
+        t.assert_equals(yaml.decode(yaml.encode({{1}})), {{1}})
     end)
 end
 

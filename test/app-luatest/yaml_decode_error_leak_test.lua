@@ -12,24 +12,8 @@ g.before_each(function(cg)
     cg.server:start()
 end)
 
--- Server:stop() fails on any LeakSanitizer report in the instance stderr.
--- Until the instance shutdown is complete (see the lj_BC_FUNCC comment in
--- asan/lsan.supp), an ASAN build running with the LSan profile reports
--- unrelated leaks as well: the error objects the tests below leave for the
--- Lua garbage collector, among others. Only what libyaml itself allocated
--- is checked here.
 g.after_each(function(cg)
-    local ok, err = pcall(cg.server.stop, cg.server)
-    if ok then
-        return
-    end
-    err = tostring(err)
-    if not err:find('Memory leak during process execution', 1, true) then
-        error(err)
-    end
-    cg.server:save_artifacts()
-    t.assert_not_str_contains(err, 'third_party/libyaml', false,
-                              'LSan reported a leak in libyaml')
+    require('test.lsan').stop(cg.server, {'third_party/libyaml/', 'third_party/lua-yaml/'})
 end)
 
 -- Each error is repeated from the same place in one fiber: a pointer left
@@ -64,6 +48,11 @@ g.test_decode_invalid_number = function(cg)
                                       'number must not be NaN or Inf')
             end
         end
+        local decode = assert(loadstring('return function()\n' ..
+            'local value = require("yaml").decode("nan")\n' ..
+            'return value\nend', '@yaml-number.lua'))()
+        local message = 'yaml-number.lua:2: number must not be NaN or Inf'
+        t.assert_error_msg_contains(message, decode)
         t.assert_equals(yaml.decode('a: 1'), {a = 1})
     end)
 end
@@ -91,6 +80,30 @@ g.test_decode_syntax_error = function(cg)
         for _ = 1, 20 do
             local ok = pcall(yaml.decode, 'a: [1, 2\nb: c')
             t.assert_equals(ok, false)
+            for _, case in ipairs({
+                {']', 'did not find expected node content', 'column: 1'},
+                {'--- ]', 'did not find expected node content', 'column: 5'},
+                {'--- "\\uD800"', 'found invalid Unicode character escape code',
+                 'column: 8'},
+            }) do
+                local success, err = pcall(yaml.decode, case[1])
+                t.assert_equals(success, false)
+                t.assert_str_contains(err, case[2])
+                t.assert_str_contains(err, case[3])
+                t.assert_not_str_contains(err, 'unexpected END event')
+            end
+        end
+        t.assert_equals(yaml.decode('a: 1'), {a = 1})
+    end)
+end
+
+g.test_decode_stack_overflow = function(cg)
+    cg.server:exec(function()
+        local yaml = require('yaml')
+        t.assert_equals(select('#', yaml.decode(('---\n'):rep(65000))), 65000)
+        local docs = ('---\n'):rep(66000)
+        for _ = 1, 20 do
+            t.assert_error_msg_contains('stack overflow', yaml.decode, docs)
         end
         t.assert_equals(yaml.decode('a: 1'), {a = 1})
     end)
@@ -98,8 +111,7 @@ end
 
 -- A document deeper than the limit of the bundled libyaml.
 g.test_decode_too_deep = function(cg)
-    t.skip_if(not yaml_helper.is_bundled_libyaml(),
-              'the depth limit is a feature of the bundled libyaml')
+    yaml_helper.skip_if_not_bundled()
     cg.server:exec(function()
         local yaml = require('yaml')
         local doc = ('['):rep(1001) .. '0' .. (']'):rep(1001)
