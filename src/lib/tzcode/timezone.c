@@ -5,7 +5,9 @@
  */
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <stddef.h>
+#include <time.h>
 #include "datetime.h"
 #include "timezone.h"
 #include "tzcode.h"
@@ -104,31 +106,46 @@ timezone_name(int64_t index)
 	return zones_unsorted[index].name;
 }
 
-/** lookaside values we reuse across parser calls */
-static timezone_t prev_tz;
-static char prev_zonename[DT_TO_STRING_BUFSIZE];
+/**
+ * Rules of each zone read from tzdata, by zone index. They are not freed
+ * at exit: a thread calling exit() could free the rules tx is using.
+ */
+static struct {
+	/** The rules, NULL if tzdata has no file for the zone. */
+	timezone_t tz;
+	/** Whether the rules were read since the last reload. */
+	bool is_loaded;
+} zones_rules[MAX_TZINDEX];
 
+/** Return the rules of the zone with the given index, NULL if none. */
 static timezone_t
-timezone_alloc(const char * zonename)
+timezone_alloc(int64_t index)
 {
-	assert(zonename != NULL);
-	if (prev_zonename[0] != '\0' && strcmp(prev_zonename, zonename) == 0)
-		return prev_tz;
-	if (prev_tz != NULL)
-		tzfree(prev_tz);
-	prev_tz = tzalloc(zonename);
-	assert(strlen(zonename) < lengthof(prev_zonename));
-	strlcpy(prev_zonename, zonename, sizeof prev_zonename);
-	return prev_tz;
+	const char *zonename = timezone_name(index);
+	if (zonename == NULL)
+		return NULL;
+	/*
+	 * Remember a missing file too: tzdata has no file for many
+	 * abbreviations (MSK), and every isdst or arithmetic would search
+	 * for it again. Retry other failures, they can be temporary (EMFILE).
+	 */
+	if (!zones_rules[index].is_loaded) {
+		zones_rules[index].tz = tzalloc(zonename);
+		zones_rules[index].is_loaded =
+			zones_rules[index].tz != NULL || errno == ENOENT;
+	}
+	return zones_rules[index].tz;
 }
 
-static void __attribute__((destructor))
-timezone_free(void)
+void
+timezone_reload(void)
 {
-	if (prev_tz != NULL) {
-		tzfree(prev_tz);
-		prev_tz = NULL;
-		prev_zonename[0] = '\0';
+	tzset();
+	for (size_t i = 0; i < lengthof(zones_rules); i++) {
+		if (zones_rules[i].tz != NULL)
+			tzfree(zones_rules[i].tz);
+		zones_rules[i].tz = NULL;
+		zones_rules[i].is_loaded = false;
 	}
 }
 
@@ -202,7 +219,7 @@ timezone_tm_lookup(const char *str, size_t len,
 		tm->tm_isdst = !!(found->flags & TZ_DST);
 		return rc;
 	}
-	timezone_t tz = timezone_alloc(timezone_name(found->id));
+	timezone_t tz = timezone_alloc(found->id);
 	if (tz == NULL)
 		return 0;
 	struct datetime date = {.epoch = 0};
@@ -230,7 +247,7 @@ timezone_epoch_lookup(const char *str, size_t len, time_t base,
 		*gmtoff = found->offset * 60;
 		return rc;
 	}
-	timezone_t tz = timezone_alloc(timezone_name(found->id));
+	timezone_t tz = timezone_alloc(found->id);
 	if (tz == NULL)
 		return 0;
 	struct tnt_tm tm = {.tm_epoch = 0};
@@ -245,11 +262,7 @@ bool
 timezone_tzindex_lookup(int16_t tzindex, struct tnt_tm *tm)
 {
 	assert(tm != NULL);
-	const char *zonename = timezone_name(tzindex);
-	if (zonename == NULL)
-		return false;
-
-	timezone_t tz = timezone_alloc(zonename);
+	timezone_t tz = timezone_alloc(tzindex);
 	if (tz == NULL)
 		return false;
 	time_t epoch = (int64_t)tm->tm_epoch;

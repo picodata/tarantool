@@ -7,6 +7,7 @@
 #include <datetime.h>
 #include <mp_datetime.h>
 #include <mp_interval.h>
+#include "tzcode/timezone.h"
 
 size_t
 tnt_datetime_strftime(const struct datetime *date, char *buf, size_t len,
@@ -100,4 +101,11 @@ bool
 tnt_datetime_isdst(const struct datetime *date)
 {
 	return datetime_isdst(date);
+}
+
+/** Exported for FFI, see timezone_reload() for where to call it. */
+void
+tnt_datetime_tz_reload(void)
+{
+	timezone_reload();
 }

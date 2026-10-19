@@ -78,6 +78,7 @@ void   tnt_datetime_now(struct datetime *now);
 bool   tnt_datetime_totable(const struct datetime *date,
                             struct interval *out);
 bool   tnt_datetime_isdst(const struct datetime *date);
+void   tnt_datetime_tz_reload(void);
 
 /* Tarantool interval support functions */
 size_t tnt_interval_to_string(const struct interval *, char *, ssize_t);
@@ -956,6 +957,14 @@ local function datetime_now()
     return d
 end
 
+--[[
+    Re-read the local time zone of the process and forget the rules of
+    named time zones, so that they are read from tzdata again.
+]]
+local function datetime_tz_reload()
+    builtin.tnt_datetime_tz_reload()
+end
+
 -- addition or subtraction from date/time of a given interval
 -- described via table direction should be +1 or -1
 local function datetime_shift(self, o, direction)
@@ -1348,6 +1357,7 @@ return setmetatable(
         parse       = datetime_parse_from,
         parse_date  = datetime_parse_date,
         is_datetime = is_datetime,
+        tz_reload   = datetime_tz_reload,
         TZ          = tz,
     }, {}
 )

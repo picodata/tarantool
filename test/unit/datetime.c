@@ -1,9 +1,12 @@
 #include "dt.h"
 #include <assert.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/resource.h>
 
 #include "datetime.h"
 #include "mp_datetime.h"
@@ -834,10 +837,91 @@ datetime_unknown_tzindex_test(void)
 	check_plan();
 }
 
+/*
+ * The rules of each zone are cached by its index: switching zones and
+ * resetting the cache must give the same offsets.
+ */
+static void
+datetime_zone_cache_test(void)
+{
+	static const struct {
+		const char *str;
+		int tzoffset;
+	} zones[] = {
+		{"2026-09-24 10:00 Europe/Moscow", 180},
+		{"2026-09-24 10:00 America/New_York", -240},
+	};
+
+	plan(2 * lengthof(zones));
+	header();
+
+	/* Resetting an empty cache must not free anything. */
+	timezone_reload();
+	timezone_reload();
+
+	for (int round = 0; round < 2; round++) {
+		int mismatches[lengthof(zones)] = {0};
+		for (int i = 0; i < 1000; i++) {
+			for (size_t z = 0; z < lengthof(zones); z++) {
+				const char *s = zones[z].str;
+				struct datetime date;
+				ssize_t len = (ssize_t)strlen(s);
+				if (datetime_parse_full(&date, s, len) != len ||
+				    date.tzoffset != zones[z].tzoffset)
+					mismatches[z]++;
+			}
+		}
+		for (size_t z = 0; z < lengthof(zones); z++)
+			is(mismatches[z], 0, "round %d: '%s'", round,
+			   zones[z].str);
+		timezone_reload();
+	}
+
+	footer();
+	check_plan();
+}
+
+/*
+ * A failure to read the rules of a zone that can be temporary, like
+ * EMFILE, is not cached: the zone works once the descriptors are back.
+ */
+static void
+datetime_zone_retry_test(void)
+{
+	const char *s = "2026-09-24 10:00 America/New_York";
+	ssize_t len = (ssize_t)strlen(s);
+	struct datetime date;
+
+	plan(2);
+	header();
+
+	timezone_reload();
+	struct rlimit limit;
+	fail_if(getrlimit(RLIMIT_NOFILE, &limit) != 0);
+	struct rlimit low = limit;
+	low.rlim_cur = MIN(limit.rlim_cur, (rlim_t)64);
+	fail_if(setrlimit(RLIMIT_NOFILE, &low) != 0);
+	int fds[64];
+	size_t count = 0;
+	while (count < lengthof(fds) &&
+	       (fds[count] = open("/dev/null", O_RDONLY)) >= 0)
+		count++;
+	is(datetime_parse_full(&date, s, len), -1,
+	   "no zone without free descriptors");
+	for (size_t i = 0; i < count; i++)
+		close(fds[i]);
+	fail_if(setrlimit(RLIMIT_NOFILE, &limit) != 0);
+	is(datetime_parse_full(&date, s, len), len,
+	   "the zone is read once descriptors are free");
+
+	footer();
+	check_plan();
+}
+
 int
 main(void)
 {
-	plan(12);
+	plan(14);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -850,6 +934,8 @@ main(void)
 	datetime_parse_exact_buffer_test();
 	datetime_parse_trailer_test();
 	datetime_unknown_tzindex_test();
+	datetime_zone_cache_test();
+	datetime_zone_retry_test();
 
 	return check_plan();
 }

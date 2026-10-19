@@ -7,6 +7,7 @@ ffi.cdef[[
 
     int   setenv(const char *name, const char *value, int overwrite);
     int   unsetenv(const char *name);
+    void  tnt_datetime_tz_reload(void);
 ]]
 
 os.environ = function()
@@ -36,5 +37,11 @@ os.setenv = function(key, value)
     end
     if rv == -1 then
         error(string.format('error %d: %s', errno(), errno.errstring()))
+    end
+    -- Let datetime.now() and os.date() see the new zone. Compare the name
+    -- as C sees it ('TZ\0x' sets TZ). Call C directly: require('datetime')
+    -- may return an overridden module.
+    if ffi.string(key) == 'TZ' then
+        ffi.C.tnt_datetime_tz_reload()
     end
 end

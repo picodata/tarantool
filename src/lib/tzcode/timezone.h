@@ -93,6 +93,16 @@ timezone_isdst(const struct date_time_zone *zone);
 const char*
 timezone_name(int64_t index);
 
+/**
+ * Re-read the local time zone of the process (tzset(), as far as libc
+ * does: musl never re-reads /etc/localtime) and forget the rules of all
+ * zones, so that the next lookup reads them from tzdata. Call it only
+ * from the tx thread and not from a signal handler: the cache of the
+ * rules has no locks.
+ */
+void
+timezone_reload(void);
+
 /** JSON-like printer for @sa date_time_zone struct. */
 int
 date_time_zone_snprint(char *buf, int len, struct date_time_zone *z);
