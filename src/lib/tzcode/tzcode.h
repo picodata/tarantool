@@ -48,8 +48,9 @@ struct tnt_tm {
 /**
  * tnt_strftime is Tarantool version of a POSIX' strftime()
  * which has been extended with %f (fractions of second)
- * flag support. In all other aspect it's behaving exactly
- * like standard strftime.
+ * flag support. Unlike strftime(), it takes the time zone
+ * from @a tm (tm_gmtoff for %z, the name of tm_tzindex for
+ * %Z), never from the process, and does not call tzset().
  * @sa strftime()
  */
 size_t

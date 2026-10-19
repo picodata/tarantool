@@ -116,3 +116,17 @@ end
 g.test_setenv_error = function()
     t.assert_error(os.setenv, 'A=B', '1')
 end
+
+-- datetime:format() takes the zone from the datetime, not from the process.
+g.test_format_ignores_process_tz = function()
+    local named = datetime.new{year = 2026, month = 9, day = 24, hour = 10,
+                               min = 5, tz = 'Europe/Moscow'}
+    local fixed = datetime.new{year = 2026, month = 9, day = 24, hour = 10,
+                               min = 5, tzoffset = '+0530'}
+    for _, tz in ipairs({'UTC', 'XXX+5'}) do
+        os.setenv('TZ', tz)
+        t.assert_equals(named:format('%Y-%m-%d %H:%M %z %Z'),
+                        '2026-09-24 10:05 +0300 Europe/Moscow', tz)
+        t.assert_equals(fixed:format('%H:%M %z'), '10:05 +0530', tz)
+    end
+end

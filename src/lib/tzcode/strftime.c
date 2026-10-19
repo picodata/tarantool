@@ -70,7 +70,6 @@ size_t
 tnt_strftime(char *s, size_t maxsize, const char *format,
 	     const struct tnt_tm *t)
 {
-	tzset();
 	enum warn warn = IN_NONE;
 
 	if (s != NULL && maxsize > 0)
