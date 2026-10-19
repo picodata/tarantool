@@ -89,7 +89,7 @@ timezone_flags(const struct date_time_zone *zone);
 /** Return DST flag for given zone */
 bool
 timezone_isdst(const struct date_time_zone *zone);
-/** Translate tzindex to zone name */
+/** Translate tzindex to zone name, NULL if the index has no zone */
 const char*
 timezone_name(int64_t index);
 

@@ -98,7 +98,9 @@ timezone_isdst(const struct date_time_zone *zone)
 const char*
 timezone_name(int64_t index)
 {
-	assert((size_t)index < lengthof(zones_unsorted));
+	/* MsgPack may bring an index of a zone unknown to this version. */
+	if (index < 0 || (size_t)index >= lengthof(zones_unsorted))
+		return NULL;
 	return zones_unsorted[index].name;
 }
 
@@ -243,10 +245,11 @@ bool
 timezone_tzindex_lookup(int16_t tzindex, struct tnt_tm *tm)
 {
 	assert(tm != NULL);
-	if (tzindex == 0)
+	const char *zonename = timezone_name(tzindex);
+	if (zonename == NULL)
 		return false;
 
-	timezone_t tz = timezone_alloc(timezone_name(tzindex));
+	timezone_t tz = timezone_alloc(zonename);
 	if (tz == NULL)
 		return false;
 	time_t epoch = (int64_t)tm->tm_epoch;

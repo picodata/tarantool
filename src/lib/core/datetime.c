@@ -221,7 +221,7 @@ size_t
 datetime_to_string(const struct datetime *date, char *buf, ssize_t len)
 {
 	int offset = date->tzoffset;
-	int tzindex = date->tzindex;
+	const char *tz_name = timezone_name(date->tzindex);
 	int64_t rd_seconds = (int64_t)date->epoch + offset * 60 +
 			     SECS_EPOCH_1970_OFFSET;
 	int64_t rd_number = DIV(rd_seconds, SECS_PER_DAY);
@@ -253,9 +253,7 @@ datetime_to_string(const struct datetime *date, char *buf, ssize_t len)
 			SNPRINT(sz, snprintf, buf, len, ".%09d", nanosec);
 		}
 	}
-	if (tzindex != 0) {
-		const char *tz_name = timezone_name(tzindex);
-		assert(tz_name != NULL);
+	if (tz_name != NULL) {
 		SNPRINT(sz, snprintf, buf, len,
 			tz_name[1] == '\0' ? "%s" : " %s",
 			tz_name);

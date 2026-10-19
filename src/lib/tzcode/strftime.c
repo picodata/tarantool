@@ -493,13 +493,12 @@ _fmt(char *buf, ssize_t size, const char *format, const struct tnt_tm *t,
 				SNPRINT(total, _yconv, buf, size,
 					t->tm_year, TM_YEAR_BASE, true, true);
 				continue;
-			case 'Z':
-				if (t->tm_tzindex == 0)
-					continue;
-				assert(timezone_name(t->tm_tzindex) != NULL);
-				SNPRINT(total, snprintf, buf, size,
-					"%s", timezone_name(t->tm_tzindex));
+			case 'Z': {
+				const char *name = timezone_name(t->tm_tzindex);
+				if (name != NULL)
+					SNPRINT(total, _add, buf, size, name);
 				continue;
+			}
 			case 'z': {
 				long diff;
 				char const *sign;

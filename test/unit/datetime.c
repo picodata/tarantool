@@ -10,6 +10,7 @@
 #include "msgpuck.h"
 #include "mp_extension_types.h"
 #include "trivia/util.h"
+#include "tzcode/timezone.h"
 #include "tzcode/tzcode.h"
 
 #define UNIT_TAP_COMPATIBLE 1
@@ -791,10 +792,52 @@ datetime_parse_trailer_test(void)
 	check_plan();
 }
 
+/*
+ * A datetime from MsgPack may carry a zone index unknown to this version:
+ * a hole in the zone table or MAX_TZINDEX, which is past its end. Such a
+ * datetime works as one with a fixed offset.
+ */
+static void
+datetime_unknown_tzindex_test(void)
+{
+	int16_t hole = 1;
+	while (timezone_name(hole) != NULL)
+		hole++;
+	const int16_t indexes[] = {hole, MAX_TZINDEX};
+
+	plan(6 * lengthof(indexes));
+	header();
+
+	for (size_t i = 0; i < lengthof(indexes); i++) {
+		int16_t tzindex = indexes[i];
+		struct datetime date = {.tzoffset = 180, .tzindex = tzindex};
+		char buf[DT_TO_STRING_BUFSIZE];
+
+		datetime_to_string(&date, buf, sizeof(buf));
+		is(strcmp(buf, "1970-01-01T03:00:00+0300"), 0,
+		   "tzindex %d: string '%s'", tzindex, buf);
+		datetime_strftime(&date, buf, sizeof(buf), "%z%Z");
+		is(strcmp(buf, "+0300"), 0, "tzindex %d: format '%s'",
+		   tzindex, buf);
+		ok(!datetime_isdst(&date), "tzindex %d: no DST", tzindex);
+
+		struct interval hour = {.hour = 1};
+		is(datetime_increment_by(&date, 1, &hour), 0,
+		   "tzindex %d: add an hour", tzindex);
+		is(date.epoch, 3600, "tzindex %d: epoch after an hour",
+		   tzindex);
+		is(date.tzoffset, 180, "tzindex %d: offset after an hour",
+		   tzindex);
+	}
+
+	footer();
+	check_plan();
+}
+
 int
 main(void)
 {
-	plan(11);
+	plan(12);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -806,6 +849,7 @@ main(void)
 	datetime_parse_unterminated_test();
 	datetime_parse_exact_buffer_test();
 	datetime_parse_trailer_test();
+	datetime_unknown_tzindex_test();
 
 	return check_plan();
 }
