@@ -28,6 +28,7 @@ endfunction()
 
 create_perf_lua_test(NAME 1mops_write)
 create_perf_lua_test(NAME box_select)
+create_perf_lua_test(NAME datetime_timezone)
 create_perf_lua_test(NAME uri_escape_unescape)
 
 add_custom_target(test-lua-perf
