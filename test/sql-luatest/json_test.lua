@@ -2809,6 +2809,136 @@ g.test_compound_all_json_null_branch_ok = function()
     end)
 end
 
+-- A bound parameter adopts the type of a JSON column like a literal NULL does,
+-- so a bound NULL next to a JSON branch works for every operator and position.
+g.test_compound_json_bound_null_ok = function()
+    g.server:exec(function()
+        local function check(sql, binds, expected)
+            local res, err = box.execute(sql, binds)
+            t.assert_equals(err, nil, sql)
+            local out = {}
+            for _, row in ipairs(res.rows) do
+                table.insert(out, row[1] == nil and 'NULL' or
+                                  tostring(row[1]))
+            end
+            t.assert_items_equals(out, expected, sql)
+        end
+        local null = {box.NULL}
+        check([[SELECT CAST(1 AS JSON) UNION SELECT ?]], null, {'1', 'NULL'})
+        check([[SELECT ? UNION SELECT CAST(1 AS JSON)]], null, {'1', 'NULL'})
+        check([[SELECT CAST(1 AS JSON) UNION ALL SELECT ?]], null,
+              {'1', 'NULL'})
+        check([[SELECT ? UNION ALL SELECT CAST(1 AS JSON)]], null,
+              {'1', 'NULL'})
+        check([[SELECT CAST(1 AS JSON) EXCEPT SELECT ?]], null, {'1'})
+        check([[SELECT ? EXCEPT SELECT CAST(1 AS JSON)]], null, {'NULL'})
+        check([[SELECT CAST(1 AS JSON) INTERSECT SELECT ?]], null, {})
+        check([[SELECT CAST(1 AS JSON) UNION ALL SELECT ?
+                UNION ALL SELECT CAST(2 AS JSON)]], null, {'1', 'NULL', '2'})
+        check([[SELECT ? UNION ALL SELECT ?
+                UNION ALL SELECT CAST(2 AS JSON)]], {box.NULL, box.NULL},
+              {'NULL', 'NULL', '2'})
+        -- Every spelling. @name and #name are typed boolean at parse time,
+        -- but that is only a placeholder until the value is bound.
+        for _, v in ipairs({'$1', ':x', '@x', '#x'}) do
+            local binds = v == '$1' and null or {{[v] = box.NULL}}
+            check('SELECT CAST(1 AS JSON) UNION ALL SELECT ' .. v, binds,
+                  {'1', 'NULL'})
+        end
+        -- Both branches bound, the JSON one through a cast.
+        check([[SELECT CAST($1 AS JSON) UNION SELECT $2]], {'{}', box.NULL},
+              {'{}', 'NULL'})
+        -- A compound in FROM, which may be flattened into the outer query.
+        check([[SELECT * FROM (SELECT CAST(1 AS JSON)
+                UNION ALL SELECT ?)]], null, {'1', 'NULL'})
+        -- The recursive path.
+        check([[WITH RECURSIVE c(x) AS (SELECT CAST(1 AS JSON)
+                UNION ALL SELECT ? FROM c LIMIT 3) SELECT x FROM c]],
+              null, {'1', 'NULL', 'NULL'})
+    end)
+end
+
+-- A compound with ORDER BY goes through a separate merge path.
+g.test_compound_json_bound_order_by = function()
+    g.server:exec(function()
+        local j = box.execute([[SELECT CAST(2 AS JSON)]]).rows[1][1]
+        local sql = [[SELECT CAST(1 AS JSON) UNION SELECT ? ORDER BY 1]]
+        local res = box.execute(sql, {box.NULL})
+        t.assert_equals(res.rows[1][1], nil)
+        t.assert_equals(tostring(res.rows[2][1]), '1')
+        res = box.execute(sql, {j})
+        t.assert_equals(tostring(res.rows[1][1]), '1')
+        t.assert_equals(tostring(res.rows[2][1]), '2')
+        local _, err = box.execute(sql, {2})
+        t.assert_not_equals(err, nil)
+        t.assert_equals(err.message,
+                        'Type mismatch: can not convert integer(2) to json')
+    end)
+end
+
+-- A parameter in a JSON column takes only NULL or JSON. Nothing is converted:
+-- a string is not parsed into JSON, as an explicit CAST would do. A named
+-- parameter is used because a map in the bind list is a set of named binds.
+g.test_compound_json_bound_non_json_error = function()
+    g.server:exec(function()
+        local binds = {
+            {2, 'integer(2)'},
+            {'{}', "string('{}')"},
+            {setmetatable({a = 1}, {__serialize = 'map'}), 'map({"a": 1})'},
+        }
+        for _, sql in ipairs({
+            [[SELECT CAST(1 AS JSON) UNION ALL SELECT :x]],
+            [[SELECT :x UNION ALL SELECT CAST(1 AS JSON)]],
+            [[SELECT CAST(1 AS JSON) UNION SELECT :x]],
+            [[SELECT CAST(1 AS JSON) UNION ALL SELECT :x
+              UNION ALL SELECT CAST(2 AS JSON)]],
+            [[SELECT * FROM (SELECT CAST(1 AS JSON) UNION ALL SELECT :x)]],
+        }) do
+            for _, b in ipairs(binds) do
+                local _, err = box.execute(sql, {{[':x'] = b[1]}})
+                t.assert_not_equals(err, nil, sql)
+                t.assert_equals(err.message, 'Type mismatch: can not ' ..
+                                'convert ' .. b[2] .. ' to json', sql)
+            end
+        end
+    end)
+end
+
+-- Only a parameter in a column with a JSON branch is checked. A parameter in
+-- another column of the same compound takes any value as before.
+g.test_compound_json_bound_other_columns_unchecked = function()
+    g.server:exec(function()
+        local res, err = box.execute([[
+            SELECT CAST(1 AS JSON), ? UNION ALL SELECT ?, 2]],
+            {'x', box.NULL})
+        t.assert_equals(err, nil)
+        t.assert_equals(res.rows[1][2], 'x')
+        local _
+        _, err = box.execute([[
+            SELECT CAST(1 AS JSON), ? UNION ALL SELECT ?, 2]], {'x', 3})
+        t.assert_equals(err.message,
+                        'Type mismatch: can not convert integer(3) to json')
+    end)
+end
+
+-- Only a bare parameter adopts the column type. A real mix still fails at
+-- compile time, even with a parameter branch between the two, and so does an
+-- expression over a parameter, though its type is ANY like the parameter's.
+g.test_compound_json_bound_mix_still_error = function()
+    g.server:exec(function()
+        for _, sql in ipairs({
+            [[SELECT CAST(1 AS JSON) UNION ALL SELECT ? UNION ALL SELECT 2]],
+            [[SELECT CAST(1 AS JSON) UNION ALL SELECT COALESCE(?, NULL)]],
+        }) do
+            local _, err = box.prepare(sql)
+            t.assert_not_equals(err, nil, sql)
+            t.assert_str_contains(
+                err.message,
+                'JSON cannot be combined with a non-JSON type', false, sql)
+        end
+    end)
+end
+
 --------------------------------------------------------------------------------
 -- json_ephemeral
 --------------------------------------------------------------------------------

@@ -3936,6 +3936,17 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 				pParse->pVList[0] = 0;	/* Indicate VList may no longer be enlarged */
 				sqlVdbeAppendP4(v, (char *)z, P4_STATIC);
 			}
+			/*
+			 * A JSON column of a compound SELECT takes only NULL
+			 * or JSON from the parameter, see multiSelect().
+			 */
+			if (pExpr->type == FIELD_TYPE_JSON) {
+				static enum field_type json_type[] = {
+					FIELD_TYPE_JSON,
+				};
+				sqlVdbeAddOp4(v, OP_ApplyType, target, 1, 0,
+					      (char *)json_type, P4_STATIC);
+			}
 			return target;
 		}
 	case TK_REGISTER:{

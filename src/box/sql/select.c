@@ -2944,7 +2944,10 @@ multiSelect(Parse * pParse,	/* Parsing context */
 	 * JSON does not unify with any other type across compound branches.
 	 * The dedup path types the ephemeral column and rejects a mix, but
 	 * UNION ALL streams branches straight to the destination, so check
-	 * here too. A literal NULL branch adopts the column's type.
+	 * here too. A literal NULL branch adopts the column's type, and so
+	 * does a bound parameter. In a JSON column the parameter is typed
+	 * JSON, and its code then checks that the bound value is NULL or
+	 * JSON, see sqlExprCodeTarget().
 	 *
 	 * multiSelect() recurses into pPrior, so scan only at the outermost
 	 * call (p->pNext == NULL): a NULL branch between a JSON and a non-JSON
@@ -2959,7 +2962,7 @@ multiSelect(Parse * pParse,	/* Parsing context */
 				if (i >= s->pEList->nExpr)
 					continue;
 				struct Expr *e = s->pEList->a[i].pExpr;
-				if (e->op == TK_NULL)
+				if (e->op == TK_NULL || e->op == TK_VARIABLE)
 					continue;
 				if (sql_expr_type(e) == FIELD_TYPE_JSON)
 					has_json = true;
@@ -2973,6 +2976,16 @@ multiSelect(Parse * pParse,	/* Parsing context */
 				pParse->is_aborted = true;
 				rc = 1;
 				goto multi_select_end;
+			}
+			if (has_json) {
+				for (struct Select *s = p; s != NULL;
+				     s = s->pPrior) {
+					if (i >= s->pEList->nExpr)
+						continue;
+					struct Expr *e = s->pEList->a[i].pExpr;
+					if (e->op == TK_VARIABLE)
+						e->type = FIELD_TYPE_JSON;
+				}
 			}
 		}
 	}
