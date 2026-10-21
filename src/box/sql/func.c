@@ -2527,6 +2527,48 @@ func_now(struct sql_context *ctx, int argc, const struct Mem *argv)
 }
 
 /**
+ * Implementation of the TO_CHAR() function.
+ */
+static void
+func_to_char(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 2);
+	(void)argc;
+	const struct Mem *date = &argv[0];
+	const struct Mem *fmt = &argv[1];
+	if (mem_is_any_null(date, fmt))
+		return;
+	assert(mem_is_datetime(date) && mem_is_str(fmt));
+	if (fmt->n > SQL_MAX_LENGTH) {
+		ctx->is_aborted = true;
+		diag_set(ClientError, ER_SQL_EXECUTE, "string or blob too big");
+		return;
+	}
+	struct region *region = &fiber()->gc;
+	size_t svp = region_used(region);
+	/* tt_cstr() truncates long strings. */
+	char *format = xregion_alloc(region, fmt->n + 1);
+	memcpy(format, fmt->z, fmt->n);
+	format[fmt->n] = '\0';
+	char buf[128];
+	char *res = buf;
+	size_t len = datetime_strftime(&date->u.dt, buf, sizeof(buf), format);
+	/* A short format can expand to a long result, e.g. "%c". */
+	if (len > SQL_MAX_LENGTH) {
+		region_truncate(region, svp);
+		ctx->is_aborted = true;
+		diag_set(ClientError, ER_SQL_EXECUTE, "string or blob too big");
+		return;
+	}
+	if (len >= sizeof(buf)) {
+		res = xregion_alloc(region, len + 1);
+		datetime_strftime(&date->u.dt, res, len + 1, format);
+	}
+	mem_copy_str(ctx->pOut, res, len);
+	region_truncate(region, svp);
+}
+
+/**
  * Implementation of the DATE_PART() function.
  *
  * Returns the requested information from a DATETIME value.
@@ -3208,6 +3250,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"SOUNDEX", 1, 1, 0, true, 0, NULL},
 	{"SUBSTR", 2, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"SUM", 1, 1, SQL_FUNC_AGG, false, 0, NULL},
+	{"TO_CHAR", 2, 2, 0, true, 0, NULL},
 	{"TOTAL", 1, 1, SQL_FUNC_AGG, false, 0, NULL},
 	{"TRIM", 2, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"TYPEOF", 1, 1, SQL_FUNC_TYPEOF, true, 0, NULL},
@@ -3486,6 +3529,8 @@ static struct sql_func_definition definitions[] = {
 	 fin_sum, inverse_sum},
 	{"SUM", 1, {FIELD_TYPE_DOUBLE}, FIELD_TYPE_DOUBLE, step_sum, NULL,
 	 NULL, inverse_sum},
+	{"TO_CHAR", 2, {FIELD_TYPE_DATETIME, FIELD_TYPE_STRING},
+	 FIELD_TYPE_STRING, func_to_char, NULL, NULL, NULL},
 	{"TOTAL", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DOUBLE, step_total,
 	 fin_total, fin_total, inverse_sum},
 	{"TOTAL", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_DOUBLE, step_total,
