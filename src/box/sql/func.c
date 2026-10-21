@@ -45,6 +45,7 @@
 #include "vdbeInt.h"
 #include "version.h"
 #include "coll/coll.h"
+#include "tzcode/timezone.h"
 #include "tarantoolInt.h"
 #include <unicode/ustring.h>
 #include <unicode/ucasemap.h>
@@ -2568,6 +2569,113 @@ func_to_char(struct sql_context *ctx, int argc, const struct Mem *argv)
 	region_truncate(region, svp);
 }
 
+enum {
+	/** The number of bytes of a TO_DATE() argument in an error message. */
+	TO_DATE_ERR_STR_MAX = 32,
+	/** An escape takes up to 6 chars, then "..." and 0 follow. */
+	TO_DATE_ERR_BUF_SIZE = TO_DATE_ERR_STR_MAX * 6 + 4,
+};
+
+/**
+ * Write the first TO_DATE_ERR_STR_MAX bytes of a string to @a buf for an
+ * error message, escaped as in mp_snprint(), so a 0 byte does not cut the
+ * message. The cut does not split a UTF-8 character.
+ */
+static const char *
+to_date_err_str(char *buf, const char *str, uint32_t len)
+{
+	char *p = buf;
+	bool is_cut = len > TO_DATE_ERR_STR_MAX;
+	int32_t n = is_cut ? TO_DATE_ERR_STR_MAX : (int32_t)len;
+	if (is_cut)
+		U8_SET_CP_START((const uint8_t *)str, 0, n);
+	for (int32_t i = 0; i < n; i++) {
+		unsigned char c = str[i];
+		if (c < 128 && mp_char2escape[c] != NULL)
+			p = stpcpy(p, mp_char2escape[c]);
+		else
+			*p++ = c;
+	}
+	if (is_cut)
+		p = stpcpy(p, "...");
+	*p = '\0';
+	return buf;
+}
+
+/**
+ * Implementation of the TO_DATE() function.
+ */
+static void
+func_to_date(struct sql_context *ctx, int argc, const struct Mem *argv)
+{
+	assert(argc == 2);
+	(void)argc;
+	const struct Mem *str = &argv[0];
+	const struct Mem *fmt = &argv[1];
+	if (mem_is_any_null(str, fmt))
+		return;
+	assert(mem_is_str(str) && mem_is_str(fmt));
+	if (str->n > SQL_MAX_LENGTH || fmt->n > SQL_MAX_LENGTH) {
+		ctx->is_aborted = true;
+		diag_set(ClientError, ER_SQL_EXECUTE, "string or blob too big");
+		return;
+	}
+	struct datetime date;
+	if (fmt->n == 0 || (fmt->n == 7 && memcmp(fmt->z, "iso8601", 7) == 0) ||
+	    (fmt->n == 7 && memcmp(fmt->z, "rfc3339", 7) == 0)) {
+		ssize_t rc = datetime_parse_full(&date, str->z, str->n);
+		if (rc <= 0) {
+			const char *reason = "";
+			if (rc == -TZ_NYI)
+				reason = " - nyi timezone";
+			else if (rc == -TZ_AMBIGUOUS)
+				reason = " - ambiguous timezone";
+			char str_buf[TO_DATE_ERR_BUF_SIZE];
+			ctx->is_aborted = true;
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 tt_sprintf("could not parse '%s'%s",
+					    to_date_err_str(str_buf, str->z,
+							    str->n),
+					    reason));
+			return;
+		}
+	} else {
+		struct region *region = &fiber()->gc;
+		size_t svp = region_used(region);
+		/* datetime_strptime() needs 0-terminated strings. */
+		char *buf = xregion_alloc(region, str->n + 1);
+		memcpy(buf, str->z, str->n);
+		buf[str->n] = '\0';
+		char *format = xregion_alloc(region, fmt->n + 1);
+		memcpy(format, fmt->z, fmt->n);
+		format[fmt->n] = '\0';
+		size_t len = datetime_strptime(&date, buf, format);
+		region_truncate(region, svp);
+		if (len == 0) {
+			char str_buf[TO_DATE_ERR_BUF_SIZE];
+			char fmt_buf[TO_DATE_ERR_BUF_SIZE];
+			ctx->is_aborted = true;
+			diag_set(ClientError, ER_SQL_EXECUTE,
+				 tt_sprintf("could not parse '%s' using "
+					    "'%s' format",
+					    to_date_err_str(str_buf, str->z,
+							    str->n),
+					    to_date_err_str(fmt_buf, fmt->z,
+							    fmt->n)));
+			return;
+		}
+	}
+	/* Same as datetime:set({hour = 0, min = 0, sec = 0, nsec = 0}). */
+	int64_t offset = date.tzoffset * 60;
+	int64_t secs = (int64_t)date.epoch + offset;
+	int64_t rem = secs % SECS_PER_DAY;
+	if (rem < 0)
+		rem += SECS_PER_DAY;
+	date.epoch = secs - rem - offset;
+	date.nsec = 0;
+	mem_set_datetime(ctx->pOut, &date);
+}
+
 /**
  * Implementation of the DATE_PART() function.
  *
@@ -3251,6 +3359,7 @@ static struct sql_func_dictionary dictionaries[] = {
 	{"SUBSTR", 2, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"SUM", 1, 1, SQL_FUNC_AGG, false, 0, NULL},
 	{"TO_CHAR", 2, 2, 0, true, 0, NULL},
+	{"TO_DATE", 2, 2, 0, true, 0, NULL},
 	{"TOTAL", 1, 1, SQL_FUNC_AGG, false, 0, NULL},
 	{"TRIM", 2, 3, SQL_FUNC_DERIVEDCOLL, true, 0, NULL},
 	{"TYPEOF", 1, 1, SQL_FUNC_TYPEOF, true, 0, NULL},
@@ -3531,6 +3640,8 @@ static struct sql_func_definition definitions[] = {
 	 NULL, inverse_sum},
 	{"TO_CHAR", 2, {FIELD_TYPE_DATETIME, FIELD_TYPE_STRING},
 	 FIELD_TYPE_STRING, func_to_char, NULL, NULL, NULL},
+	{"TO_DATE", 2, {FIELD_TYPE_STRING, FIELD_TYPE_STRING},
+	 FIELD_TYPE_DATETIME, func_to_date, NULL, NULL, NULL},
 	{"TOTAL", 1, {FIELD_TYPE_DECIMAL}, FIELD_TYPE_DOUBLE, step_total,
 	 fin_total, fin_total, inverse_sum},
 	{"TOTAL", 1, {FIELD_TYPE_INTEGER}, FIELD_TYPE_DOUBLE, step_total,
