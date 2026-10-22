@@ -95,7 +95,8 @@ _fmt(char *buf, ssize_t size, const char *format, const struct tnt_tm *t,
 		label:
 			switch (*++format) {
 			case '\0':
-				break;
+				/* A trailing '%' ends the format. */
+				return total;
 			case 'A':
 				SNPRINT(total, _add, buf, size,
 					(t->tm_wday < 0 ||
@@ -275,6 +276,9 @@ _fmt(char *buf, ssize_t size, const char *format, const struct tnt_tm *t,
 					SNPRINT(total, snprintf, buf, size,
 						"%.*s", mod_len + 1,
 						format - mod_len);
+					/* The format ends after the digits. */
+					if (*format == '\0')
+						return total;
 					continue;
 				}
 				/*

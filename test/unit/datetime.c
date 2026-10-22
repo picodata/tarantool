@@ -918,10 +918,44 @@ datetime_zone_retry_test(void)
 	check_plan();
 }
 
+/*
+ * A format that ends with '%' or with '%' and digits ends there. The bytes
+ * after the terminating 0 must not get into the result or its length.
+ */
+static void
+datetime_strftime_format_end_test(void)
+{
+	static const struct {
+		const char fmt[16];
+		const char *res;
+	} tests[] = {
+		{"abc%\0XYZ", "abc"},
+		{"abc%3\0XYZ", "abc3"},
+		{"abc%12\0XYZ", "abc12"},
+	};
+
+	plan(2 * lengthof(tests));
+	header();
+
+	struct datetime date = {0};
+	for (size_t i = 0; i < lengthof(tests); i++) {
+		char buf[64];
+		size_t len = datetime_strftime(&date, buf, sizeof(buf),
+					       tests[i].fmt);
+		is(len, strlen(tests[i].res), "length for '%s'",
+		   tests[i].fmt);
+		is(strcmp(buf, tests[i].res), 0, "result for '%s' is '%s'",
+		   tests[i].fmt, buf);
+	}
+
+	footer();
+	check_plan();
+}
+
 int
 main(void)
 {
-	plan(14);
+	plan(15);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -936,6 +970,7 @@ main(void)
 	datetime_unknown_tzindex_test();
 	datetime_zone_cache_test();
 	datetime_zone_retry_test();
+	datetime_strftime_format_end_test();
 
 	return check_plan();
 }
