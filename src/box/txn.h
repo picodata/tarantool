@@ -332,6 +332,13 @@ struct txn_stmt {
 	struct xrow_header *row;
 	/** on_commit and/or on_rollback list is not empty. */
 	bool has_triggers;
+	/**
+	 * True if the engine wrote the statement blindly, without looking
+	 * for an existing row. Vinyl does this for a delete and an upsert,
+	 * so it sets no old or new tuple. A blind write is still a written
+	 * row even though both tuples are NULL.
+	 */
+	bool is_blind_write;
 	/*
 	 * Flag that shows whether this statement overwrites own transaction
 	 * statement. For example if a transaction makes two replaces of the

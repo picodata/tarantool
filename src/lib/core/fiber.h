@@ -44,6 +44,7 @@
 #include "small/rlist.h"
 #include "salad/stailq.h"
 #include "clock_lowres.h"
+#include "insn_counter.h"
 #include "backtrace.h"
 #include "exception.h"
 
@@ -479,6 +480,175 @@ API_EXPORT uint64_t
 fiber_csw(const struct fiber *fiber);
 
 /**
+ * Counters that each fiber keeps. They show how much work a fiber did,
+ * for example, to find performance regressions in tests. The counters
+ * are off by default. cord_pmu_start() and cord_pmu_stop()
+ * turn them on and off for all the fibers of the current cord, also for
+ * the fibers that start later. fiber_pmu_start() and
+ * fiber_pmu_stop() do it for one fiber. The last call wins.
+ * For example, after cord_pmu_start() and then
+ * fiber_pmu_stop() of one fiber, the counters count for all
+ * the fibers except that one.
+ *
+ * The values of the counters do not change between releases. New
+ * counters are added at the end.
+ *
+ * To measure a job, get the counters before and after it and subtract.
+ * The result includes the work of the fiber only, not of the fibers
+ * that ran while it was suspended. The result is correct if the counters
+ * are on all the time between the two reads. A running SQL statement
+ * sees that the counters were enabled or disabled only at its next row.
+ * On Linux, the instructions are not counted while other pinned perf
+ * events take all the hardware counters, and nothing tells that.
+ *
+ * A fiber of a fiber pool, for example, the one of an iproto request,
+ * serves many requests. It keeps its setting and its values between
+ * them.
+ */
+enum fiber_pmu_counter {
+	/**
+	 * CPU instructions executed in user space. It uses a hardware
+	 * performance counter of Linux, which can be unavailable, for
+	 * example, in a virtual machine or in a container that blocks the
+	 * perf_event_open() system call. Then it is not counted.
+	 */
+	FIBER_PMU_CPU_INSTRUCTIONS = 0,
+	/** VDBE opcodes executed by SQL statements. */
+	FIBER_PMU_VDBE_OPCODES = 1,
+	/**
+	 * Rows read from spaces: by SQL statements, by select, get, min,
+	 * max and random requests, and by index iterators. Rows of the
+	 * ephemeral spaces of SQL and internal reads are not counted.
+	 */
+	FIBER_PMU_ROWS_READ = 2,
+	/**
+	 * Rows inserted, replaced, updated, deleted or upserted by the
+	 * transactions that were committed. A delete or an update that
+	 * finds no row is not counted. A delete or an upsert of vinyl
+	 * that writes without looking for the row is counted even though
+	 * it sets no tuple. Rows of the ephemeral spaces of SQL are not
+	 * counted. A transaction that is submitted without a wait for its
+	 * end, by the applier or by the recovery, is counted when it is
+	 * submitted, though it can still roll back, for example, by a
+	 * ROLLBACK of synchronous replication.
+	 */
+	FIBER_PMU_ROWS_WRITTEN = 3,
+	/**
+	 * Rows that SQL statements give as their result. The rows of
+	 * EXPLAIN and EXPLAIN ANALYZE are not counted.
+	 */
+	FIBER_PMU_ROWS_RETURNED = 4,
+	/** Number of counters in this version. */
+	fiber_pmu_counter_MAX,
+};
+
+/**
+ * Start the counters for all the fibers of the current cord, also for the
+ * fibers that start later. This cancels the settings of single fibers.
+ * If the hardware counter of instructions is unavailable, log the reason
+ * once and do not count the instructions until the next
+ * cord_pmu_stop().
+ */
+API_EXPORT void
+cord_pmu_start(void);
+
+/**
+ * Stop the counters for all the fibers of the current cord, also for the
+ * fibers that start later. This cancels the settings of single fibers.
+ * The fibers keep the values that they have.
+ */
+API_EXPORT void
+cord_pmu_stop(void);
+
+/**
+ * Reset the sums of the counters of all the fibers of the current cord:
+ * cord_pmu_read() gives zeroes after it. The counters of single fibers
+ * are not changed.
+ */
+API_EXPORT void
+cord_pmu_reset(void);
+
+/**
+ * Start the counters for one fiber. The setting stays until the fiber
+ * dies or until the next cord_pmu_start() or
+ * cord_pmu_stop(). If the hardware counter of
+ * instructions is unavailable, log the reason once and do not count the
+ * instructions until the next cord_pmu_stop().
+ *
+ * @param fiber Target fiber of the current cord. If it is NULL, the
+ *        current fiber is used.
+ */
+API_EXPORT void
+fiber_pmu_start(struct fiber *fiber);
+
+/**
+ * Stop the counters for one fiber. The setting stays until the fiber dies
+ * or until the next cord_pmu_start() or cord_pmu_stop().
+ * The fiber keeps the values that it has.
+ *
+ * @param fiber Target fiber of the current cord. If it is NULL, the
+ *        current fiber is used.
+ */
+API_EXPORT void
+fiber_pmu_stop(struct fiber *fiber);
+
+/**
+ * Reset the counters of one fiber: fiber_pmu_read() gives zeroes after
+ * it for that fiber. The setting of the counters, on or off, is not
+ * changed.
+ *
+ * @param fiber Target fiber of the current cord. If it is NULL, the
+ *        current fiber is used.
+ */
+API_EXPORT void
+fiber_pmu_reset(struct fiber *fiber);
+
+/**
+ * Return true if the counters are on for all the fibers of the current
+ * cord: the state that cord_pmu_start() and cord_pmu_stop() set. The
+ * counters of single fibers that fiber_pmu_start() started do not
+ * change it.
+ */
+API_EXPORT bool
+cord_pmu_is_enabled(void);
+
+/**
+ * Return true if the counters are on for one fiber.
+ *
+ * @param fiber Target fiber of the current cord. If it is NULL, the
+ *        current fiber is used.
+ */
+API_EXPORT bool
+fiber_pmu_is_enabled(const struct fiber *fiber);
+
+/**
+ * Get the counters of a fiber.
+ *
+ * @param fiber Target fiber of the current cord. If it is NULL, the
+ *        current fiber is used.
+ * @param[out] values Array of `count` elements. Element `i` gets the
+ *        value of the counter `i` of enum fiber_pmu_counter.
+ * @param count Size of the array. It can be different from
+ *        fiber_pmu_counter_MAX of this version.
+ * @return Number of elements set: the minimum of `count` and the number
+ *         of counters in this version.
+ */
+API_EXPORT size_t
+fiber_pmu_read(const struct fiber *fiber, uint64_t *values, size_t count);
+
+/**
+ * Get the sums of the counters of all the fibers of the current cord:
+ * the work that they did while the counters were on for them. The work
+ * of the fibers that are dead is included.
+ *
+ * @param[out] values Array of `count` elements, as in fiber_pmu_read().
+ * @param count Size of the array.
+ * @return Number of elements set, as in fiber_pmu_read().
+ */
+API_EXPORT size_t
+cord_pmu_read(uint64_t *values, size_t count);
+
+/**
  * Get a pointer to a live fiber in the current cord by the given fiber id,
  * which may be used for getting other info about the fiber (name, csw, etc.).
  *
@@ -636,6 +806,100 @@ struct fiber_slice {
 	double err;
 };
 
+/** The setting of the counters of one fiber. */
+enum fiber_pmu_mode {
+	/** Follow the setting of the cord. */
+	FIBER_PMU_DEFAULT = 0,
+	/** On after fiber_pmu_start(). */
+	FIBER_PMU_ON,
+	/** Off after fiber_pmu_stop(). */
+	FIBER_PMU_OFF,
+};
+
+/**
+ * A counter that is kept outside of the fiber struct while a function
+ * runs, so that the hot code of the function does not change the fiber.
+ * For example, the VDBE counts its opcodes in its own step counter.
+ * The fiber adds the increments of the source to its counter when it
+ * yields, when it reads its counters and when the source is removed.
+ */
+struct fiber_pmu_source {
+	/** The fiber counter that the source adds to. */
+	enum fiber_pmu_counter counter;
+	/** The source value, NULL if the fiber has no source. */
+	const uint64_t *value;
+	/** The part of the source value that is already added. */
+	uint64_t base;
+};
+
+/** The counters of one fiber and their settings. */
+struct fiber_pmu {
+	/** The value of cord->pmu.gen when mode was set. */
+	uint32_t gen;
+	/**
+	 * The setting of the counters of this fiber. It is valid only if
+	 * gen is equal to the one of the cord.
+	 */
+	enum fiber_pmu_mode mode;
+	/** A value that is counted outside of the fiber. */
+	struct fiber_pmu_source source;
+	/**
+	 * Values of the counters of this fiber. The work of the current
+	 * fiber since the last fiber_pmu_sync() is not included.
+	 * @sa fiber_pmu_read
+	 */
+	uint64_t values[fiber_pmu_counter_MAX];
+};
+
+/** The counters of the fibers of one cord and their settings. */
+struct cord_pmu {
+	/**
+	 * Generation of the settings of the counters. It is incremented when
+	 * the counters are turned on or off for all the fibers, and so the
+	 * settings of single fibers become invalid.
+	 */
+	uint32_t gen;
+	/** The hardware counter of instructions of this cord. */
+	struct insn_counter insn_counter;
+	/**
+	 * Value of insn_counter at the start of the current run of the
+	 * current fiber.
+	 */
+	uint64_t insn_count_last;
+	/** True if the counters are on for the fibers without a setting. */
+	bool enabled : 1;
+	/**
+	 * True if the counters can count for some fiber of the cord: they
+	 * are on for all the fibers, or on for some fibers. The hardware
+	 * counter of instructions is open while it is true.
+	 */
+	bool active : 1;
+	/** True if the hardware counter of instructions worked at least once.
+	 * The counters of the instructions stay visible after the hardware
+	 * counter closes.
+	 */
+	bool insn_seen : 1;
+	/**
+	 * True if the hardware counter of instructions failed to open. It
+	 * is not tried again until the counters are turned off for all
+	 * the fibers.
+	 */
+	bool insn_failed : 1;
+	/**
+	 * The number of the fibers whose own setting turns the counters
+	 * on. It is reset when the settings of single fibers are cancelled.
+	 */
+	uint32_t on_count;
+	/**
+	 * Sums of the counters of all the fibers of the cord, also of the
+	 * dead ones. A fiber adds its work to them while the counters are
+	 * on for it. The work of the current fiber since the last
+	 * fiber_pmu_sync() is not included.
+	 * @sa cord_pmu_read
+	 */
+	uint64_t values[fiber_pmu_counter_MAX];
+};
+
 struct fiber {
 	coro_context ctx;
 	/** Coro stack slab. */
@@ -761,6 +1025,8 @@ struct fiber {
 			 * Optional fiber.storage Lua reference.
 			 */
 			int storage_ref;
+			/** Optional reference to the Lua object f.pmu. */
+			int pmu_ref;
 		} lua;
 		/**
 		 * Iproto sync.
@@ -779,6 +1045,8 @@ struct fiber {
 	 */
 	char *name;
 	char inline_name[FIBER_NAME_INLINE];
+	/** The counters of this fiber and their settings. */
+	struct fiber_pmu pmu;
 #ifdef ENABLE_BACKTRACE
 	/* Fiber parent's backtrace allocated on the 'gc' region. */
 	struct backtrace_lua *parent_bt;
@@ -807,6 +1075,8 @@ struct cord {
 	uint64_t next_fid;
 	struct clock_stat clock_stat;
 	struct cpu_stat cpu_stat;
+	/** The counters of the fibers of this cord and their settings. */
+	struct cord_pmu pmu;
 	pthread_t id;
 	const struct cord_on_exit *on_exit;
 	/** A helper hash to map id -> fiber. */
@@ -883,6 +1153,17 @@ struct cord {
 extern __thread struct cord *cord_ptr;
 
 /**
+ * True if the fiber counters are on for the current fiber. It is set on
+ * each context switch.
+ * It is not in struct cord, so that the check of the counters that are
+ * off does not need the cord.
+ */
+extern __thread bool fiber_pmu_enabled;
+
+/** Names of the fiber counters, as fiber.info() shows them. */
+extern const char *fiber_pmu_counter_strs[fiber_pmu_counter_MAX];
+
+/**
  * Returns a thread-local cord object.
  *
  * If the cord object wasn't initialized at thread start (cord_create()
@@ -897,6 +1178,72 @@ extern __thread struct cord *cord_ptr;
 
 #define fiber() cord()->fiber
 #define loop() (cord()->loop)
+
+/**
+ * Return true if the counters are on for the current fiber. It answers
+ * the same question as fiber_pmu_is_enabled() asked about the current
+ * fiber, but from a thread-local cache that is kept fresh at fiber
+ * switches, so it costs one read. Use it in the paths that count events.
+ */
+static inline bool
+fiber_pmu_is_enabled_for_self(void)
+{
+	return fiber_pmu_enabled;
+}
+
+/**
+ * Add a value to a counter of the current fiber and to the sums of the
+ * cord, if the counters are on.
+ */
+static inline void
+fiber_pmu_add(enum fiber_pmu_counter counter, uint64_t value)
+{
+	if (fiber_pmu_is_enabled_for_self()) {
+		struct cord *cord = cord();
+		cord->fiber->pmu.values[counter] += value;
+		cord->pmu.values[counter] += value;
+	}
+}
+
+/**
+ * Add the increment of the counter source of the current fiber of a cord
+ * to its counter.
+ */
+static inline void
+fiber_pmu_source_flush(struct cord *cord)
+{
+	struct fiber_pmu_source *source = &cord->fiber->pmu.source;
+	if (source->value == NULL)
+		return;
+	uint64_t value = *source->value;
+	fiber_pmu_add(source->counter, value - source->base);
+	source->base = value;
+}
+
+/**
+ * Make a value the counter source of the current fiber. The previous
+ * source is saved to `prev`. Call fiber_pmu_source_pop() with it
+ * before the value is freed.
+ */
+static inline void
+fiber_pmu_source_push(enum fiber_pmu_counter counter, const uint64_t *value,
+		      struct fiber_pmu_source *prev)
+{
+	struct fiber *fiber = fiber();
+	fiber_pmu_source_flush(cord());
+	*prev = fiber->pmu.source;
+	fiber->pmu.source.counter = counter;
+	fiber->pmu.source.value = value;
+	fiber->pmu.source.base = *value;
+}
+
+/** Remove the counter source of the current fiber, restore `prev`. */
+static inline void
+fiber_pmu_source_pop(const struct fiber_pmu_source *prev)
+{
+	fiber_pmu_source_flush(cord());
+	fiber()->pmu.source = *prev;
+}
 
 void
 cord_create(struct cord *cord, const char *name);

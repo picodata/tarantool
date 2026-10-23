@@ -254,6 +254,76 @@ signal_stack_free(void)
 
 static __thread bool fiber_top_enabled = false;
 
+__thread bool fiber_pmu_enabled = false;
+
+const char *fiber_pmu_counter_strs[fiber_pmu_counter_MAX] = {
+	[FIBER_PMU_CPU_INSTRUCTIONS] = "cpu_instructions",
+	[FIBER_PMU_VDBE_OPCODES] = "vdbe_opcodes",
+	[FIBER_PMU_ROWS_READ] = "rows_read",
+	[FIBER_PMU_ROWS_WRITTEN] = "rows_written",
+	[FIBER_PMU_ROWS_RETURNED] = "rows_returned",
+};
+
+/**
+ * Add the work that the current fiber did since the last sync to its
+ * counters. Call it before the current fiber changes or the counters are
+ * turned on or off for it.
+ */
+static inline void
+fiber_pmu_sync(struct cord *cord)
+{
+	fiber_pmu_source_flush(cord);
+	if (fiber_pmu_is_enabled_for_self() &&
+	    insn_counter_is_open(&cord->pmu.insn_counter)) {
+		uint64_t count = insn_counter_read(&cord->pmu.insn_counter);
+		fiber_pmu_add(FIBER_PMU_CPU_INSTRUCTIONS,
+			      count - cord->pmu.insn_count_last);
+		cord->pmu.insn_count_last = count;
+	}
+}
+
+/** Return the valid setting of the counters of a fiber of a cord. */
+static inline enum fiber_pmu_mode
+fiber_pmu_mode(const struct cord *cord, const struct fiber *fiber)
+{
+	if (fiber->pmu.gen != cord->pmu.gen)
+		return FIBER_PMU_DEFAULT;
+	return fiber->pmu.mode;
+}
+
+/** Set cord->pmu.active from the settings of the counters. */
+static inline void
+cord_pmu_active_update(struct cord *cord)
+{
+	cord->pmu.active = cord->pmu.enabled ||
+			       cord->pmu.on_count > 0;
+}
+
+/** Apply a change of the settings of the counters. */
+static void
+fiber_pmu_apply_settings(struct cord *cord);
+
+/**
+ * Make the counters track the fiber that starts to run: turn them on or
+ * off for it. If they are turned on, count its instructions from now.
+ */
+static inline void
+fiber_pmu_handle_switch(struct cord *cord)
+{
+	/* If no fiber can count, the counters are already off. */
+	if (likely(!cord->pmu.active)) {
+		fiber_pmu_enabled = false;
+		return;
+	}
+	bool was_enabled = fiber_pmu_enabled;
+	fiber_pmu_enabled = fiber_pmu_is_enabled(cord->fiber);
+	if (fiber_pmu_enabled && !was_enabled &&
+	    insn_counter_is_open(&cord->pmu.insn_counter)) {
+		cord->pmu.insn_count_last =
+			insn_counter_read(&cord->pmu.insn_counter);
+	}
+}
+
 #ifdef ENABLE_BACKTRACE
 #ifndef NDEBUG
 bool fiber_leak_backtrace_enable = true;
@@ -285,6 +355,8 @@ static inline void
 clock_set_on_csw(struct fiber *caller)
 {
 	caller->csw++;
+	assert(caller == cord()->fiber);
+	fiber_pmu_sync(cord());
 
 	if (!fiber_top_enabled)
 		return;
@@ -495,6 +567,7 @@ fiber_call_impl(struct fiber *callee)
 
 	caller->flags &= ~FIBER_IS_RUNNING;
 	cord->fiber = callee;
+	fiber_pmu_handle_switch(cord);
 	callee->flags = (callee->flags & ~FIBER_IS_READY) | FIBER_IS_RUNNING;
 
 	if (cord_is_main())
@@ -850,6 +923,7 @@ fiber_yield_impl(MAYBE_UNUSED bool will_switch_back)
 
 	caller->flags &= ~FIBER_IS_RUNNING;
 	cord->fiber = callee;
+	fiber_pmu_handle_switch(cord);
 	callee->flags = (callee->flags & ~FIBER_IS_READY) | FIBER_IS_RUNNING;
 
 	ASAN_START_SWITCH_FIBER(asan_state, will_switch_back, callee->stack,
@@ -1029,6 +1103,35 @@ fiber_self(void)
 	return fiber();
 }
 
+/**
+ * Remove the setting of the counters of a fiber that dies and stop the
+ * counters for it.
+ */
+static void
+fiber_pmu_forget(struct fiber *fiber)
+{
+	struct cord *cord = cord();
+	/*
+	 * Count the work of the current fiber before its counters stop or
+	 * the setting changes. A fiber that recycles itself adds its last
+	 * run to the sums of the cord here.
+	 */
+	fiber_pmu_sync(cord);
+	if (fiber_pmu_mode(cord, fiber) == FIBER_PMU_ON) {
+		cord->pmu.on_count--;
+		cord_pmu_active_update(cord);
+		fiber_pmu_apply_settings(cord);
+	}
+	/*
+	 * A fiber that recycles itself switches to another fiber after its
+	 * counters are reset. It must not count that run: the counts would
+	 * go to the next fiber that reuses the struct. And if the counters
+	 * are no longer active, no switch turns them off.
+	 */
+	if (fiber == cord->fiber)
+		fiber_pmu_enabled = false;
+}
+
 /** Common part of fiber_new() and fiber_recycle(). */
 static void
 fiber_reset(struct fiber *fiber)
@@ -1037,6 +1140,7 @@ fiber_reset(struct fiber *fiber)
 	rlist_create(&fiber->on_stop);
 	rlist_create(&fiber->on_destroy);
 	clock_stat_reset(&fiber->clock_stat);
+	memset(&fiber->pmu, 0, sizeof(fiber->pmu));
 }
 
 /** Destroy an active fiber and prepare it for reuse or delete it. */
@@ -1054,6 +1158,7 @@ fiber_recycle(struct fiber *fiber)
 	/* On destroy triggers are expected to remove themselves. */
 	assert(rlist_empty(&fiber->on_destroy));
 	fiber_stack_recycle(fiber);
+	fiber_pmu_forget(fiber);
 	fiber_reset(fiber);
 	fiber->name[0] = '\0';
 	fiber->f = NULL;
@@ -1061,6 +1166,7 @@ fiber_recycle(struct fiber *fiber)
 	memset(&fiber->storage, 0, sizeof(fiber->storage));
 	fiber->storage.lua.storage_ref = FIBER_LUA_NOREF;
 	fiber->storage.lua.fid_ref = FIBER_LUA_NOREF;
+	fiber->storage.lua.pmu_ref = FIBER_LUA_NOREF;
 	unregister_fid(fiber);
 	fiber->fid = 0;
 	fiber->gc_initial_size = 0;
@@ -1258,6 +1364,199 @@ fiber_csw(const struct fiber *fiber)
 	if (fiber == NULL)
 		fiber = fiber();
 	return fiber->csw;
+}
+
+/**
+ * Open or close the hardware counter of instructions of a cord as
+ * cord->pmu.active tells. If it cannot be opened, log the reason
+ * once and do not count the instructions.
+ */
+static void
+cord_insn_counter_update(struct cord *cord)
+{
+	bool is_needed = cord->pmu.active;
+	bool is_open = insn_counter_is_open(&cord->pmu.insn_counter);
+	if (is_needed && !is_open) {
+		if (cord->pmu.insn_failed)
+			return;
+		/* Keep the error of the caller. */
+		struct diag saved;
+		diag_create(&saved);
+		diag_move(diag_get(), &saved);
+		if (insn_counter_open(&cord->pmu.insn_counter) == 0) {
+			cord->pmu.insn_count_last =
+				insn_counter_read(&cord->pmu.insn_counter);
+			cord->pmu.insn_seen = true;
+		} else {
+			diag_log();
+			cord->pmu.insn_failed = true;
+		}
+		diag_move(&saved, diag_get());
+		diag_destroy(&saved);
+	} else if (!is_needed && is_open) {
+		insn_counter_close(&cord->pmu.insn_counter);
+	}
+}
+
+/**
+ * Open the counter of instructions again in the child of fork(). The
+ * counter of the parent does not count the child: on Linux the event
+ * counts the thread of the parent and its page is not inherited (the
+ * munmap() of a missing page does nothing), on macOS the counts of the
+ * thread start from zero.
+ */
+static void
+cord_pmu_atfork_child(void)
+{
+	/* cord() would create a cord in a thread that has none. */
+	struct cord *cord = cord_ptr;
+	if (cord == NULL || !insn_counter_is_open(&cord->pmu.insn_counter))
+		return;
+	insn_counter_close(&cord->pmu.insn_counter);
+	cord_insn_counter_update(cord);
+}
+
+/**
+ * Apply a change of the settings of the counters. Call
+ * fiber_pmu_sync() before the change.
+ */
+static void
+fiber_pmu_apply_settings(struct cord *cord)
+{
+	cord_insn_counter_update(cord);
+	fiber_pmu_handle_switch(cord);
+}
+
+/**
+ * Turn the counters on or off for all the fibers of the current cord and
+ * cancel the settings of single fibers.
+ */
+static void
+cord_pmu_set_enabled(bool enabled)
+{
+	struct cord *cord = cord();
+	/* Count the work of the current fiber before the change. */
+	fiber_pmu_sync(cord);
+	cord->pmu.enabled = enabled;
+	cord->pmu.on_count = 0;
+	cord_pmu_active_update(cord);
+	if (!enabled)
+		cord->pmu.insn_failed = false;
+	cord->pmu.gen++;
+	fiber_pmu_apply_settings(cord);
+}
+
+/** Change the setting of the counters of one fiber. */
+static void
+fiber_pmu_set_mode(struct fiber *fiber, enum fiber_pmu_mode mode)
+{
+	struct cord *cord = cord();
+	if (fiber == NULL)
+		fiber = cord->fiber;
+	enum fiber_pmu_mode old_mode = fiber_pmu_mode(cord, fiber);
+	if (old_mode == mode)
+		return;
+	/* Count the work of the current fiber before the change. */
+	fiber_pmu_sync(cord);
+	if (old_mode == FIBER_PMU_ON)
+		cord->pmu.on_count--;
+	if (mode == FIBER_PMU_ON)
+		cord->pmu.on_count++;
+	fiber->pmu.mode = mode;
+	fiber->pmu.gen = cord->pmu.gen;
+	cord_pmu_active_update(cord);
+	fiber_pmu_apply_settings(cord);
+}
+
+void
+cord_pmu_start(void)
+{
+	cord_pmu_set_enabled(true);
+}
+
+void
+cord_pmu_stop(void)
+{
+	cord_pmu_set_enabled(false);
+}
+
+void
+cord_pmu_reset(void)
+{
+	struct cord *cord = cord();
+	/* Count the work of the current fiber before the reset. */
+	fiber_pmu_sync(cord);
+	memset(cord->pmu.values, 0, sizeof(cord->pmu.values));
+}
+
+void
+fiber_pmu_start(struct fiber *fiber)
+{
+	fiber_pmu_set_mode(fiber, FIBER_PMU_ON);
+}
+
+void
+fiber_pmu_stop(struct fiber *fiber)
+{
+	fiber_pmu_set_mode(fiber, FIBER_PMU_OFF);
+}
+
+void
+fiber_pmu_reset(struct fiber *fiber)
+{
+	struct cord *cord = cord();
+	if (fiber == NULL)
+		fiber = cord->fiber;
+	/* Count the work of the current fiber before the reset. */
+	if (fiber == cord->fiber)
+		fiber_pmu_sync(cord);
+	memset(fiber->pmu.values, 0, sizeof(fiber->pmu.values));
+}
+
+bool
+cord_pmu_is_enabled(void)
+{
+	return cord()->pmu.enabled;
+}
+
+bool
+fiber_pmu_is_enabled(const struct fiber *fiber)
+{
+	const struct cord *cord = cord();
+	if (fiber == NULL)
+		fiber = cord->fiber;
+	/* The scheduler is not shown in fiber.info() and does no user work. */
+	if (fiber == &cord->sched)
+		return false;
+	enum fiber_pmu_mode mode = fiber_pmu_mode(cord, fiber);
+	if (mode == FIBER_PMU_DEFAULT)
+		return cord->pmu.enabled;
+	return mode == FIBER_PMU_ON;
+}
+
+size_t
+fiber_pmu_read(const struct fiber *fiber, uint64_t *values, size_t count)
+{
+	struct cord *cord = cord();
+	if (fiber == NULL || fiber == cord->fiber) {
+		/* Add what the current fiber did since it last yielded. */
+		fiber_pmu_sync(cord);
+		fiber = cord->fiber;
+	}
+	count = MIN(count, (size_t)fiber_pmu_counter_MAX);
+	memcpy(values, fiber->pmu.values, count * sizeof(*values));
+	return count;
+}
+
+size_t
+cord_pmu_read(uint64_t *values, size_t count)
+{
+	struct cord *cord = cord();
+	/* Add what the current fiber did since it last yielded. */
+	fiber_pmu_sync(cord);
+	count = MIN(count, (size_t)fiber_pmu_counter_MAX);
+	memcpy(values, cord->pmu.values, count * sizeof(*values));
+	return count;
 }
 
 static inline void *
@@ -1561,6 +1860,7 @@ fiber_new_ex(const char *name, const struct fiber_attr *fiber_attr,
 		memset(fiber, 0, sizeof(struct fiber));
 		fiber->storage.lua.storage_ref = FIBER_LUA_NOREF;
 		fiber->storage.lua.fid_ref = FIBER_LUA_NOREF;
+		fiber->storage.lua.pmu_ref = FIBER_LUA_NOREF;
 
 		if (fiber_stack_create(fiber, fiber_attr, &cord()->slabc)) {
 			mempool_free(&cord->fiber_mempool, fiber);
@@ -1850,6 +2150,10 @@ cord_create(struct cord *cord, const char *name)
 	cord->sched.max_slice = zero_slice;
 	cord->max_slice = default_slice;
 
+	memset(&cord->pmu, 0, sizeof(cord->pmu));
+	insn_counter_create(&cord->pmu.insn_counter);
+	fiber_pmu_enabled = false;
+
 	cord->next_fid = FIBER_ID_MAX_RESERVED + 1;
 	/*
 	 * No need to start this event since it's only used for
@@ -1932,6 +2236,7 @@ cord_destroy(struct cord *cord)
 	cord->sched.stack_size = 0;
 #endif
 	fiber_destroy(cord, &cord->sched);
+	insn_counter_close(&cord->pmu.insn_counter);
 	slab_cache_destroy(&cord->slabc);
 }
 
@@ -2281,6 +2586,7 @@ fiber_init(int (*invoke)(fiber_func f, va_list ap))
 		panic("can't init event loop");
 	cord_create(&main_cord, "main");
 	fiber_signal_init();
+	tt_pthread_atfork(NULL, NULL, cord_pmu_atfork_child);
 }
 
 void

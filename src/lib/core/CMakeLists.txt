@@ -5,6 +5,7 @@ set(core_sources
     memory.c
     clock.c
     fiber.c
+    insn_counter.c
     cxx_abi.cc
     backtrace.c
     cbus.c

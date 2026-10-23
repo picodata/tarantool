@@ -208,6 +208,11 @@ cord_ibuf_put
 cord_ibuf_take
 cord_is_main
 cord_is_main_dont_create
+cord_pmu_is_enabled
+cord_pmu_read
+cord_pmu_reset
+cord_pmu_start
+cord_pmu_stop
 cord_set_seed
 cord_slab_cache
 crc32_calc
@@ -269,6 +274,11 @@ fiber_join_timeout
 fiber_name
 fiber_new
 fiber_new_ex
+fiber_pmu_is_enabled
+fiber_pmu_read
+fiber_pmu_reset
+fiber_pmu_start
+fiber_pmu_stop
 fiber_reschedule
 fiber_self
 fiber_set_cancellable

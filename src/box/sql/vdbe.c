@@ -672,6 +672,17 @@ int sqlVdbeExec(Vdbe *p)
 	/* The time when the run of EXPLAIN ANALYZE stops, 0 if never. */
 	int64_t deadline = is_analyzed ? p->explain_data->deadline : 0;
 
+	/*
+	 * The fiber counts the opcodes from step_count. It adds them also
+	 * when the statement yields, so other fibers see them at once.
+	 */
+	struct fiber_pmu_source prev_pmu_source;
+	bool is_opcode_counted = fiber_pmu_is_enabled_for_self();
+	if (is_opcode_counted) {
+		fiber_pmu_source_push(FIBER_PMU_VDBE_OPCODES, &p->step_count,
+				      &prev_pmu_source);
+	}
+
 	int64_t start_time = 0;
 	if (vdbe_yield_cb) {
 		start_time = clock_monotonic64();
@@ -708,7 +719,6 @@ int sqlVdbeExec(Vdbe *p)
 		assert(rc == 0);
 
 		assert(pOp>=aOp && pOp<&aOp[p->nOp]);
-		p->step_count++;
 		if (is_analyzed) {
 			VdbeOpPerfStats *perf = &p->perf.ops[pOp - aOp];
 			if (is_counted)
@@ -721,8 +731,12 @@ int sqlVdbeExec(Vdbe *p)
 		/*
 		 * The point of preemption: the callback can yield or stop
 		 * the statement, and EXPLAIN ANALYZE checks its timeout.
+		 * step_count is the opcode counter of the fiber, so it grows
+		 * at the end of the loop and never goes back. The +1 keeps
+		 * this check from firing at step_count == 0, before the
+		 * first opcode runs.
 		 */
-		if (p->step_count % OPCODE_YIELD_COUNT == 0 &&
+		if ((p->step_count + 1) % OPCODE_YIELD_COUNT == 0 &&
 		    (vdbe_yield_cb != NULL || deadline > 0)) {
 			int64_t now = clock_monotonic64();
 			if (vdbe_yield_cb) {
@@ -739,7 +753,6 @@ int sqlVdbeExec(Vdbe *p)
 				 * instruction does not run. Stop here:
 				 * vdbe_explain_analyze() halts the statement.
 				 */
-				p->step_count--;
 				if (is_counted)
 					p->perf.ops[pOp - aOp].hit_count--;
 				p->explain_data->is_timed_out = true;
@@ -747,6 +760,7 @@ int sqlVdbeExec(Vdbe *p)
 				goto vdbe_return;
 			}
 		}
+		p->step_count++;
 		if (p->vdbe_max_steps > 0 &&
 		    p->vdbe_max_steps < p->step_count) {
 			diag_set(ClientError, ER_EXCEEDED_VDBE_MAX_STEPS,
@@ -5206,6 +5220,8 @@ abort_due_to_error:
 	/* This is the only way out of this procedure. */
 vdbe_return:
 	assert(rc == 0 || rc == -1 || rc == SQL_ROW || rc == SQL_DONE);
+	if (is_opcode_counted)
+		fiber_pmu_source_pop(&prev_pmu_source);
 	return rc;
 
 	/* Jump to here if a string or blob larger than SQL_MAX_LENGTH

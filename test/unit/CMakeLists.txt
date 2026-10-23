@@ -226,6 +226,10 @@ create_unit_test(PREFIX fiber
                  SOURCES fiber.cc core_test_utils.c
                  LIBRARIES core unit
 )
+create_unit_test(PREFIX fiber_pmu
+                 SOURCES fiber_pmu.c core_test_utils.c
+                 LIBRARIES core unit
+)
 
 if(NOT ${CMAKE_BUILD_TYPE} EQUAL "Release")
     create_unit_test(PREFIX fiber_stack

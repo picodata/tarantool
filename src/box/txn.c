@@ -309,6 +309,7 @@ txn_stmt_new(struct txn *txn)
 	stmt->engine_savepoint = NULL;
 	stmt->row = NULL;
 	stmt->has_triggers = false;
+	stmt->is_blind_write = false;
 	stmt->is_own_change = false;
 	return stmt;
 }
@@ -1048,6 +1049,35 @@ txn_add_limbo_entry(struct txn *txn, const struct journal_entry *req)
 	return txn_limbo_submit(&txn_limbo, origin_id, txn);
 }
 
+/**
+ * Return the number of rows that the statements wrote. They go to the
+ * counter of the fiber when the transaction commits, so a rollback does
+ * not count them. If the fiber stops waiting for the end, because the
+ * transaction is submitted or the fiber is cancelled while it waits for
+ * the quorum, they are counted then: the transaction can still roll
+ * back, but it ends without the fiber.
+ */
+static uint64_t
+txn_rows_written(struct txn *txn)
+{
+	if (!fiber_pmu_is_enabled_for_self())
+		return 0;
+	uint64_t count = 0;
+	struct txn_stmt *stmt;
+	/*
+	 * A delete or an update finds no tuple if there is no row with
+	 * the key, and it writes no row. A vinyl upsert or delete does not
+	 * set the tuples even when it writes: it writes a statement
+	 * blindly, so is_blind_write marks a written row. When vinyl looks
+	 * for the row and does not find it, it sets neither the tuples nor
+	 * the flag, so the row is not counted.
+	 */
+	stailq_foreach_entry(stmt, &txn->stmts, next)
+		count += stmt->old_tuple != NULL || stmt->new_tuple != NULL ||
+			stmt->is_blind_write;
+	return count;
+}
+
 static int
 txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 {
@@ -1056,6 +1086,7 @@ txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 	if (txn_prepare(txn) != 0)
 		goto rollback_abort;
 	if (txn_commit_nop(txn)) {
+		fiber_pmu_add(FIBER_PMU_ROWS_WRITTEN, txn_rows_written(txn));
 		txn_free(txn);
 		return 0;
 	}
@@ -1100,6 +1131,7 @@ txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 	if (wait_mode != TXN_COMMIT_WAIT_MODE_COMPLETE) {
 		if (txn_has_flag(txn, TXN_IS_DONE))
 			goto finish_done;
+		fiber_pmu_add(FIBER_PMU_ROWS_WRITTEN, txn_rows_written(txn));
 		txn->fiber = NULL;
 		return 0;
 	}
@@ -1115,6 +1147,11 @@ txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 		int rc = txn_limbo_wait_complete(&txn_limbo, limbo_entry);
 		if (rc < 0) {
 			if (fiber_is_cancelled()) {
+				/* A done one here is rolled back. */
+				if (!txn_has_flag(txn, TXN_IS_DONE)) {
+					fiber_pmu_add(FIBER_PMU_ROWS_WRITTEN,
+						      txn_rows_written(txn));
+				}
 				txn->fiber = NULL;
 				return -1;
 			} else {
@@ -1125,6 +1162,7 @@ txn_commit_impl(struct txn *txn, enum txn_commit_wait_mode wait_mode)
 finish_done:
 	assert(txn_has_flag(txn, TXN_IS_DONE));
 	assert(txn->signature >= 0);
+	fiber_pmu_add(FIBER_PMU_ROWS_WRITTEN, txn_rows_written(txn));
 	txn_free(txn);
 	return 0;
 

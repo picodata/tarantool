@@ -106,11 +106,16 @@ lbox_fiber_on_stop(struct trigger *trigger, void *event)
 	return 0;
 }
 
+/** Keep the pmu object of a fiber that dies. */
+static void
+lbox_fiber_pmu_finalize(struct fiber *f);
+
 /** Cleanup Lua fiber data when fiber is destroyed. */
 static int
 lbox_fiber_on_destroy(struct trigger *trigger, void *event)
 {
 	struct fiber *f = event;
+	lbox_fiber_pmu_finalize(f);
 	luaL_unref(tarantool_L, LUA_REGISTRYINDEX, f->storage.lua.fid_ref);
 	f->storage.lua.fid_ref = FIBER_LUA_NOREF;
 	trigger_clear(trigger);
@@ -180,6 +185,421 @@ lbox_fiber_id(struct lua_State *L)
 	return 1;
 }
 
+static const char *fiber_pmu_typename = "fiber.pmu";
+static const char *fiber_pmu_counter_typename = "fiber.pmu.counter";
+
+/**
+ * Lua object of the counters of a fiber or of the sums of the cord:
+ * fiber_object.pmu.counter or fiber.pmu.counter. It reads them when a
+ * field is read. When the fiber dies, it keeps the last values.
+ */
+struct lbox_pmu_counter {
+	/** Id of the fiber, 0 for the sums of the cord. */
+	uint64_t fid;
+	/** True if the fiber is dead and `values` are its last counters. */
+	bool is_final;
+	/** True if the hardware counted the instructions at least once. */
+	bool has_insn;
+	/** The last counters of a dead fiber. */
+	uint64_t values[fiber_pmu_counter_MAX];
+};
+
+/**
+ * Get the counters of a counter object into `values`. They are the last
+ * values, so zeroes if nothing was counted: the counters were off for
+ * the fiber, or the fiber is dead and its counters are not kept.
+ */
+static void
+lbox_pmu_counter_get(const struct lbox_pmu_counter *c, uint64_t *values,
+		     bool *has_insn)
+{
+	if (c->is_final) {
+		memcpy(values, c->values, sizeof(c->values));
+		*has_insn = c->has_insn;
+		return;
+	}
+	*has_insn = cord()->pmu.insn_seen;
+	if (c->fid == 0) {
+		cord_pmu_read(values, fiber_pmu_counter_MAX);
+		return;
+	}
+	struct fiber *f = fiber_find(c->fid);
+	if (f == NULL) {
+		memset(values, 0, fiber_pmu_counter_MAX * sizeof(*values));
+		return;
+	}
+	fiber_pmu_read(f, values, fiber_pmu_counter_MAX);
+}
+
+/**
+ * Tell if a counter is shown. The instructions are not shown until the
+ * hardware counts them.
+ */
+static inline bool
+lbox_pmu_counter_is_shown(int i, bool has_insn)
+{
+	return i != FIBER_PMU_CPU_INSTRUCTIONS || has_insn;
+}
+
+/** Push a table of the values of the counters. */
+static void
+lbox_pushpmu_values(struct lua_State *L, const uint64_t *values,
+		    bool has_insn)
+{
+	lua_createtable(L, 0, fiber_pmu_counter_MAX);
+	for (int i = 0; i < fiber_pmu_counter_MAX; i++) {
+		if (!lbox_pmu_counter_is_shown(i, has_insn))
+			continue;
+		lua_pushstring(L, fiber_pmu_counter_strs[i]);
+		luaL_pushuint64(L, values[i]);
+		lua_settable(L, -3);
+	}
+}
+
+/** Push a snapshot of a counter object: a table of the counters. */
+static void
+lbox_pmu_counter_push_snapshot(struct lua_State *L,
+			       const struct lbox_pmu_counter *c)
+{
+	uint64_t values[fiber_pmu_counter_MAX];
+	bool has_insn;
+	lbox_pmu_counter_get(c, values, &has_insn);
+	lbox_pushpmu_values(L, values, has_insn);
+}
+
+/** Read the counters of a fiber. Return true if all of them are zero. */
+static bool
+lbox_fiber_pmu_read_is_zero(struct fiber *f, uint64_t *values)
+{
+	fiber_pmu_read(f, values, fiber_pmu_counter_MAX);
+	for (int i = 0; i < fiber_pmu_counter_MAX; i++) {
+		if (values[i] != 0)
+			return false;
+	}
+	return true;
+}
+
+/**
+ * Push the pmu field of a fiber for fiber.info(): all the counters if at
+ * least one of them is not zero, none otherwise. Return true if the
+ * field is pushed.
+ */
+static bool
+lbox_fiber_pushpmu(struct lua_State *L, struct fiber *f)
+{
+	uint64_t values[fiber_pmu_counter_MAX];
+	if (lbox_fiber_pmu_read_is_zero(f, values))
+		return false;
+	lbox_pushpmu_values(L, values, cord()->pmu.insn_seen);
+	return true;
+}
+
+/** Push a new counter object of a fiber, or of the cord if `fid` is 0. */
+static struct lbox_pmu_counter *
+lbox_pmu_counter_new(struct lua_State *L, uint64_t fid)
+{
+	struct lbox_pmu_counter *c = lua_newuserdata(L, sizeof(*c));
+	memset(c, 0, sizeof(*c));
+	c->fid = fid;
+	luaL_getmetatable(L, fiber_pmu_counter_typename);
+	lua_setmetatable(L, -2);
+	return c;
+}
+
+/**
+ * Get a counter of a counter object. The CPU instructions are nil if
+ * the hardware never counted them. Other keys are looked up in the
+ * metatable, for example, __serialize.
+ */
+static int
+lbox_pmu_counter_index(struct lua_State *L)
+{
+	struct lbox_pmu_counter *c =
+		luaL_checkudata(L, 1, fiber_pmu_counter_typename);
+	const char *key = lua_tostring(L, 2);
+	if (key == NULL)
+		return 0;
+	int i = STRN2ENUM(fiber_pmu_counter, key, strlen(key));
+	if (i == fiber_pmu_counter_MAX) {
+		lua_getmetatable(L, 1);
+		lua_getfield(L, -1, key);
+		return 1;
+	}
+	uint64_t values[fiber_pmu_counter_MAX];
+	bool has_insn;
+	lbox_pmu_counter_get(c, values, &has_insn);
+	if (!lbox_pmu_counter_is_shown(i, has_insn))
+		return 0;
+	luaL_pushuint64(L, values[i]);
+	return 1;
+}
+
+/** Show a counter object as a snapshot of the counters. */
+static int
+lbox_pmu_counter_serialize(struct lua_State *L)
+{
+	struct lbox_pmu_counter *c =
+		luaL_checkudata(L, 1, fiber_pmu_counter_typename);
+	lbox_pmu_counter_push_snapshot(L, c);
+	return 1;
+}
+
+/** Start the counters for all the fibers of the current cord. */
+static int
+lbox_fiber_pmu_start(struct lua_State *L)
+{
+	if (lua_gettop(L) != 0)
+		luaL_error(L, "fiber.pmu.start(): bad arguments");
+	cord_pmu_start();
+	return 0;
+}
+
+/** Stop the counters for all the fibers of the current cord. */
+static int
+lbox_fiber_pmu_stop(struct lua_State *L)
+{
+	if (lua_gettop(L) != 0)
+		luaL_error(L, "fiber.pmu.stop(): bad arguments");
+	cord_pmu_stop();
+	return 0;
+}
+
+/** Tell if the counters are on for all the fibers of the cord. */
+static int
+lbox_fiber_pmu_is_enabled(struct lua_State *L)
+{
+	if (lua_gettop(L) != 0)
+		luaL_error(L, "fiber.pmu.is_enabled(): bad arguments");
+	lua_pushboolean(L, cord_pmu_is_enabled());
+	return 1;
+}
+
+/** Reset the sums of the counters of all the fibers of the cord. */
+static int
+lbox_fiber_pmu_reset(struct lua_State *L)
+{
+	if (lua_gettop(L) != 0)
+		luaL_error(L, "fiber.pmu.reset(): bad arguments");
+	cord_pmu_reset();
+	return 0;
+}
+
+/**
+ * Get a snapshot of fiber.pmu.counter, the sums of the counters of all
+ * the fibers of the current cord: fiber.pmu.read(). The values are
+ * zeroes if the counters are off for all the fibers.
+ */
+static int
+lbox_fiber_pmu_read(struct lua_State *L)
+{
+	if (lua_gettop(L) != 0)
+		luaL_error(L, "fiber.pmu.read(): bad arguments");
+	struct lbox_pmu_counter c = {.fid = 0};
+	lbox_pmu_counter_push_snapshot(L, &c);
+	return 1;
+}
+
+/**
+ * The key in the registry of the table from a fiber object to the pmu
+ * object of its dead fiber. Its keys are weak, so the pmu object lives
+ * as long as the fiber object.
+ */
+static const char *fiber_pmu_dead_key = "fiber.pmu.dead";
+
+/**
+ * Push a new pmu object of a fiber. It keeps the counter object of the
+ * fiber in its environment.
+ */
+static struct lbox_pmu_counter *
+lbox_fiber_pmu_new(struct lua_State *L, uint64_t fid)
+{
+	lua_newuserdata(L, 0);
+	luaL_getmetatable(L, fiber_pmu_typename);
+	lua_setmetatable(L, -2);
+	lua_createtable(L, 0, 1);
+	struct lbox_pmu_counter *c = lbox_pmu_counter_new(L, fid);
+	lua_setfield(L, -2, "counter");
+	lua_setfenv(L, -2);
+	return c;
+}
+
+/** Return the counter object of the pmu object at the given index. */
+static struct lbox_pmu_counter *
+lbox_fiber_pmu_counter(struct lua_State *L, int index)
+{
+	lua_getfenv(L, index);
+	lua_getfield(L, -1, "counter");
+	struct lbox_pmu_counter *c = lua_touserdata(L, -1);
+	lua_pop(L, 2);
+	return c;
+}
+
+/**
+ * Push the pmu object of the fiber object at index 1: f.pmu. It is
+ * created once for a fiber. While the fiber is alive, the fiber keeps
+ * it. When the fiber dies, the fiber object keeps it, with the last
+ * counters.
+ */
+static int
+lbox_fiber_pmu_object(struct lua_State *L)
+{
+	uint64_t fid = lbox_checkfiberid(L, 1);
+	struct fiber *f = fiber_find(fid);
+	if (f == NULL) {
+		lua_getfield(L, LUA_REGISTRYINDEX, fiber_pmu_dead_key);
+		lua_pushvalue(L, 1);
+		lua_rawget(L, -2);
+		if (lua_isnil(L, -1))
+			luaL_error(L, "the fiber is dead");
+		return 1;
+	}
+	/* A live fiber that Lua sees has the trigger of its fiber object. */
+	assert(f->storage.lua.fid_ref != FIBER_LUA_NOREF);
+	if (f->storage.lua.pmu_ref == FIBER_LUA_NOREF) {
+		lbox_fiber_pmu_new(L, fid);
+		f->storage.lua.pmu_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	}
+	lua_rawgeti(L, LUA_REGISTRYINDEX, f->storage.lua.pmu_ref);
+	return 1;
+}
+
+/**
+ * Keep the last counters of a fiber that dies in its pmu object, and
+ * keep the pmu object for its fiber object. The pmu object is created if
+ * the fiber has none. Runs in lua_cpcall().
+ */
+static int
+lbox_fiber_pmu_finalize_f(struct lua_State *L)
+{
+	struct fiber *f = lua_touserdata(L, 1);
+	struct lbox_pmu_counter *c;
+	if (f->storage.lua.pmu_ref != FIBER_LUA_NOREF) {
+		lua_rawgeti(L, LUA_REGISTRYINDEX, f->storage.lua.pmu_ref);
+		c = lbox_fiber_pmu_counter(L, -1);
+	} else {
+		c = lbox_fiber_pmu_new(L, f->fid);
+	}
+	/* It adds the last run if the fiber recycles itself. */
+	fiber_pmu_read(f, c->values, fiber_pmu_counter_MAX);
+	c->has_insn = cord()->pmu.insn_seen;
+	c->is_final = true;
+	lua_getfield(L, LUA_REGISTRYINDEX, fiber_pmu_dead_key);
+	lua_rawgeti(L, LUA_REGISTRYINDEX, f->storage.lua.fid_ref);
+	lua_pushvalue(L, -3);
+	lua_rawset(L, -3);
+	return 0;
+}
+
+/** Keep the pmu object of a fiber that dies, see the function above. */
+static void
+lbox_fiber_pmu_finalize(struct fiber *f)
+{
+	/*
+	 * The counters of a dying fiber are kept if the fiber has a pmu
+	 * object, the counters are on for it or it counted something
+	 * before they were turned off.
+	 */
+	uint64_t values[fiber_pmu_counter_MAX];
+	if (f->storage.lua.pmu_ref == FIBER_LUA_NOREF &&
+	    !fiber_pmu_is_enabled(f) && lbox_fiber_pmu_read_is_zero(f, values))
+		return;
+	struct lua_State *L = tarantool_L;
+	int top = lua_gettop(L);
+	/* An error must not replace the diag of the current fiber. */
+	if (lua_cpcall(L, lbox_fiber_pmu_finalize_f, f) != 0) {
+		say_error("failed to keep the counters of a dead fiber: %s",
+			  lua_tostring(L, -1));
+	}
+	lua_settop(L, top);
+	luaL_unref(L, LUA_REGISTRYINDEX, f->storage.lua.pmu_ref);
+	f->storage.lua.pmu_ref = FIBER_LUA_NOREF;
+}
+
+/** Return the fiber of the pmu object at index 1, or raise an error. */
+static struct fiber *
+lbox_fiber_pmu_checkfiber(struct lua_State *L)
+{
+	struct fiber *f = fiber_find(lbox_fiber_pmu_counter(L, 1)->fid);
+	if (f == NULL)
+		luaL_error(L, "the fiber is dead");
+	return f;
+}
+
+/** Check the arguments of a method of a pmu object, or raise an error. */
+static void
+lbox_fiber_pmu_checkargs(struct lua_State *L, const char *name)
+{
+	if (lua_gettop(L) != 1 ||
+	    luaL_testudata(L, 1, fiber_pmu_typename) == NULL)
+		luaL_error(L, "fiber_object.pmu:%s(): bad arguments", name);
+}
+
+/** Start the counters for one fiber: f.pmu:start(). */
+static int
+lbox_fiber_pmu_object_start(struct lua_State *L)
+{
+	lbox_fiber_pmu_checkargs(L, "start");
+	fiber_pmu_start(lbox_fiber_pmu_checkfiber(L));
+	return 0;
+}
+
+/** Stop the counters for one fiber: f.pmu:stop(). */
+static int
+lbox_fiber_pmu_object_stop(struct lua_State *L)
+{
+	lbox_fiber_pmu_checkargs(L, "stop");
+	fiber_pmu_stop(lbox_fiber_pmu_checkfiber(L));
+	return 0;
+}
+
+/** Reset the counters of one fiber: f.pmu:reset(). */
+static int
+lbox_fiber_pmu_object_reset(struct lua_State *L)
+{
+	lbox_fiber_pmu_checkargs(L, "reset");
+	fiber_pmu_reset(lbox_fiber_pmu_checkfiber(L));
+	return 0;
+}
+
+/** Tell if the counters are on for one fiber: f.pmu:is_enabled(). */
+static int
+lbox_fiber_pmu_object_is_enabled(struct lua_State *L)
+{
+	lbox_fiber_pmu_checkargs(L, "is_enabled");
+	struct fiber *f = lbox_fiber_pmu_checkfiber(L);
+	lua_pushboolean(L, fiber_pmu_is_enabled(f));
+	return 1;
+}
+
+/**
+ * Get a snapshot of f.pmu.counter: f.pmu:read(). The values are zeroes
+ * if the counters are off for the fiber and it counted nothing. After
+ * the fiber dies, it is the last counters of the fiber.
+ */
+static int
+lbox_fiber_pmu_object_read(struct lua_State *L)
+{
+	lbox_fiber_pmu_checkargs(L, "read");
+	lbox_pmu_counter_push_snapshot(L, lbox_fiber_pmu_counter(L, 1));
+	return 1;
+}
+
+/** Get a field of a pmu object: the counters or a method. */
+static int
+lbox_fiber_pmu_object_index(struct lua_State *L)
+{
+	const char *key = lua_tostring(L, 2);
+	if (key != NULL && strcmp(key, "counter") == 0) {
+		lua_getfenv(L, 1);
+		lua_getfield(L, -1, "counter");
+		return 1;
+	}
+	lua_getmetatable(L, 1);
+	lua_pushvalue(L, 2);
+	lua_rawget(L, -2);
+	return 1;
+}
+
 static int
 lbox_fiber_statof_map(struct fiber *f, void *cb_ctx, bool backtrace)
 {
@@ -229,6 +649,15 @@ lbox_fiber_statof_map(struct fiber *f, void *cb_ctx, bool backtrace)
 		       sizeof(struct fiber));
 	lua_settable(L, -3);
 	lua_settable(L, -3);
+
+	/* The fiber shows all the counters if at least one of them is not
+	 * zero, also when the counters are stopped.
+	 */
+	lua_pushliteral(L, "pmu");
+	if (lbox_fiber_pushpmu(L, f))
+		lua_settable(L, -3);
+	else
+		lua_pop(L, 1);
 
 	if (backtrace) {
 #ifdef ENABLE_BACKTRACE
@@ -670,6 +1099,8 @@ lbox_fiber_index(struct lua_State *L)
 		return 0;
 	if (lua_isstring(L, 2) && strcmp(lua_tostring(L, 2), "storage") == 0)
 		return lbox_fiber_storage(L);
+	if (lua_isstring(L, 2) && strcmp(lua_tostring(L, 2), "pmu") == 0)
+		return lbox_fiber_pmu_object(L);
 
 	/* Get value from metatable */
 	lua_getmetatable(L, 1);
@@ -1036,12 +1467,52 @@ static const struct luaL_Reg fiberlib[] = {
 	{NULL, NULL}
 };
 
+static const struct luaL_Reg fiber_pmu_lib[] = {
+	{"start", lbox_fiber_pmu_start},
+	{"stop", lbox_fiber_pmu_stop},
+	{"is_enabled", lbox_fiber_pmu_is_enabled},
+	{"reset", lbox_fiber_pmu_reset},
+	{"read", lbox_fiber_pmu_read},
+	{NULL, NULL}
+};
+
+static const struct luaL_Reg lbox_fiber_pmu_meta[] = {
+	{"start", lbox_fiber_pmu_object_start},
+	{"stop", lbox_fiber_pmu_object_stop},
+	{"is_enabled", lbox_fiber_pmu_object_is_enabled},
+	{"reset", lbox_fiber_pmu_object_reset},
+	{"read", lbox_fiber_pmu_object_read},
+	{"__index", lbox_fiber_pmu_object_index},
+	{NULL, NULL}
+};
+
+static const struct luaL_Reg lbox_pmu_counter_meta[] = {
+	{"__index", lbox_pmu_counter_index},
+	{"__serialize", lbox_pmu_counter_serialize},
+	{NULL, NULL}
+};
+
 void
 tarantool_lua_fiber_init(struct lua_State *L)
 {
 	luaT_newmodule(L, fiberlib_name, fiberlib);
+	lua_newtable(L);
+	luaL_register_type(L, fiber_pmu_counter_typename,
+			   lbox_pmu_counter_meta);
+	luaL_setfuncs(L, fiber_pmu_lib, 0);
+	lbox_pmu_counter_new(L, 0);
+	lua_setfield(L, -2, "counter");
+	lua_setfield(L, -2, "pmu");
 	lua_pop(L, 1);
 	luaL_register_type(L, fiberlib_name, lbox_fiber_meta);
+	luaL_register_type(L, fiber_pmu_typename, lbox_fiber_pmu_meta);
+	/* The pmu objects of the dead fibers, by their fiber objects. */
+	lua_newtable(L);
+	lua_createtable(L, 0, 1);
+	lua_pushliteral(L, "k");
+	lua_setfield(L, -2, "__mode");
+	lua_setmetatable(L, -2);
+	lua_setfield(L, LUA_REGISTRYINDEX, fiber_pmu_dead_key);
 }
 
 /*

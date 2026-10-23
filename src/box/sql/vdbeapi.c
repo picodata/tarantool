@@ -280,6 +280,8 @@ sqlStep(Vdbe * p)
 		db->nVdbeExec++;
 		rc = sqlVdbeExec(p);
 		db->nVdbeExec--;
+		if (rc == SQL_ROW)
+			fiber_pmu_add(FIBER_PMU_ROWS_RETURNED, 1);
 	}
 
 	/* If the statement completed successfully, invoke the profile callback */

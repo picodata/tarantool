@@ -1843,6 +1843,7 @@ vy_delete(struct vy_env *env, struct vy_tx *tx, struct txn_stmt *stmt,
 		if (space->index_count > 1)
 			vy_stmt_add_flag(delete, VY_STMT_DEFERRED_DELETE);
 		vy_lsm_probe_blind_write(pk, delete);
+		stmt->is_blind_write = true;
 		rc = vy_tx_set(tx, pk, delete);
 	}
 	tuple_unref(delete);
@@ -2202,8 +2203,10 @@ vy_upsert(struct vy_env *env, struct vy_tx *tx, struct txn_stmt *stmt,
 		return -1;
 
 	if (space->index_count == 1 && rlist_empty(&space->on_replace) &&
-	    !space->has_foreign_keys && space->wal_ext == NULL)
+	    !space->has_foreign_keys && space->wal_ext == NULL) {
+		stmt->is_blind_write = true;
 		return vy_lsm_upsert(tx, pk, tuple, tuple_end, ops, ops_end);
+	}
 
 	const char *old_tuple, *old_tuple_end;
 	const char *new_tuple, *new_tuple_end;

@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include "fiber.h"
 #include "space.h"
 #include "space_upgrade.h"
 #include "trivia/util.h"
@@ -50,14 +51,16 @@ static inline void
 result_process_perform(struct result_processor *p, int *rc,
 		       struct tuple **result)
 {
-	if (likely(p->upgrade == NULL))
-		return;
-	if (*rc == 0 && *result != NULL) {
-		*result = space_upgrade_apply(p->upgrade, *result);
-		if (*result == NULL)
-			*rc = -1;
+	if (unlikely(p->upgrade != NULL)) {
+		if (*rc == 0 && *result != NULL) {
+			*result = space_upgrade_apply(p->upgrade, *result);
+			if (*result == NULL)
+				*rc = -1;
+		}
+		space_upgrade_unref(p->upgrade);
 	}
-	space_upgrade_unref(p->upgrade);
+	if (*rc == 0 && *result != NULL)
+		fiber_pmu_add(FIBER_PMU_ROWS_READ, 1);
 }
 
 /**
@@ -67,6 +70,9 @@ result_process_perform(struct result_processor *p, int *rc,
  *   struct result_processor res_proc;
  *   result_process_prepare(&res_proc, space);
  *   result_process_perform(&res_proc, &rc, &tuple);
+ *
+ * except that it does not count a row read: it is for the results of
+ * DML requests, and the rows that they find are not reads.
  */
 static inline struct tuple *
 result_process(struct space *space, struct tuple *tuple)

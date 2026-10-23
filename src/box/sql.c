@@ -628,6 +628,7 @@ int tarantoolsqlClearTable(struct space *space, uint32_t *tuple_count)
 	if (iter == NULL)
 		return -1;
 	while (iterator_next(iter, &tuple) == 0 && tuple != NULL) {
+		fiber_pmu_add(FIBER_PMU_ROWS_READ, 1);
 		size_t region_svp = region_used(&fiber()->gc);
 		request.key = tuple_extract_key(tuple, pk->def->key_def,
 						MULTIKEY_NONE, &key_size);
@@ -965,6 +966,8 @@ cursor_advance(BtCursor *pCur, int *pRes)
 		box_tuple_unref(pCur->last_tuple);
 	if (tuple) {
 		box_tuple_ref(tuple);
+		if ((pCur->curFlags & BTCF_TEphemCursor) == 0)
+			fiber_pmu_add(FIBER_PMU_ROWS_READ, 1);
 		*pRes = 0;
 	} else {
 		pCur->eState = CURSOR_INVALID;
