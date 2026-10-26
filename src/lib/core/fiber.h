@@ -507,10 +507,17 @@ fiber_csw(const struct fiber *fiber);
  */
 enum fiber_pmu_counter {
 	/**
-	 * CPU instructions executed in user space. It uses a hardware
-	 * performance counter of Linux, which can be unavailable, for
-	 * example, in a virtual machine or in a container that blocks the
-	 * perf_event_open() system call. Then it is not counted.
+	 * CPU instructions executed by the fiber. On Linux it uses a
+	 * hardware performance counter (perf_event) and counts only user
+	 * space. The counter can be unavailable, for example, in a virtual
+	 * machine or in a container that blocks the perf_event_open()
+	 * system call. If the counter cannot be read in user space (with
+	 * rdpmc on x86), for example, on ARM or if a virtual machine does
+	 * not allow it, each run of a fiber reads it with a system call.
+	 * On macOS it uses the counters of the thread
+	 * (thread_selfcounts()), which count the kernel too, so each run
+	 * of a fiber also counts about one system call that reads the
+	 * counter. On other systems it is not counted.
 	 */
 	FIBER_PMU_CPU_INSTRUCTIONS = 0,
 	/** VDBE opcodes executed by SQL statements. */

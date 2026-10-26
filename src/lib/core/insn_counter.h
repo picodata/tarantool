@@ -6,8 +6,10 @@
 #pragma once
 
 /**
- * Counter of the CPU instructions that the current thread executes in
- * user space. It uses a hardware performance counter (Linux perf_event).
+ * Counter of the CPU instructions that the current thread executes.
+ * On Linux it uses a hardware performance counter (perf_event) and
+ * counts only user space. On macOS it uses the counters of the thread
+ * (thread_selfcounts()), which count the kernel too.
  * Not thread-safe: open, read and close the counter in one thread.
  */
 
@@ -17,6 +19,8 @@
 #if __cplusplus
 extern "C" {
 #endif
+
+#if defined(__linux__)
 
 struct perf_event_mmap_page;
 
@@ -64,6 +68,37 @@ struct insn_counter {
 	int event_count;
 };
 
+/** Return true if the counter is open. */
+static inline bool
+insn_counter_is_open(const struct insn_counter *counter)
+{
+	return counter->event_count > 0;
+}
+
+#else /* !defined(__linux__) */
+
+/**
+ * Counter of the CPU instructions of one thread, which reads the
+ * counter of the system.
+ */
+struct insn_counter {
+	/** The value of the counter of the system when it was opened. */
+	uint64_t base;
+	/** The last value read from the counter of the system. */
+	uint64_t value;
+	/** True if the counter is open. */
+	bool is_open;
+};
+
+/** Return true if the counter is open. */
+static inline bool
+insn_counter_is_open(const struct insn_counter *counter)
+{
+	return counter->is_open;
+}
+
+#endif /* !defined(__linux__) */
+
 /** Initialize a closed counter. */
 void
 insn_counter_create(struct insn_counter *counter);
@@ -84,7 +119,7 @@ insn_counter_close(struct insn_counter *counter);
 /**
  * Open the counter with one event for each PMU type in `types`. If
  * `count` is 0, open one event that the kernel puts on the default PMU.
- * For tests, use insn_counter_open() in other code.
+ * For tests, use insn_counter_open() in other code. Only on Linux.
  */
 int
 insn_counter_open_pmus(struct insn_counter *counter, const uint32_t *types,
@@ -95,24 +130,17 @@ insn_counter_open_pmus(struct insn_counter *counter, const uint32_t *types,
  * /sys/bus/event_source/devices. Write their perf types to `types`.
  * Return the number of the PMUs. If there are more than `max`, return
  * max + 1 and write only `max` of them. Return -1 and keep errno if the
- * directory cannot be read. For tests.
+ * directory cannot be read. For tests. Only on Linux.
  */
 int
 insn_counter_find_core_pmus(const char *dir, uint32_t *types, int max);
 
-/** The directory of the PMUs in sysfs. Tests change it. */
+/** The directory of the PMUs in sysfs. Tests change it. Only on Linux. */
 extern const char *insn_counter_pmu_dir;
-
-/** Return true if the counter is open. */
-static inline bool
-insn_counter_is_open(const struct insn_counter *counter)
-{
-	return counter->event_count > 0;
-}
 
 /**
  * Return the number of instructions that the current thread has
- * executed in user space since the counter was opened.
+ * executed since the counter was opened.
  * The counter must be open.
  */
 uint64_t

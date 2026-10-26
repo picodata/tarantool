@@ -1,10 +1,12 @@
 ## feature/fiber
 
-* Added per-fiber counters of the CPU instructions in user space, the VDBE
-  opcodes and the rows read, written and returned. The rows returned count
-  every SQL statement of the fiber, even the internal ones, for example,
-  the statements of expression constraints. If other pinned perf events
-  take all the hardware counters, the instructions are not counted.
+* Added per-fiber counters of the CPU instructions, the VDBE opcodes and the
+  rows read, written and returned. The rows returned count every SQL
+  statement of the fiber, even the internal ones, for example, the
+  statements of expression constraints. On Linux the instructions are
+  counted in user space, on macOS in user space and in the kernel. On Linux,
+  if other pinned perf events take all the hardware counters, the
+  instructions are not counted.
 * `fiber.pmu.start()` and `fiber.pmu.stop()` turn the counters on and off
   for all the fibers, `fiber_object.pmu:start()` and
   `fiber_object.pmu:stop()` for one fiber. `fiber.pmu.is_enabled()` and

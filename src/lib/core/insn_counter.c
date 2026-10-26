@@ -28,13 +28,13 @@
 #include "trivia/util.h"
 #endif
 
+#if defined(__linux__)
+
 void
 insn_counter_create(struct insn_counter *counter)
 {
 	counter->event_count = 0;
 }
-
-#if defined(__linux__)
 
 #if defined(__x86_64__) || defined(__i386__)
 #include <cpuid.h>
@@ -348,6 +348,14 @@ insn_counter_read(struct insn_counter *counter)
 
 #else /* !defined(__linux__) */
 
+void
+insn_counter_create(struct insn_counter *counter)
+{
+	counter->base = 0;
+	counter->value = 0;
+	counter->is_open = false;
+}
+
 int
 insn_counter_find_core_pmus(const char *dir, uint32_t *types, int max)
 {
@@ -365,21 +373,101 @@ insn_counter_open_pmus(struct insn_counter *counter, const uint32_t *types,
 	(void)types;
 	(void)count;
 	errno = ENOTSUP;
-	diag_set(SystemError, "CPU instruction counting is supported "
-		 "only on Linux");
+	diag_set(SystemError, "perf events of PMUs are supported only on "
+		 "Linux");
 	return -1;
-}
-
-int
-insn_counter_open(struct insn_counter *counter)
-{
-	return insn_counter_open_pmus(counter, NULL, 0);
 }
 
 void
 insn_counter_close(struct insn_counter *counter)
 {
+	counter->is_open = false;
+}
+
+#if defined(__APPLE__)
+
+/**
+ * The performance counters of the current thread since its start, from
+ * XNU. It is not in the public headers, see bsd/sys/resource_private.h.
+ */
+extern int
+thread_selfcounts(int kind, void *buf, size_t size);
+
+/** The kind of thread_selfcounts() that gives struct thsc_cpi. */
+enum { THSC_CPI = 1 };
+
+/** The counters of THSC_CPI, the same on all the architectures. */
+struct thsc_cpi {
+	/** The instructions executed by the thread. */
+	uint64_t tcpi_instructions;
+	/** The CPU cycles of the thread. */
+	uint64_t tcpi_cycles;
+};
+
+/**
+ * Read the counter of the instructions of the thread from the system.
+ * Return 0 on success, -1 and keep errno on failure. It does not set
+ * diag: a read at a context switch must not replace the error of the
+ * fiber.
+ */
+static int
+insn_counter_read_system(uint64_t *value)
+{
+	struct thsc_cpi counts;
+	if (thread_selfcounts(THSC_CPI, &counts, sizeof(counts)) != 0)
+		return -1;
+	*value = counts.tcpi_instructions;
+	return 0;
+}
+
+int
+insn_counter_open(struct insn_counter *counter)
+{
+	assert(!insn_counter_is_open(counter));
+	uint64_t value;
+	if (insn_counter_read_system(&value) != 0) {
+		diag_set(SystemError, "failed to read the CPU instructions "
+			 "of the thread");
+		return -1;
+	}
+	/*
+	 * The thread has executed instructions since its start, so 0
+	 * means that the system does not count them, for example, in a
+	 * virtual machine.
+	 */
+	if (value == 0) {
+		errno = ENOTSUP;
+		diag_set(SystemError, "the system does not count the CPU "
+			 "instructions of the thread");
+		return -1;
+	}
+	counter->base = value;
+	counter->value = value;
+	counter->is_open = true;
+	return 0;
+}
+
+uint64_t
+insn_counter_read(struct insn_counter *counter)
+{
+	assert(insn_counter_is_open(counter));
+	/* Keep the last value if the read fails, so it does not go back. */
+	uint64_t value;
+	if (insn_counter_read_system(&value) == 0)
+		counter->value = value;
+	return counter->value - counter->base;
+}
+
+#else /* !defined(__APPLE__) */
+
+int
+insn_counter_open(struct insn_counter *counter)
+{
 	(void)counter;
+	errno = ENOTSUP;
+	diag_set(SystemError, "CPU instruction counting is not supported "
+		 "on this system");
+	return -1;
 }
 
 uint64_t
@@ -389,5 +477,7 @@ insn_counter_read(struct insn_counter *counter)
 	unreachable();
 	return 0;
 }
+
+#endif /* !defined(__APPLE__) */
 
 #endif /* !defined(__linux__) */
