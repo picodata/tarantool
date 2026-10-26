@@ -360,8 +360,15 @@ txn_limbo_submit(struct txn_limbo *limbo, uint32_t id, struct txn *txn)
 	 * stops all the other appliers too, so the PROMOTE loses its quorum
 	 * and this instance never learns the tail it would need to win the
 	 * next election.
+	 *
+	 * Fully local transactions are never replicated, so the change of
+	 * hands doesn't concern them, and the owner check below lets them in
+	 * whoever owns the queue. Such a transaction only waits behind the
+	 * ones already in the queue and shares their fate once the PROMOTE
+	 * is applied.
 	 */
-	if (id == instance_id && txn_limbo_is_trying_to_promote(limbo)) {
+	if (id == instance_id && txn_limbo_is_trying_to_promote(limbo) &&
+	    !txn_is_fully_local(txn)) {
 		diag_set(ClientError, ER_SYNC_QUEUE_UNCLAIMED);
 		return -1;
 	}
