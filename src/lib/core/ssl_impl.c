@@ -404,6 +404,7 @@ ssl_iostream_destroy(struct iostream *io)
 		 * one: this function is called from cbus handlers in the
 		 * IPROTO thread, which must not yield.
 		 */
+		ERR_clear_error();
 		int ret = SSL_shutdown(ssl);
 		if (ret < 0) {
 			int ssl_error = SSL_get_error(ssl, ret);

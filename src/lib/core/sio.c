@@ -37,6 +37,7 @@
 #include <netinet/in.h> /* TCP_NODELAY */
 #include <netinet/tcp.h> /* TCP_NODELAY */
 #include <arpa/inet.h>
+#include <openssl/err.h>
 #include "say.h"
 #include "tt_static.h"
 #include "exception.h"
@@ -389,6 +390,7 @@ sio_read(int fd, void *buf, size_t count)
 int
 ssl_sio_read(SSL *ssl, int fd, void *buf, size_t count)
 {
+	ERR_clear_error();
 	int n = SSL_read(ssl, buf, (int)count);
 	if (n <= 0 && !ssl_read_is_want_error(ssl, n))
 		diag_set(SocketError, sio_socketname(fd), "ssl_read(%zd)",
@@ -411,6 +413,7 @@ int
 ssl_sio_write(SSL *ssl, int fd, const void *buf, size_t count)
 {
 	assert(count);
+	ERR_clear_error();
 	int n = SSL_write(ssl, buf, (int)count);
 	if (n <= 0 && !ssl_write_is_want_error(ssl, n))
 		diag_set(SocketError, sio_socketname(fd), "ssl_write(%zd)",
