@@ -18,7 +18,6 @@
 #include "iostream.h"
 #include "ssl_init.h"
 #include "sio.h"
-#include "coio.h"
 #include "uri/uri.h"
 #include "tt_static.h"
 #include "ssl_error.h"
@@ -393,63 +392,32 @@ ssl_iostream_destroy(struct iostream *io)
 	SSL *ssl = (SSL *)io->data;
 
 	/*
-	 * two checks here:
-	 * 1) check SSL_IOSTREAM_SESSION_READY flag, this will prevent
-	 * from calling coio_* functions from non-coio thread (iproto)
-	 * 2) check !SSL_IOSTREAM_POISON, according too documentation,
-	 * SSL_shutdown function mustn't be called
-	 * if a previous fatal error has occurred on a connection
+	 * According to the documentation SSL_shutdown mustn't be called if a
+	 * previous fatal error has occurred on the connection. And there's
+	 * nothing to shut down if the session was never established.
 	 */
 	bool do_shutdown = (io->flags & SSL_IOSTREAM_SESSION_READY) &&
 			   !(io->flags & SSL_SHUTDOWN_MUST_NOT_BE_CALLED);
 	if (do_shutdown) {
-		while (true) {
-			int ret = SSL_shutdown(ssl);
-			if (ret == 1)
-				break;
-			if (ret == 0)
-				continue;
-
+		/*
+		 * Send our close_notify only and don't wait for the peer's
+		 * one: this function is called from cbus handlers in the
+		 * IPROTO thread, which must not yield.
+		 */
+		int ret = SSL_shutdown(ssl);
+		if (ret < 0) {
 			int ssl_error = SSL_get_error(ssl, ret);
-			/*
-			 * The fiber may have already been cancelled when
-			 * we attempt to shutdown the SSL connection.
-			 * For example, `applier_disconnect` might be
-			 * called after the `applier` fiber has been
-			 * cancelled.
-			 * In this case, perform a unidirectional
-			 * SSL_shutdown only.
-			 */
-			switch (ssl_error) {
-			case SSL_ERROR_WANT_READ:
-				if (fiber_is_cancelled()) {
-					say_warn_ratelimited(
-						"SSL_shutdown: fiber is cancelled, "
-						"cannot perform bidirectional SSL_shutdown");
-					goto free;
-				}
-				coio_wait(io->fd, COIO_READ, 1);
-				break;
-			case SSL_ERROR_WANT_WRITE:
-				if (fiber_is_cancelled()) {
-					say_warn_ratelimited(
-						"SSL_shutdown: fiber is cancelled, "
-						"cannot perform bidirectional SSL_shutdown");
-					goto free;
-				}
-				coio_wait(io->fd, COIO_WRITE, 1);
-				break;
-			default:
-			{
+			if (ssl_error == SSL_ERROR_SYSCALL) {
+				say_syserror("SSL_shutdown");
+				/* say_syserror() leaves the queue as is. */
+				ERR_clear_error();
+			} else if (ssl_error != SSL_ERROR_WANT_READ &&
+				   ssl_error != SSL_ERROR_WANT_WRITE) {
 				const char *le = ssl_last_error();
 				say_error("SSL_shutdown error: %s", le);
-				goto free;
-			}
 			}
 		}
 	}
-
-free:
 	SSL_free(ssl);
 }
 
