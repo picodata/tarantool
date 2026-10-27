@@ -952,10 +952,70 @@ datetime_strftime_format_end_test(void)
 	check_plan();
 }
 
+/*
+ * Counts the buffer sizes from 0 to the full length + 1 where the result or
+ * the buffer of tnt_strftime() differs from snprintf() of the same text.
+ */
+static int
+strftime_mismatches(const char *fmt, const struct tnt_tm *tm, const char *want)
+{
+	int mismatches = 0;
+	size_t want_len = strlen(want);
+	for (size_t size = 0; size <= want_len + 1; size++) {
+		char buf_result[32], buf_expected[32];
+		memset(buf_result, 'x', sizeof(buf_result));
+		memset(buf_expected, 'x', sizeof(buf_expected));
+		size_t got_len = tnt_strftime(buf_result, size, fmt, tm);
+		snprintf(buf_expected, size, "%s", want);
+		if (got_len != want_len ||
+		    memcmp(buf_result, buf_expected, sizeof(buf_result)) != 0)
+			mismatches++;
+	}
+	return mismatches;
+}
+
+/*
+ * 2-digit fields and literal characters skip snprintf(), the other values
+ * and the small buffers do not: the results must be the same.
+ */
+static void
+datetime_strftime_fast_path_test(void)
+{
+	plan(3);
+	header();
+
+	int mismatches = 0;
+	for (int n = -11; n <= 111; n++) {
+		struct tnt_tm tm = {.tm_mday = n};
+		char want[16];
+		snprintf(want, sizeof(want), "%02d", n);
+		mismatches += strftime_mismatches("%d", &tm, want);
+	}
+	is(mismatches, 0, "%%d is snprintf(\"%%02d\") for -11..111");
+
+	mismatches = 0;
+	struct tnt_tm tm = {0};
+	for (int c = 1; c <= 255; c++) {
+		if (c == '%')
+			continue;
+		char fmt[2] = {c, '\0'};
+		mismatches += strftime_mismatches(fmt, &tm, fmt);
+	}
+	is(mismatches, 0, "a literal is snprintf(\"%%c\") for all bytes");
+
+	tm = (struct tnt_tm){.tm_year = 2026 - 1900, .tm_mon = 0,
+			     .tm_mday = 2, .tm_hour = 3, .tm_min = 4};
+	is(strftime_mismatches("%Y-%m-%d %H:%M", &tm, "2026-01-02 03:04"), 0,
+	   "'%%Y-%%m-%%d %%H:%%M' for each buffer size");
+
+	footer();
+	check_plan();
+}
+
 int
 main(void)
 {
-	plan(15);
+	plan(16);
 	datetime_test();
 	tostring_datetime_test();
 	parse_date_test();
@@ -971,6 +1031,7 @@ main(void)
 	datetime_zone_cache_test();
 	datetime_zone_retry_test();
 	datetime_strftime_format_end_test();
+	datetime_strftime_fast_path_test();
 
 	return check_plan();
 }

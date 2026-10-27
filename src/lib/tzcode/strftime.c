@@ -58,7 +58,7 @@ enum warn {
 
 static ssize_t
 _add(char *buf, ssize_t size, const char *str);
-static ssize_t
+static inline ssize_t
 _conv(char *buf, ssize_t size, const char *format, int n);
 static ssize_t
 _yconv(char *buf, ssize_t size, int a, int b, bool convert_top, bool convert_yy);
@@ -542,9 +542,25 @@ _fmt(char *buf, ssize_t size, const char *format, const struct tnt_tm *t,
 	return total;
 }
 
-static ssize_t
+static inline ssize_t
 _conv(char *buf, ssize_t size, const char *format, int n)
 {
+	/*
+	 * Most formats are 2-digit fields and literal characters: snprintf()
+	 * costs most of the time of such a format. Other forms, values that
+	 * are not 2 digits and truncation go to snprintf().
+	 */
+	if (strcmp(format, "%02d") == 0 && n >= 0 && n <= 99 && size >= 3) {
+		buf[0] = '0' + n / 10;
+		buf[1] = '0' + n % 10;
+		buf[2] = '\0';
+		return 2;
+	}
+	if (strcmp(format, "%c") == 0 && size >= 2) {
+		buf[0] = n;
+		buf[1] = '\0';
+		return 1;
+	}
 	ssize_t total = 0;
 	SNPRINT(total, snprintf, buf, size, format, n);
 	return total;
