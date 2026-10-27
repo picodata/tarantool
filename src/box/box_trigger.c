@@ -118,4 +118,10 @@ box_txn_stmt_new_tuple(struct txn_stmt *stmt)
 	return stmt->new_tuple;
 }
 
+uint32_t
+box_txn_stmt_type(struct txn_stmt *stmt)
+{
+	return stmt->type;
+}
+
 /* }}} Replace event accessors */

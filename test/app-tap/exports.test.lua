@@ -97,6 +97,7 @@ local check_symbols = {
     'box_txn_current_stmt',
     'box_txn_stmt_old_tuple',
     'box_txn_stmt_new_tuple',
+    'box_txn_stmt_type',
     'tnt_json_parse',
 
     'crypto_ERR_error_string',

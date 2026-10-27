@@ -192,6 +192,8 @@ g_wal_write.before_each(function(cg)
             };
             struct space *space_by_id(uint32_t id);
             struct rlist *box_space_on_replace(struct space *space);
+            struct txn_stmt *box_txn_current_stmt(struct txn *txn);
+            uint32_t box_txn_stmt_type(struct txn_stmt *stmt);
             struct rlist *box_txn_on_wal_write(struct txn *txn);
             void box_trigger_create(struct trigger *trigger,
                                     int (*run)(struct trigger *, void *),
@@ -205,6 +207,7 @@ g_wal_write.before_each(function(cg)
         s:create_index('pk')
 
         local counts = {runs = 0, destroys = 0}
+        local stmt_types = {}
         -- The trigger and the callbacks are reached from C after this
         -- function returns, so they have to outlive it.
         local keepalive = {}
@@ -223,10 +226,13 @@ g_wal_write.before_each(function(cg)
         -- transaction, so the trigger is armed once and never added twice.
         keepalive.arm = ffi.cast('int (*)(struct trigger *, void *)',
             function(_, event)
+                local txn = ffi.cast('struct txn *', event)
+                table.insert(stmt_types,
+                             C.box_txn_stmt_type(C.box_txn_current_stmt(txn)))
                 C.box_trigger_create(keepalive.trigger, keepalive.run, nil,
                                      keepalive.destroy)
-                C.box_trigger_add(C.box_txn_on_wal_write(
-                    ffi.cast('struct txn *', event)), keepalive.trigger)
+                C.box_trigger_add(C.box_txn_on_wal_write(txn),
+                                  keepalive.trigger)
                 return 0
             end)
         keepalive.on_replace = ffi.new('struct trigger')
@@ -234,6 +240,7 @@ g_wal_write.before_each(function(cg)
         C.box_trigger_add(C.box_space_on_replace(C.space_by_id(s.id)),
                           keepalive.on_replace)
         rawset(_G, 'wal_write_counts', counts)
+        rawset(_G, 'wal_write_stmt_types', stmt_types)
         rawset(_G, 'wal_write_keepalive', keepalive)
     end)
 end)
@@ -280,5 +287,23 @@ g_wal_write.test_destroyed_when_a_yield_aborts_the_transaction = function(cg)
                         'the abort destroyed the trigger, and nothing ' ..
                         'was written')
         box.rollback()
+    end)
+end
+
+-- box_txn_stmt_type() gives the request type of the statement an on_replace
+-- trigger runs for.
+g_wal_write.test_stmt_type = function(cg)
+    cg.server:exec(function()
+        local iproto = box.iproto.type
+        local s = box.space.test
+        s:insert{1, 'a'}
+        s:replace{1, 'b'}
+        s:update(1, {{'=', 2, 'c'}})
+        s:upsert({1, 'd'}, {{'=', 2, 'e'}})
+        s:delete{1}
+        t.assert_equals(_G.wal_write_stmt_types, {
+            iproto.INSERT, iproto.REPLACE, iproto.UPDATE, iproto.UPSERT,
+            iproto.DELETE,
+        })
     end)
 end

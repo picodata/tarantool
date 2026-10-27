@@ -140,6 +140,10 @@ box_txn_stmt_old_tuple(struct txn_stmt *stmt);
 API_EXPORT struct tuple *
 box_txn_stmt_new_tuple(struct txn_stmt *stmt);
 
+/** The statement's request type, an IPROTO type code. */
+API_EXPORT uint32_t
+box_txn_stmt_type(struct txn_stmt *stmt);
+
 /* }}} Replace event accessors */
 
 #if defined(__cplusplus)
