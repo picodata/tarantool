@@ -86,11 +86,11 @@ sql_table_func_resolve_type(enum field_type a, enum field_type b)
 	unreachable();
 }
 
-/** Infer the element type without converting the array values. */
-static int
-unnest_resolve_schema(struct ExprList *args, struct field_def *fields)
+/** Infer the element type of an array without converting its values. */
+static enum field_type
+unnest_element_type(struct Expr *arg)
 {
-	struct Expr *arg = sqlExprSkipCollate(args->a[0].pExpr);
+	arg = sqlExprSkipCollate(arg);
 	enum field_type type = FIELD_TYPE_ANY;
 	if (sql_expr_type(arg) == FIELD_TYPE_JSON) {
 		type = FIELD_TYPE_JSON;
@@ -113,9 +113,26 @@ unnest_resolve_schema(struct ExprList *args, struct field_def *fields)
 			first = false;
 		}
 	}
-	fields[0].type = type;
-	fields[0].is_nullable = true;
+	return type;
+}
+
+/** Give each field the element type of its array. */
+static int
+unnest_resolve_schema(struct ExprList *args, struct field_def *fields)
+{
+	for (int i = 0; i < args->nExpr; i++) {
+		fields[i].type = unnest_element_type(args->a[i].pExpr);
+		fields[i].is_nullable = true;
+	}
 	return 0;
+}
+
+/** One field for each array. */
+static uint32_t
+unnest_field_count(struct ExprList *args)
+{
+	assert(args != NULL);
+	return args->nExpr;
 }
 
 /** Number of the arguments of a series with a step. */
@@ -317,16 +334,25 @@ generate_series_estimate_rows(struct ExprList *args)
 	return 1000;
 }
 
-/** Count constructor elements, or use the default array size estimate. */
+/**
+ * The rows are as many as the elements of the longest array. Count the
+ * elements of a constructor, or use the default array size estimate.
+ */
 static uint64_t
 unnest_estimate_rows(struct ExprList *args)
 {
-	struct Expr *arg = sqlExprSkipCollate(args->a[0].pExpr);
-	if (arg->op == TK_NULL)
-		return 0;
-	if (arg->op == TK_ARRAY)
-		return arg->x.pList == NULL ? 0 : arg->x.pList->nExpr;
-	return 100;
+	uint64_t rows = 0;
+	for (int i = 0; i < args->nExpr; i++) {
+		struct Expr *arg = sqlExprSkipCollate(args->a[i].pExpr);
+		uint64_t count = 100;
+		if (arg->op == TK_NULL)
+			count = 0;
+		else if (arg->op == TK_ARRAY)
+			count = arg->x.pList == NULL ? 0 : arg->x.pList->nExpr;
+		if (count > rows)
+			rows = count;
+	}
+	return rows;
 }
 
 /** Estimate object size without evaluating the JSON expression. */
@@ -741,19 +767,61 @@ static const struct field_def generate_series_fields[] = {
 	},
 };
 
-/** Iterator state for unnest(array). */
-struct unnest_ctx {
-	/** Next array element to return. */
+/** The state of one array argument of unnest. */
+struct unnest_array {
+	/** Next element to return. */
 	const char *next;
 	/** Number of elements left to return. */
 	uint32_t left;
-	/** True if @a next points into a JSON inner array. */
+	/** True if @a next points into a JSON array. */
 	bool is_json;
+};
+
+/** Iterator state for unnest(array, ...). */
+struct unnest_ctx {
+	/** Number of arrays. */
+	uint32_t count;
 	/** Reusable MsgPack row buffer. */
 	char *row;
 	/** Allocated size of @a row. */
 	size_t row_capacity;
+	/** The arrays, in the order of the arguments. */
+	struct unnest_array arrays[];
 };
+
+/** Start reading an argument: a SQL array, a JSON array or NULL. */
+static int
+unnest_array_open(struct unnest_array *array, const char *arg)
+{
+	array->next = NULL;
+	array->left = 0;
+	array->is_json = false;
+	switch (mp_typeof(*arg)) {
+	case MP_NIL:
+		return 0;
+	case MP_ARRAY:
+		array->left = mp_decode_array(&arg);
+		array->next = arg;
+		return 0;
+	case MP_EXT: {
+		uint32_t len;
+		const char *inner = mp_decode_json(&arg, &len);
+		if (inner == NULL || mp_typeof(*inner) != MP_ARRAY) {
+			diag_set(ClientError, ER_PROC_C,
+				 "unnest expects array or json array argument");
+			return -1;
+		}
+		array->left = mp_decode_array(&inner);
+		array->next = inner;
+		array->is_json = true;
+		return 0;
+	}
+	default:
+		diag_set(ClientError, ER_PROC_C,
+			 "unnest expects array argument");
+		return -1;
+	}
+}
 
 /** Open an unnest iterator. */
 static int
@@ -765,8 +833,9 @@ unnest_open(const char *args, const char *args_end, void **ctx)
 		return -1;
 	}
 	uint32_t argc = mp_decode_array(&args);
-	if (argc != 1) {
-		diag_set(ClientError, ER_PROC_C, "unnest expects 1 argument");
+	if (argc == 0) {
+		diag_set(ClientError, ER_PROC_C,
+			 "unnest expects at least 1 argument");
 		return -1;
 	}
 	if (args >= args_end) {
@@ -780,75 +849,89 @@ unnest_open(const char *args, const char *args_end, void **ctx)
 	 * every open would visit elements that the query may never read.
 	 */
 	const char *arg_end = args;
-	assert(mp_check(&arg_end, args_end) == 0 && arg_end == args_end);
+	for (uint32_t i = 0; i < argc; i++)
+		assert(mp_check(&arg_end, args_end) == 0);
+	assert(arg_end == args_end);
 #endif
-	enum mp_type type = mp_typeof(*args);
-	if (type != MP_ARRAY && type != MP_NIL && type != MP_EXT) {
-		diag_set(ClientError, ER_PROC_C,
-			 "unnest expects array argument");
-		return -1;
-	}
-	struct unnest_ctx *state = xmalloc(sizeof(*state));
-	state->next = NULL;
-	state->left = 0;
-	state->is_json = false;
+	struct unnest_ctx *state =
+		xmalloc(sizeof(*state) + argc * sizeof(state->arrays[0]));
+	state->count = argc;
 	state->row = NULL;
 	state->row_capacity = 0;
-	if (type == MP_ARRAY) {
-		state->left = mp_decode_array(&args);
-		state->next = args;
-	} else if (type == MP_EXT) {
-		uint32_t len;
-		const char *inner = mp_decode_json(&args, &len);
-		if (inner == NULL ||
-		    mp_typeof(*inner) != MP_ARRAY) {
+	for (uint32_t i = 0; i < argc; i++) {
+		const char *arg = args;
+		/* The last array is not skipped: it can be large. */
+		if (i + 1 < argc)
+			mp_next(&args);
+		if (unnest_array_open(&state->arrays[i], arg) != 0) {
 			free(state);
-			diag_set(ClientError, ER_PROC_C,
-				 "unnest expects array or json array argument");
 			return -1;
 		}
-		state->left = mp_decode_array(&inner);
-		state->next = inner;
-		state->is_json = true;
 	}
 	*ctx = state;
 	return 0;
 }
 
-/** Return a native SQL element, or wrap a normalized JSON subtree. */
+/**
+ * Return a row with the next element of each array: a native SQL
+ * element, or a wrapped normalized JSON subtree. An array that has no
+ * elements left gives SQL NULL, so the rows are as many as the elements
+ * of the longest array.
+ */
 static int
 unnest_next(void *ctx, const char **row, const char **row_end)
 {
 	struct unnest_ctx *state = ctx;
-	if (state->left == 0) {
+	size_t row_size = mp_sizeof_array(state->count);
+	bool has_elements = false;
+	for (uint32_t i = 0; i < state->count; i++) {
+		struct unnest_array *array = &state->arrays[i];
+		if (array->left == 0) {
+			row_size += mp_sizeof_nil();
+			continue;
+		}
+		has_elements = true;
+		const char *end = array->next;
+		mp_next(&end);
+		uint32_t element_size = end - array->next;
+		row_size += array->is_json ?
+			    mp_sizeof_json_len(element_size) : element_size;
+	}
+	if (!has_elements) {
 		*row = NULL;
 		*row_end = NULL;
 		return 0;
 	}
-	const char *element = state->next;
-	mp_next(&state->next);
-	uint32_t element_size = state->next - element;
-	size_t value_size = state->is_json ?
-		mp_sizeof_json_len(element_size) : element_size;
-	size_t row_size = mp_sizeof_array(1) + value_size;
 	if (row_size > state->row_capacity) {
 		state->row = xrealloc(state->row, row_size);
 		state->row_capacity = row_size;
 	}
-	char *pos = mp_encode_array(state->row, 1);
-	if (state->is_json) {
-		/* A subtree of a trusted SQL JSON value is normalized.
-		 * See doc/json-perimeter.md#table-function-iterators.
-		 */
-		struct json_norm norm =
-			json_norm_from_trusted(element, element_size);
-		mp_encode_json(pos, norm);
-	} else {
-		memcpy(pos, element, element_size);
+	char *pos = mp_encode_array(state->row, state->count);
+	for (uint32_t i = 0; i < state->count; i++) {
+		struct unnest_array *array = &state->arrays[i];
+		if (array->left == 0) {
+			pos = mp_encode_nil(pos);
+			continue;
+		}
+		const char *element = array->next;
+		mp_next(&array->next);
+		uint32_t element_size = array->next - element;
+		if (array->is_json) {
+			/* A subtree of a trusted SQL JSON value is normalized.
+			 * See doc/json-perimeter.md#table-function-iterators.
+			 */
+			struct json_norm norm =
+				json_norm_from_trusted(element, element_size);
+			pos = mp_encode_json(pos, norm);
+		} else {
+			memcpy(pos, element, element_size);
+			pos += element_size;
+		}
+		array->left--;
 	}
+	assert(pos == state->row + row_size);
 	*row = state->row;
-	*row_end = state->row + row_size;
-	state->left--;
+	*row_end = pos;
 	return 0;
 }
 
@@ -864,6 +947,7 @@ unnest_close(void *ctx)
 static const struct sql_table_func_ops unnest_ops = {
 	.resolve_schema = unnest_resolve_schema,
 	.estimate_rows = unnest_estimate_rows,
+	.field_count = unnest_field_count,
 	.open = unnest_open,
 	.next = unnest_next,
 	.close = unnest_close,
@@ -1028,6 +1112,7 @@ static const struct sql_table_func_def sql_builtin_table_funcs[] = {
 	{
 		.name = "UNNEST",
 		.param_count = 1,
+		.param_count_max = SQL_MAX_FUNCTION_ARG,
 		.fields = unnest_fields,
 		.field_count = nelem(unnest_fields),
 		.ops = &unnest_ops,
@@ -1091,6 +1176,7 @@ sql_table_func_register(const struct sql_table_func_def *defs, uint32_t count)
 		    def->ops == NULL || def->ops->resolve_schema == NULL ||
 		    def->ops->estimate_rows == NULL || def->ops->open == NULL ||
 		    def->ops->next == NULL || def->ops->close == NULL ||
+		    (def->ops->field_count != NULL && def->field_count != 1) ||
 		    (def->ops->param_types != NULL && def->param_count <= 0) ||
 		    (def->param_count_max != 0 &&
 		     (def->param_count < 0 ||

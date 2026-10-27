@@ -37,6 +37,14 @@ estimate_zero(struct ExprList *args)
 	return 0;
 }
 
+/** A per-call field count that does not depend on the arguments. */
+static uint32_t
+field_count_one(struct ExprList *args)
+{
+	(void)args;
+	return 1;
+}
+
 static uint64_t
 estimate_one(struct ExprList *args)
 {
@@ -198,7 +206,7 @@ main(void)
 	memory_init();
 	fiber_init(fiber_c_invoke);
 	coll_init();
-	plan(75);
+	plan(76);
 	struct sql_table_func_ops saved = ops;
 #define CHECK_REQUIRED(method) do { \
 	ops = saved; \
@@ -228,6 +236,12 @@ main(void)
 	range_def.param_count = -1;
 	is(sql_table_func_register(&range_def, 1), -1,
 	   "variadic function has no param_types");
+	ops = saved;
+	ops.field_count = field_count_one;
+	range_def = defs[0];
+	range_def.field_count = 2;
+	is(sql_table_func_register(&range_def, 1), -1,
+	   "function with per-call fields has one template field");
 	ops = saved;
 	is(sql_table_func_register(defs, 1), 0, "register during startup");
 	box_init();

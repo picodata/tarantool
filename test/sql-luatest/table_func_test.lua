@@ -277,6 +277,98 @@ g.test_unnest_with_ordinality = function(cg)
     end)
 end
 
+-- unnest of several arrays gives the elements with the same position in
+-- one row: a column for each array, and NULL for an array that has no
+-- element at that position, as in PostgreSQL.
+g.test_unnest_arrays = function(cg)
+    cg.server:exec(function()
+        local res = box.execute([[
+            SELECT * FROM unnest([1, 2, 3], ['a', 'b']) WITH ORDINALITY;
+        ]])
+        t.assert_equals(res.metadata, {
+            {name = 'VALUE_1', type = 'integer'},
+            {name = 'VALUE_2', type = 'string'},
+            {name = 'ORDINALITY', type = 'unsigned'},
+        })
+        t.assert_equals(res.rows, {{1, 'a', 1}, {2, 'b', 2}, {3, box.NULL, 3}})
+
+        -- A NULL array is empty, and the rows are as many as the elements
+        -- of the longest array.
+        res = box.execute([[
+            SELECT * FROM unnest([1, 2], NULL, ['a', 'b', 'c']);
+        ]])
+        t.assert_equals(res.metadata, {
+            {name = 'VALUE_1', type = 'integer'},
+            {name = 'VALUE_2', type = 'any'},
+            {name = 'VALUE_3', type = 'string'},
+        })
+        t.assert_equals(res.rows, {
+            {1, box.NULL, 'a'},
+            {2, box.NULL, 'b'},
+            {box.NULL, box.NULL, 'c'},
+        })
+
+        res = box.execute([[SELECT * FROM unnest([], NULL);]])
+        t.assert_equals(res.rows, {})
+
+        -- The padding is SQL NULL. A JSON null element stays JSON null.
+        res = box.execute([[
+            SELECT * FROM unnest([1, 2], CAST([null] AS JSON));
+        ]])
+        t.assert_equals(res.metadata, {
+            {name = 'VALUE_1', type = 'integer'},
+            {name = 'VALUE_2', type = 'json'},
+        })
+        t.assert_equals(res.rows[1][2] == box.NULL, false)
+        t.assert_equals(tostring(res.rows[1][2]), 'null')
+        t.assert_equals(res.rows[2][1], 2)
+        t.assert_equals(res.rows[2][2], box.NULL)
+    end)
+end
+
+-- The arrays of unnest can come from the row on the left of a join.
+g.test_unnest_arrays_correlated_args = function(cg)
+    cg.server:exec(function()
+        box.execute([[
+            CREATE TABLE T_UNNEST_ARRAYS(ID INT PRIMARY KEY, A ARRAY, B ARRAY);
+        ]])
+        box.execute([[
+            INSERT INTO T_UNNEST_ARRAYS
+            VALUES (1, [1, 2], ['x']), (2, [], [true]), (3, NULL, NULL);
+        ]])
+        local res = box.execute([[
+            SELECT t.ID, u.*
+              FROM T_UNNEST_ARRAYS t
+                   LEFT JOIN unnest(t.A, t.B) WITH ORDINALITY u ON true
+             ORDER BY 1, 4;
+        ]])
+        t.assert_equals(res.rows, {
+            {1, 1, 'x', 1},
+            {1, 2, box.NULL, 2},
+            {2, box.NULL, true, 1},
+            {3, box.NULL, box.NULL, box.NULL},
+        })
+        box.execute([[DROP TABLE T_UNNEST_ARRAYS;]])
+    end)
+end
+
+-- A join of two calls with several arrays seeks by the ordinality.
+g.test_unnest_arrays_ordinality_seek = function(cg)
+    cg.server:exec(function()
+        local sql = [[
+            SELECT a.VALUE_1, b.VALUE_2
+              FROM unnest([1, 2], [3]) WITH ORDINALITY a
+                   JOIN unnest([4], [5, 6]) WITH ORDINALITY b
+                   ON a.ORDINALITY = b.ORDINALITY;
+        ]]
+        local res = box.execute('EXPLAIN QUERY PLAN ' .. sql)
+        t.assert_str_contains(res.rows[2][4],
+                              'SEARCH TABLE UNNEST AS B USING ORDINALITY')
+        res = box.execute(sql)
+        t.assert_equals(res.rows, {{1, 5}, {2, 6}})
+    end)
+end
+
 g.test_json_each = function(cg)
     cg.server:exec(function()
         local res = box.execute([[
@@ -1768,8 +1860,18 @@ g.test_unnest_errors = function(cg)
         t.assert_str_contains(err.message,
                               'json_each expects json object argument')
 
-        _, err = box.execute([[SELECT * FROM unnest([1], [2]);]])
+        _, err = box.execute([[SELECT * FROM unnest();]])
         t.assert_str_contains(err.message, 'Wrong number of arguments')
+
+        -- Each argument is checked.
+        _, err = box.execute([[SELECT * FROM unnest([1], 2);]])
+        t.assert_str_contains(err.message, 'unnest expects array argument')
+
+        _, err = box.execute([[
+            SELECT * FROM unnest([1], CAST(1 AS JSON));
+        ]])
+        t.assert_str_contains(err.message,
+                              'unnest expects array or json array argument')
 
         _, err = box.execute([[
             SELECT * FROM unnest(A), T_UNNEST_ARG;

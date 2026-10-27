@@ -47,6 +47,14 @@ struct sql_table_func_ops {
 	/** Estimate rows without evaluating argument expressions. */
 	uint64_t (*estimate_rows)(struct ExprList *args);
 	/**
+	 * Return the number of result fields of this call. Optional: without
+	 * it, every call has the fields of the definition. With it, the
+	 * definition has one field, the template of each field of a call.
+	 * A call with one field has the name of the template, and a call
+	 * with several fields numbers the name from 1: VALUE_1, VALUE_2.
+	 */
+	uint32_t (*field_count)(struct ExprList *args);
+	/**
 	 * Return the types of the arguments of this call. With the types,
 	 * the arguments get the type check and the implicit cast of a
 	 * built-in scalar function before the iterator opens. Optional:
@@ -82,9 +90,16 @@ struct sql_table_func_call {
 	uint32_t field_count;
 	/** True if the cursor appends an ordinality column. */
 	bool has_ordinality;
-	/** Names point into the immutable registry. */
+	/** The names are stored after the fields, in the same allocation. */
 	struct field_def fields[];
 };
+
+/** Number of the fields of a row of the iterator: all but the ordinality. */
+static inline uint32_t
+sql_table_func_call_row_field_count(const struct sql_table_func_call *call)
+{
+	return call->field_count - (call->has_ordinality ? 1 : 0);
+}
 
 /** Static SQL table function descriptor. */
 struct sql_table_func_def {
@@ -97,9 +112,12 @@ struct sql_table_func_def {
 	 * arguments. It must be greater than param_count.
 	 */
 	int param_count_max;
-	/** Result column definitions. */
+	/**
+	 * Result column definitions, or the template of the columns of a
+	 * call if the function has the field_count method.
+	 */
 	const struct field_def *fields;
-	/** Number of result columns. */
+	/** Number of result columns, or 1 with the field_count method. */
 	uint32_t field_count;
 	/** Iterator callbacks. */
 	const struct sql_table_func_ops *ops;

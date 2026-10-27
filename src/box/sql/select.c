@@ -5142,7 +5142,8 @@ sql_table_func_expand(Parse *parse, struct SrcItem *from)
 		return -1;
 	}
 
-	int argc = from->u1.pFuncArg != NULL ? from->u1.pFuncArg->nExpr : 0;
+	struct ExprList *args = from->u1.pFuncArg;
+	int argc = args != NULL ? args->nExpr : 0;
 	int argc_min = table_func->param_count;
 	int argc_max = table_func->param_count_max != 0 ?
 		       table_func->param_count_max : argc_min;
@@ -5158,19 +5159,27 @@ sql_table_func_expand(Parse *parse, struct SrcItem *from)
 
 	struct space *space = sql_template_space_new(parse, from->zName);
 	struct space_def *def = space->def;
-	uint32_t base_count = table_func->field_count;
+	/* A function with per-call fields has one template field. */
+	bool has_template = table_func->ops->field_count != NULL;
+	uint32_t base_count = has_template ?
+			      table_func->ops->field_count(args) :
+			      table_func->field_count;
 	uint32_t count = base_count + (from->fg.hasOrdinality ? 1 : 0);
 	def->fields = xregion_alloc_array(&parse->region, struct field_def,
 					  count);
 	def->field_count = count;
 	def->exact_field_count = count;
 	for (uint32_t i = 0; i < base_count; i++) {
-		def->fields[i] = table_func->fields[i];
-		size_t name_len = strlen(table_func->fields[i].name);
+		const struct field_def *field =
+			&table_func->fields[has_template ? 0 : i];
+		def->fields[i] = *field;
+		const char *name = field->name;
+		if (has_template && base_count > 1)
+			name = tt_sprintf("%s_%u", field->name, i + 1);
+		size_t name_len = strlen(name);
 		def->fields[i].name =
 			xregion_alloc(&parse->region, name_len + 1);
-		memcpy(def->fields[i].name, table_func->fields[i].name,
-		       name_len + 1);
+		memcpy(def->fields[i].name, name, name_len + 1);
 	}
 	if (from->fg.hasOrdinality) {
 		struct field_def *field = &def->fields[base_count];

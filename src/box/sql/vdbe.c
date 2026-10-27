@@ -326,7 +326,7 @@ vdbe_table_func_validate_row(const struct sql_table_func_call *call,
 	}
 	pos = row;
 	uint32_t count = mp_decode_array(&pos);
-	if (count != call->func->field_count) {
+	if (count != sql_table_func_call_row_field_count(call)) {
 		diag_set(ClientError, ER_SQL_EXECUTE,
 			 "table function returned an invalid column count");
 		return -1;
@@ -385,7 +385,8 @@ vdbe_table_func_next(VdbeCursor *cursor, int *eof)
 	}
 	const char *pos = row;
 	uint32_t field_count = mp_decode_array(&pos);
-	assert(field_count == tfunc->func->field_count);
+	assert(field_count ==
+	       sql_table_func_call_row_field_count(tfunc->call));
 	const char *payload = pos;
 	size_t row_size;
 	if (!tfunc->has_ordinality) {
@@ -2430,17 +2431,11 @@ case OP_Column: {
 		field_type = pC->uc.pCursor->space->def->fields[p2].type;
 	} else if (pC->eCurType == CURTYPE_TABLEFUNC) {
 		struct VdbeTableFuncCursor *tfunc = pC->uc.pTFunc;
-		assert(tfunc != NULL && tfunc->func != NULL);
+		assert(tfunc != NULL && tfunc->call != NULL);
 		uint32_t fieldno = (uint32_t)p2;
-		assert(fieldno < tfunc->func->field_count +
-		       tfunc->has_ordinality);
-		if (fieldno < tfunc->func->field_count) {
-			field_type = tfunc->call->fields[fieldno].type;
-		} else {
-			assert(tfunc->has_ordinality &&
-			       fieldno == tfunc->func->field_count);
-			field_type = FIELD_TYPE_UNSIGNED;
-		}
+		/* The ordinality is the last field of the call. */
+		assert(fieldno < tfunc->call->field_count);
+		field_type = tfunc->call->fields[fieldno].type;
 	}
 	if (field_type == FIELD_TYPE_ANY)
 		pDest->flags |= MEM_Any;

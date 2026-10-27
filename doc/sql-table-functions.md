@@ -21,6 +21,7 @@ memory, so a large range can be read with `LIMIT`.
 | `GENERATE_SERIES(start, stop)` | `VALUE`, a range with a step of 1 |
 | `GENERATE_SERIES(start, stop, step)` | `VALUE`, a range with a step |
 | `UNNEST(array)` | `VALUE`, elements of a SQL or JSON array |
+| `UNNEST(array, array, ...)` | `VALUE_1`, `VALUE_2`, ..., elements of several arrays by position |
 | `JSON_EACH(object)` | `KEY STRING`, `VALUE JSON`, pairs from a JSON object |
 
 `GENERATE_SERIES` gives an `INTEGER` or a `DECIMAL` series. An `INTEGER`
@@ -97,6 +98,22 @@ SELECT * FROM GENERATE_SERIES(CAST('2026-01-01T00:00:00Z' AS DATETIME),
 
 `UNNEST` reads the top-level elements in array order. It does not recursively
 expand nested arrays or objects: `[[1], [2]]` produces two array values.
+
+`UNNEST` with several arrays gives a column for each array, and each row
+has the elements with the same position, as in PostgreSQL. The rows are as
+many as the elements of the longest array. A shorter array gives SQL `NULL`
+after its last element, and a `NULL` array is empty. A JSON `null` element
+stays a JSON value, so it is different from the padding.
+
+```sql
+SELECT * FROM UNNEST([1, 2, 3], ['a', 'b']);
+-- VALUE_1 = 1, VALUE_2 = 'a'
+-- VALUE_1 = 2, VALUE_2 = 'b'
+-- VALUE_1 = 3, VALUE_2 = NULL
+```
+
+PostgreSQL names each of these columns `unnest`. Here the columns have
+different names, so a query can refer to them without aliases.
 `JSON_EACH` reads the top-level key-value pairs of a JSON object. A SQL `MAP`
 requires an explicit `CAST(... AS JSON)` before passing it to `JSON_EACH`.
 Wrong container types and scalar arguments produce a SQL type error.
@@ -121,6 +138,9 @@ All function columns, including `ORDINALITY`, are then SQL `NULL`.
 An empty container produces no rows. SQL `NULL` as an argument also produces
 no rows if the other arguments have valid types. For example,
 `GENERATE_SERIES(NULL, 1)`, `(1, NULL)`, and `(NULL, NULL)` are empty.
+`UNNEST` with several arrays takes an empty array or SQL `NULL` as an array
+without elements: `UNNEST(NULL, [1])` and `UNNEST([], [1])` give one row
+`NULL, 1`, and the result is empty only when every array is.
 
 Type errors take precedence over an empty result caused by SQL `NULL`:
 `GENERATE_SERIES(NULL, 'x')` and `GENERATE_SERIES('x', NULL)` both fail.
@@ -309,7 +329,8 @@ to choose the first matching rule:
 | Different types that fit in `SCALAR` | `SCALAR` |
 | Other combinations or an unknown type | `ANY` |
 
-The first rule includes `ARRAY`, `MAP`, `JSON`, `UUID`, `DATETIME`, and
+With several arrays, each column gets the type of its array by these
+rules. The first rule includes `ARRAY`, `MAP`, `JSON`, `UUID`, `DATETIME`, and
 `INTERVAL`. For example, `[1, 2]` gives `INTEGER`, `[1, 1.5]` and `[1, 2e0]`
 give `NUMBER`, `[1, 'x']` gives `SCALAR`, and `[1, [2]]` gives `ANY`.
 
@@ -381,6 +402,13 @@ five required methods. Registration checks that every method is present.
 | `open` | Takes a MessagePack argument array; returns state in `ctx` |
 | `next` | Returns a MessagePack row array; `row == NULL` marks the end |
 | `close` | Frees the state after a successful `open` |
+| `field_count` | Optional. Returns the number of fields of a call |
+
+A function with the optional `field_count` method has a different number of
+fields for each call, as `UNNEST` has one for each array. Its definition has
+one field, the template of each field of a call. A call with one field has
+the name of the template, and a call with several fields numbers the name
+from 1: `VALUE_1`, `VALUE_2`.
 
 The registry is filled at process startup and then closed to changes.
 Definitions must outlive all SQL queries. No registry version or cache
@@ -471,7 +499,8 @@ There is no separate flag for an exact estimate. Preparing or explaining a
 query does not evaluate arguments, open iterators, or read data for estimates.
 
 An array constructor's length is known without evaluating its elements:
-`[t.a, t.b]` has two elements. A range size is calculated for integer and
+`[t.a, t.b]` has two elements, and the estimate of several arrays is the
+largest one. A range size is calculated for integer and
 decimal literals, including their sign and a literal step. When the size is
 unknown, which includes each `DATETIME` series, the estimate is 100 rows for
 `UNNEST` and `JSON_EACH`, and 1000 for `GENERATE_SERIES`. Even a constant
@@ -533,8 +562,9 @@ The cursor owns the iterator state, current row, and row number. It passes
 Those bytes remain valid until `close`. Saved arguments for an independent
 call live across cursor restarts until the explicit `SELECT` finishes.
 
-When opened, `UNNEST` checks the argument count, SQL type, and container kind
-without walking the whole array. Reading and copying the argument still
+When opened, `UNNEST` checks the argument count, and the SQL type and
+container kind of each argument, without walking the last array. The other
+arrays are skipped to find the next argument. Reading and copying the argument still
 depend on its size, so `LIMIT 1` does not imply constant time for the whole
 query.
 
@@ -614,8 +644,8 @@ uses the table function. No data migration is needed.
 
 This feature uses existing SQL and JSON types. It does not introduce typed
 arrays such as `ARRAY<T>`, enforce homogeneous arrays, or add public
-registration of user-defined table functions. Full `LATERAL`, correlated
-subqueries in arguments, and multi-array `UNNEST` are outside its scope. JSON
+registration of user-defined table functions. Full `LATERAL` and correlated
+subqueries in arguments are outside its scope. JSON
 string conversion and string extraction keep their existing rules. Cache
 invalidation when replacing a scalar function used in an argument is also a
 separate concern.

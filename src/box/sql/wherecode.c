@@ -79,15 +79,23 @@ sql_table_func_emit_open(Parse *pParse, struct SrcItem *pTabItem, int iCur)
 				    false);
 	assert(func != NULL);
 	uint32_t count = pTabItem->space->def->field_count;
+	const struct field_def *fields = pTabItem->space->def->fields;
+	size_t names_size = 0;
+	for (uint32_t i = 0; i < count; i++)
+		names_size += strlen(fields[i].name) + 1;
 	struct sql_table_func_call *call =
-		sql_xmalloc(sizeof(*call) + count * sizeof(call->fields[0]));
+		sql_xmalloc(sizeof(*call) + count * sizeof(call->fields[0]) +
+			    names_size);
 	call->func = func;
 	call->field_count = count;
 	call->has_ordinality = pTabItem->fg.hasOrdinality;
+	char *name = (char *)&call->fields[count];
 	for (uint32_t i = 0; i < count; i++) {
-		call->fields[i] = pTabItem->space->def->fields[i];
-		call->fields[i].name = i < func->field_count ?
-			func->fields[i].name : (char *)"ORDINALITY";
+		call->fields[i] = fields[i];
+		size_t name_size = strlen(fields[i].name) + 1;
+		memcpy(name, fields[i].name, name_size);
+		call->fields[i].name = name;
+		name += name_size;
 	}
 	sqlVdbeAddOp4(v, OP_TFuncOpen, iCur, reg, argc, (char *)call,
 		      P4_TABLE_FUNC);

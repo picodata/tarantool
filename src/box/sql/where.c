@@ -2811,7 +2811,7 @@ whereLoopAddBtree(WhereLoopBuilder * pBuilder,	/* WHERE clause information */
 		 * when the row is behind. A join on the ordinality of two
 		 * table functions is then linear instead of quadratic.
 		 */
-		int ordinality_column = func->field_count;
+		int ordinality_column = pSrc->space->def->field_count - 1;
 		WhereTerm *pTerm;
 		for (pTerm = pWC->a; pTerm < pWC->a + pWC->nTerm; pTerm++) {
 			if (pTerm->leftCursor != pSrc->iCursor ||
