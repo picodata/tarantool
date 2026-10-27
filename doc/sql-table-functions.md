@@ -494,6 +494,38 @@ function to be skipped, and one is not a guarantee of at most one row. A full
 scan still returns every row or reports the iterator's error. Preparation
 does not invoke a user function in an argument or suppress its runtime error.
 
+### Search by ordinality
+
+A call `WITH ORDINALITY` has a second access path besides the full scan. A
+term `ORDINALITY = expr`, where `expr` does not read the call itself, gives a
+search for one row. The cursor reads forward from its current row to that
+ordinality, and starts over only when the ordinality is behind. A join on
+the ordinality of another call asks for 1, 2, 3 and so on, so it reads each
+row once, if the sought call is opened once: its arguments do not read the
+other sources. The planner counts only such a search as cheap. Another
+search can start over for each row, so the planner sees it as the full scan
+it replaces, with the row estimate of the scan in its plan, and one step
+cheaper, since it stops at its row. The join order stays that of the scan,
+and an index of a table can win.
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT a.VALUE, b.VALUE
+FROM UNNEST([1, 2, 3]) WITH ORDINALITY AS a
+JOIN UNNEST([4, 5, 6]) WITH ORDINALITY AS b
+    ON a.ORDINALITY = b.ORDINALITY;
+-- SCAN TABLE UNNEST AS A (~3 rows)
+-- SEARCH TABLE UNNEST AS B USING ORDINALITY (ordinality=?) (~1 row)
+```
+
+The search finds the rows that the comparison would find. A `DOUBLE` or
+`DECIMAL` equal to an integer finds that row, another number or `NULL` finds
+none, and a value that does not compare with a number is the type error of
+the comparison, even when the call has no rows. `ORDINALITY IN (2)` is the
+same as `ORDINALITY = 2`; a list of several values, a range, and an `OR` of
+terms use the full scan. A search that finds no row still opens the call, so
+it gives the errors of the arguments that a scan gives.
+
 ### Iterators and memory ownership
 
 The cursor owns the iterator state, current row, and row number. It passes
@@ -542,6 +574,12 @@ SELECT * FROM GENERATE_SERIES(1, 3);
 the iterator's `open` method and reads its first row; `TFuncNext` asks for
 another row. Pseudocode describes both reads and their conditional jumps.
 The loop body is indented, including nested loops of table functions.
+
+A search by ordinality uses `TFuncSeek` instead of both. Each execution reads
+one row, and the instruction runs again until it reaches the ordinality, so
+`sql_vdbe_max_steps`, the EXPLAIN ANALYZE timeout, and yields apply to a
+search far ahead as they do to a scan. A search of the next row is one
+execution. After the last row, the cursor does not call `next` again.
 
 For one execution, the counts are:
 

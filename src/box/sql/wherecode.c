@@ -230,6 +230,8 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 	struct WhereLoop *pLoop = pLevel->pWLoop;
 	/* Flags that describe this loop. */
 	uint32_t flags = pLoop->wsFlags;
+	/* The access path of a table function seek. */
+	static const char seek_label[] = " USING ORDINALITY (ordinality=?)";
 	if ((flags & WHERE_MULTI_OR) || (wctrlFlags & WHERE_OR_SUBCLAUSE))
 		return 0;
 	/* True for a SEARCH. False for SCAN. */
@@ -284,6 +286,8 @@ sqlWhereExplainOneScan(Parse * pParse,	/* Parse context */
 			       || (flags & WHERE_IDX_ONLY));
 			if (idx_def == NULL) {
 				assert(pItem->fg.isTabFunc);
+				if ((flags & WHERE_TFUNC_SEEK) != 0)
+					sqlStrAccumAppendAll(&str, seek_label);
 			} else if ((flags & WHERE_AUTO_INDEX) != 0) {
 				zFmt = "EPHEMERAL INDEX";
 			} else if (idx_def->iid == 0) {
@@ -1374,6 +1378,18 @@ sqlWhereCodeOneLoopStart(WhereInfo * pWInfo,	/* Complete information about the W
 			 * a pseudo-cursor.  No need to Rewind or Next such cursors.
 			 */
 			pLevel->op = OP_Noop;
+		} else if (pTabItem->fg.isTabFunc &&
+			   (pLoop->wsFlags & WHERE_TFUNC_SEEK) != 0) {
+			/* One row: the one with the ordinality of the term. */
+			if (pTabItem->fg.isCorrelated)
+				sql_table_func_emit_open(pParse, pTabItem,
+							 iCur);
+			WhereTerm *pTerm = pLoop->aLTerm[0];
+			int iReg = codeEqualityTerm(pParse, pTerm, pLevel, 0,
+						    bRev, ++pParse->nMem);
+			sqlVdbeAddOp3(v, OP_TFuncSeek, iCur, addrBrk, iReg);
+			pLevel->op = OP_Noop;
+			disableTerm(pLevel, pTerm);
 		} else if (pTabItem->fg.isTabFunc) {
 			if (pTabItem->fg.isCorrelated)
 				sql_table_func_emit_open(pParse, pTabItem,

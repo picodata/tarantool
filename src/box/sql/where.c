@@ -2693,6 +2693,31 @@ indexMightHelpWithOrderBy(WhereLoopBuilder * pBuilder,
 	return 0;
 }
 
+/**
+ * True if the right side of an ORDINALITY = expr term is the ordinality of
+ * a table function: its scan gives 1, 2, 3, so a seek by it reads forward.
+ *
+ * shortcut: a function that is itself sought by an unordered value gives
+ * its ordinality unordered, and the seek by it is not cheap; check the
+ * loop of that function if such joins become common.
+ */
+static bool
+where_term_is_ordinality_join(SrcList *src_list, WhereTerm *term)
+{
+	Expr *expr = sqlExprSkipCollate(term->pExpr->pRight);
+	if (expr->op != TK_COLUMN_REF)
+		return false;
+	for (int i = 0; i < src_list->nSrc; i++) {
+		struct SrcItem *item = &src_list->a[i];
+		if (item->iCursor != expr->iTable)
+			continue;
+		return item->fg.isTabFunc && item->fg.hasOrdinality &&
+		       expr->iColumn ==
+		       (int)item->space->def->field_count - 1;
+	}
+	return false;
+}
+
 /*
  * Add all WhereLoop objects for a single table of the join where the table
  * is identified by pBuilder->pNew->iTab.
@@ -2776,7 +2801,55 @@ whereLoopAddBtree(WhereLoopBuilder * pBuilder,	/* WHERE clause information */
 		pNew->wsFlags = 0;
 		pNew->rRun = rSize + 16;
 		whereLoopOutputAdjust(pWC, pNew, rSize);
-		return whereLoopInsert(pBuilder, pNew);
+		LogEst scan_out = pNew->nOut;
+		rc = whereLoopInsert(pBuilder, pNew);
+		if (rc != 0 || !pSrc->fg.hasOrdinality)
+			return rc;
+		/*
+		 * A term ORDINALITY = expr gives a seek: the cursor reads
+		 * forward to the row with that ordinality, or starts over
+		 * when the row is behind. A join on the ordinality of two
+		 * table functions is then linear instead of quadratic.
+		 */
+		int ordinality_column = func->field_count;
+		WhereTerm *pTerm;
+		for (pTerm = pWC->a; pTerm < pWC->a + pWC->nTerm; pTerm++) {
+			if (pTerm->leftCursor != pSrc->iCursor ||
+			    pTerm->u.leftColumn != ordinality_column ||
+			    (pTerm->eOperator & WO_EQ) == 0 ||
+			    (pTerm->prereqRight & pNew->maskSelf) != 0)
+				continue;
+			if (ExprHasProperty(pTerm->pExpr, EP_FromJoin) &&
+			    pTerm->pExpr->iRightJoinTable != pSrc->iCursor)
+				continue;
+			whereLoopResize(pNew, 1);
+			pNew->nLTerm = 1;
+			pNew->aLTerm[0] = pTerm;
+			pNew->nEq = 1;
+			pNew->prereq = (mPrereq | pTerm->prereqRight) &
+				       ~pNew->maskSelf;
+			/*
+			 * A seek by the ordinality of another call reads
+			 * forward if this call is opened once. Otherwise it
+			 * can start over, so it has the estimates of the scan
+			 * and one less for the stop at its row: the join
+			 * order stays that of the scan.
+			 */
+			if (!pSrc->fg.isCorrelated &&
+			    where_term_is_ordinality_join(pTabList, pTerm)) {
+				pNew->nOut = 0;
+				pNew->rRun = 10;
+			} else {
+				pNew->nOut = scan_out;
+				pNew->rRun = rSize + 15;
+			}
+			pNew->wsFlags = WHERE_COLUMN_EQ | WHERE_ONEROW |
+					WHERE_TFUNC_SEEK;
+			rc = whereLoopInsert(pBuilder, pNew);
+			if (rc != 0)
+				return rc;
+		}
+		return rc;
 	}
 	if (pSrc->pIBIndex) {
 		/* An INDEXED BY clause specifies a particular index to use */
@@ -3139,7 +3212,11 @@ whereLoopAddAll(WhereLoopBuilder * pBuilder)
 		{
 			rc = whereLoopAddBtree(pBuilder, itemPrereq);
 		}
-		if (rc == 0)
+		/*
+		 * An OR loop drops duplicate rows by the primary key, and a
+		 * table function has none.
+		 */
+		if (rc == 0 && !pItem->fg.isTabFunc)
 			rc = whereLoopAddOr(pBuilder, itemPrereq, mUnusable);
 		mPrior |= pNew->maskSelf;
 		if (rc != 0)

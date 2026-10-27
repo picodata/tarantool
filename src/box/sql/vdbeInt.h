@@ -83,6 +83,8 @@ struct VdbeTableFuncCursor {
 	void *ctx;
 	/** True if ctx currently owns an open iterator. */
 	bool is_open;
+	/** True if the open iterator has returned its last row. */
+	bool is_eof;
 	/** True if VDBE must append an ordinality column. */
 	bool has_ordinality;
 	/** Next ordinality value to append. */

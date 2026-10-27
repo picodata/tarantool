@@ -409,6 +409,182 @@ g.test_join_rescan = function(cg)
     end)
 end
 
+g.test_ordinality_seek_or = function(cg)
+    cg.server:exec(function()
+        local res = box.execute([[
+            SELECT VALUE FROM unnest([10, 20, 30]) WITH ORDINALITY
+             WHERE ORDINALITY = 1 OR ORDINALITY = 3;
+        ]])
+        t.assert_equals(res.rows, {{10}, {30}})
+        res = box.execute([[
+            SELECT a.VALUE, b.VALUE
+              FROM unnest([1, 2]) WITH ORDINALITY a
+                   JOIN unnest([3, 4, 5]) WITH ORDINALITY b
+                   ON a.ORDINALITY = b.ORDINALITY OR
+                      (a.ORDINALITY + 1 = b.ORDINALITY AND b.VALUE > 0)
+             ORDER BY a.VALUE, b.VALUE;
+        ]])
+        t.assert_equals(res.rows, {{1, 3}, {1, 4}, {2, 4}, {2, 5}})
+    end)
+end
+
+g.test_ordinality_seek_types = function(cg)
+    cg.server:exec(function()
+        local sql = [[
+            SELECT VALUE FROM unnest([10, 20, 30]) WITH ORDINALITY
+             WHERE %s = %s;
+        ]]
+        local res = box.execute('EXPLAIN QUERY PLAN ' ..
+                                sql:format('ORDINALITY', '2e0'))
+        t.assert_str_contains(res.rows[1][4], 'USING ORDINALITY')
+        -- The seek finds the rows that the scan of ORDINALITY + 0 finds.
+        for _, value in ipairs({
+            '2', '2e0', '2.5e0', 'CAST(2 AS DECIMAL)', '0', '-1', 'NULL',
+            '18446744073709551615', 'CAST(2 AS SCALAR)',
+            "CAST('2' AS SCALAR)", "'2'", 'true', "x'02'",
+        }) do
+            local seek, seek_err = box.execute(sql:format('ORDINALITY',
+                                                          value))
+            local scan, scan_err = box.execute(sql:format('ORDINALITY + 0',
+                                                          value))
+            t.assert_equals(seek and seek.rows, scan and scan.rows, value)
+            t.assert_equals(seek_err and seek_err.message,
+                            scan_err and scan_err.message, value)
+        end
+        res = box.execute(sql:format('ORDINALITY', '2e0'))
+        t.assert_equals(res.rows, {{20}})
+        -- A value equal to no ordinality still opens the call, so the
+        -- seek gives the errors of its arguments as the scan does.
+        sql = 'SELECT * FROM %s WITH ORDINALITY WHERE %s = %s;'
+        for _, source in ipairs({'unnest(1)', 'generate_series(1, 3, 0)'}) do
+            for _, value in ipairs({'0', '-1', '2.5e0', 'NULL'}) do
+                res = box.execute('EXPLAIN QUERY PLAN ' ..
+                                  sql:format(source, 'ORDINALITY', value))
+                t.assert_str_contains(res.rows[1][4], 'USING ORDINALITY')
+                local _, seek_err = box.execute(sql:format(source,
+                                                           'ORDINALITY',
+                                                           value))
+                local _, scan_err = box.execute(sql:format(source,
+                                                           'ORDINALITY + 0',
+                                                           value))
+                t.assert(scan_err ~= nil, source)
+                t.assert_equals(seek_err and seek_err.message,
+                                scan_err.message, source .. ' ' .. value)
+            end
+        end
+    end)
+end
+
+g.test_ordinality_seek_steps = function(cg)
+    cg.server:exec(function()
+        -- A seek reads one row for each execution, under the step limit.
+        local sql = [[
+            SELECT VALUE FROM generate_series(1, 100000) WITH ORDINALITY
+             WHERE ORDINALITY = 100000;
+        ]]
+        local res = box.execute('EXPLAIN QUERY PLAN ' .. sql)
+        t.assert_str_contains(res.rows[1][4], 'USING ORDINALITY')
+        local _, err = box.execute(sql, {}, {{sql_vdbe_max_steps = 1000}})
+        t.assert_str_contains(err.message, 'max executed vdbe opcodes')
+        res = box.execute(sql, {}, {{sql_vdbe_max_steps = 0}})
+        t.assert_equals(res.rows, {{100000}})
+        -- Seeks past the last row find no row.
+        res = box.execute([[
+            SELECT a.VALUE, b.VALUE
+              FROM unnest([1, 2, 3, 4]) WITH ORDINALITY a
+                   LEFT JOIN unnest([10, 20]) WITH ORDINALITY b
+                   ON a.ORDINALITY = b.ORDINALITY;
+        ]])
+        t.assert_equals(res.rows, {{1, 10}, {2, 20}, {3, nil}, {4, nil}})
+        -- A seek behind the current row starts over: the ordinality of a
+        -- starts from 1 again for each x, and b stays open.
+        sql = [[
+            SELECT x.VALUE, a.VALUE, b.VALUE
+              FROM generate_series(1, 2) x
+                   JOIN unnest([x.VALUE, 0]) WITH ORDINALITY a ON true
+                   JOIN unnest([10, 20]) WITH ORDINALITY b
+                   ON b.ORDINALITY = a.ORDINALITY;
+        ]]
+        res = box.execute('EXPLAIN QUERY PLAN ' .. sql)
+        t.assert_str_contains(res.rows[3][4],
+                              'SEARCH TABLE UNNEST AS B USING ORDINALITY')
+        res = box.execute(sql)
+        t.assert_equals(res.rows, {{1, 1, 10}, {1, 0, 20},
+                                   {2, 2, 10}, {2, 0, 20}})
+    end)
+end
+
+g.test_ordinality_seek_cost = function(cg)
+    cg.server:exec(function()
+        -- A seek by an unordered value costs a scan: the index wins.
+        box.execute([[CREATE TABLE T_TFUNC_A(ID INT PRIMARY KEY, K INT);]])
+        box.execute([[CREATE INDEX T_TFUNC_A_K ON T_TFUNC_A(K);]])
+        box.execute([[
+            INSERT INTO T_TFUNC_A
+            SELECT VALUE, 10001 - VALUE FROM generate_series(1, 100);
+        ]])
+        local sql = [[
+            SELECT COUNT(*)
+              FROM T_TFUNC_A t
+                   JOIN generate_series(1, 10000) WITH ORDINALITY g
+                   ON g.ORDINALITY = t.K
+             WHERE t.ID IN (SELECT VALUE FROM generate_series(1, 100));
+        ]]
+        local res = box.execute('EXPLAIN QUERY PLAN ' .. sql)
+        t.assert_str_contains(res.rows[1][4], 'SCAN TABLE GENERATE_SERIES AS G')
+        res = box.execute(sql)
+        t.assert_equals(res.rows, {{100}})
+        -- The ordinality of a table function is read in order: a cheap seek.
+        res = box.execute([[
+            EXPLAIN QUERY PLAN
+            SELECT COUNT(*)
+              FROM T_TFUNC_A t
+                   JOIN generate_series(1, 100) WITH ORDINALITY a ON true
+                   JOIN generate_series(1, 10000) WITH ORDINALITY g
+                   ON g.ORDINALITY = a.ORDINALITY;
+        ]])
+        local plan = {}
+        for _, row in ipairs(res.rows) do
+            table.insert(plan, row[4])
+        end
+        t.assert_str_contains(table.concat(plan, '\n'),
+                              'SEARCH TABLE GENERATE_SERIES AS G USING ' ..
+                              'ORDINALITY')
+        -- Other seeks keep the join order of the scan: the lookup of an
+        -- empty table goes first, before a call opened for each row and
+        -- before a constant far ahead.
+        box.execute([[CREATE TABLE T_TFUNC_B(ID INT PRIMARY KEY);]])
+        res = box.execute([[
+            EXPLAIN QUERY PLAN
+            SELECT COUNT(*)
+              FROM generate_series(1, 1000) WITH ORDINALITY a
+                   JOIN generate_series(a.VALUE, a.VALUE + 1000)
+                        WITH ORDINALITY b ON b.ORDINALITY = a.ORDINALITY
+                   JOIN T_TFUNC_B t ON t.ID = a.VALUE;
+        ]])
+        t.assert_str_contains(res.rows[2][4], 'T_TFUNC_B')
+        t.assert_str_contains(res.rows[3][4], 'AS B USING ORDINALITY')
+        res = box.execute([[
+            EXPLAIN QUERY PLAN
+            SELECT COUNT(*)
+              FROM T_TFUNC_B t
+                   JOIN generate_series(1, 100000) WITH ORDINALITY g
+                   ON g.ORDINALITY = 100000
+             WHERE t.ID = 2;
+        ]])
+        t.assert_str_contains(res.rows[1][4], 'T_TFUNC_B')
+        t.assert_str_contains(res.rows[2][4], 'AS G USING ORDINALITY')
+        -- The seek still wins over the scan it replaces.
+        res = box.execute([[
+            EXPLAIN QUERY PLAN
+            SELECT * FROM generate_series(1, 3) a
+                 LEFT JOIN generate_series(1, 1) WITH ORDINALITY b
+                 ON b.ORDINALITY = 1;
+        ]])
+        t.assert_str_contains(res.rows[2][4], 'AS B USING ORDINALITY')
+    end)
+end
+
 g.test_builtin_not_in_func_space = function(cg)
     cg.server:exec(function()
         local tuple = box.space._func.index.name:get('GENERATE_SERIES')

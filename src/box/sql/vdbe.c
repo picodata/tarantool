@@ -307,6 +307,7 @@ vdbe_table_func_open(VdbeCursor *cursor)
 	}
 	tfunc->ctx = ctx;
 	tfunc->is_open = true;
+	tfunc->is_eof = false;
 	tfunc->ordinality = 1;
 	return 0;
 }
@@ -350,6 +351,14 @@ vdbe_table_func_next(VdbeCursor *cursor, int *eof)
 {
 	assert(cursor->eCurType == CURTYPE_TABLEFUNC);
 	struct VdbeTableFuncCursor *tfunc = cursor->uc.pTFunc;
+	/*
+	 * A LEFT JOIN null row and a seek past the end read again after
+	 * the last row; the iterator is not asked again.
+	 */
+	if (tfunc->is_eof) {
+		*eof = 1;
+		return 0;
+	}
 	const char *row;
 	const char *row_end;
 	struct diag *diag = &fiber()->diag;
@@ -362,6 +371,7 @@ vdbe_table_func_next(VdbeCursor *cursor, int *eof)
 	}
 	if (row == NULL) {
 		*eof = 1;
+		tfunc->is_eof = true;
 		cursor->nullRow = 1;
 		cursor->cacheStatus = CACHE_STALE;
 		return 0;
@@ -425,6 +435,43 @@ vdbe_table_func_rewind(VdbeCursor *cursor, int *eof)
 	if (vdbe_table_func_open(cursor) != 0)
 		return -1;
 	return vdbe_table_func_next(cursor, eof);
+}
+
+/**
+ * Move a table function cursor one row towards the row with the given
+ * ordinality: read the next row, or start over when the target is behind.
+ * Sets *found to 1 at the target, to 0 if there is no such row, and to -1
+ * if the target is still ahead. The target 0 only opens the cursor.
+ */
+static int
+vdbe_table_func_seek_step(VdbeCursor *cursor, uint64_t target, int *found)
+{
+	assert(cursor->eCurType == CURTYPE_TABLEFUNC);
+	struct VdbeTableFuncCursor *tfunc = cursor->uc.pTFunc;
+	assert(tfunc->has_ordinality);
+	*found = 0;
+	/* ordinality is the next row's; the current row is one less. */
+	if (tfunc->is_open && cursor->nullRow == 0 &&
+	    tfunc->ordinality - 1 == target) {
+		*found = 1;
+		return 0;
+	}
+	if (!tfunc->is_open || (target != 0 && tfunc->ordinality > target)) {
+		vdbe_table_func_close(cursor);
+		cursor->nullRow = 1;
+		cursor->cacheStatus = CACHE_STALE;
+		if (vdbe_table_func_open(cursor) != 0)
+			return -1;
+	}
+	/* No row has ordinality 0, but the open has checked the arguments. */
+	if (target == 0)
+		return 0;
+	int eof;
+	if (vdbe_table_func_next(cursor, &eof) != 0)
+		return -1;
+	if (!eof)
+		*found = tfunc->ordinality - 1 == target ? 1 : -1;
+	return 0;
 }
 
 struct space *
@@ -3886,6 +3933,53 @@ case OP_TFuncNext: {        /* jump */
 		p->aCounter[pOp->p5]++;
 		goto jump_to_p2;
 	}
+	break;
+}
+
+/* Opcode: TFuncSeek P1 P2 P3 * *
+ * Synopsis: c[P1].seek(r[P3]); IF not found THEN GOTO P2 END
+ *
+ * Position table function cursor P1 at the row whose ordinality equals
+ * register P3, as the comparison ORDINALITY = r[P3] does. Jump to P2 if
+ * there is no such row.
+ *
+ * One execution reads one row: the instruction runs again until it is at
+ * the row, so the limits of the VDBE are checked between rows.
+ */
+case OP_TFuncSeek: {        /* jump */
+	assert(pOp->p1 >= 0 && pOp->p1 < p->nCursor);
+	VdbeCursor *pC = p->apCsr[pOp->p1];
+	assert(pC != NULL);
+	assert(pC->eCurType == CURTYPE_TABLEFUNC);
+	assert(pOp->p2 < p->nOp);
+	struct Mem *target_mem = &aMem[pOp->p3];
+	/* A value equal to no ordinality is 0: the call is still opened. */
+	uint64_t target = 0;
+	if (!mem_is_null(target_mem)) {
+		/* The type error of the comparison, as a scan gives it. */
+		struct Mem ordinality;
+		mem_create(&ordinality);
+		mem_set_uint(&ordinality, 1);
+		int cmp;
+		if (mem_cmp(&ordinality, target_mem, &cmp, NULL) != 0)
+			goto abort_due_to_error;
+		/* A number equal to an integer, as 2e0, is that integer. */
+		struct Mem value;
+		mem_create(&value);
+		mem_copy_as_ephemeral(&value, target_mem);
+		if (mem_is_num(&value) && mem_to_int_precise(&value) == 0 &&
+		    mem_is_uint(&value))
+			target = value.u.u;
+	}
+	int found;
+	if (vdbe_table_func_seek_step(pC, target, &found) != 0)
+		goto abort_due_to_error;
+	if (found < 0) {
+		pOp--;
+		break;
+	}
+	if (found == 0)
+		goto jump_to_p2;
 	break;
 }
 
