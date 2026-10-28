@@ -795,6 +795,16 @@ API_EXPORT uint32_t
 box_effective_user_id(void);
 
 /**
+ * Return the effective user name. Unlike the session
+ * user, it is changed by box.session.su(user, func)
+ * for the duration of func.
+ * \retval NULL on error (check box_error_last())
+ * \retval pointer to user name on success
+ */
+API_EXPORT const char *
+box_effective_user_name(void);
+
+/**
  * Return the user identifier by name.
  * \param name user name
  * \param name_end end of user name

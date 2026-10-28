@@ -4073,6 +4073,18 @@ box_effective_user_id(void)
 	return effective_user()->uid;
 }
 
+API_EXPORT const char *
+box_effective_user_name(void)
+{
+	uint32_t uid = effective_user()->uid;
+	struct user *user = user_by_id(uid);
+	if (user == NULL) {
+		diag_set(ClientError, ER_NO_SUCH_USER, int2str(uid));
+		return NULL;
+	}
+	return user->def->name;
+}
+
 API_EXPORT int
 box_user_id_by_name(const char *name, const char *name_end, uint32_t *uid)
 {

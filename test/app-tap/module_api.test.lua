@@ -515,6 +515,20 @@ local function test_box_session_user_name_matches(test, module)
         'same value')
 end
 
+local function test_box_effective_user_name_matches(test, module)
+    test:plan(3)
+
+    test:ok(module.box_effective_user_name_matches(
+                box.session.effective_user()),
+        'verify that Lua/C effective user APIs return the same value')
+    box.session.su('guest', function()
+        test:ok(module.box_effective_user_name_matches('guest'),
+            'effective user name follows box.session.su(user, func)')
+        test:ok(module.box_session_user_name_matches('admin'),
+            'session user name does not follow box.session.su(user, func)')
+    end)
+end
+
 -- Basic test of `box_iproto_send` correctness: main functional testing is done
 -- in test/box-luatest/gh_7897_sending_arbitrary_iproto_packets_test.lua.
 local function test_box_iproto_send(test, module)
@@ -754,7 +768,7 @@ local function test_box_access_check_space(test)
 end
 
 require('tap').test("module_api", function(test)
-    test:plan(61)
+    test:plan(62)
     local status, module = pcall(require, 'module_api')
     test:is(status, true, "module")
     test:ok(status, "module is loaded")
@@ -790,6 +804,7 @@ require('tap').test("module_api", function(test)
     test:test("box_schema_version_matches", test_box_schema_version_matches, module)
     test:test("box_session_id_matches", test_box_session_id_matches, module)
     test:test("box_session_user_name_matches", test_box_session_user_name_matches, module)
+    test:test("box_effective_user_name_matches", test_box_effective_user_name_matches, module)
     test:test("box_iproto_send", test_box_iproto_send, module)
     test:test("box_iproto_override", test_box_iproto_override, module)
     test:test("box_access_check_space", test_box_access_check_space)
