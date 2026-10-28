@@ -184,6 +184,7 @@ sql_expr_type(struct Expr *pExpr)
 	case TK_OR:
 	case TK_ISNULL:
 	case TK_NOTNULL:
+	case TK_TRUTH:
 	case TK_BETWEEN:
 	case TK_EXISTS:
 	case TK_IN:
@@ -3789,6 +3790,35 @@ exprCodeVector(Parse * pParse, Expr * p, int *piFreeable)
 	return iResult;
 }
 
+/**
+ * Generate code for TK_TRUTH that jumps to @a dest if the predicate holds,
+ * or if it does not hold when @a negate is set. The predicate is never NULL,
+ * so the jump on NULL of the operand is fixed by the predicate itself.
+ */
+static void
+expr_code_truth_jump(struct Parse *parse, struct Expr *expr, int dest,
+		     bool negate)
+{
+	assert(expr->op == TK_TRUTH);
+	bool is_not = expr->op2 == TK_NOT;
+	/* "x IS TRUE" does not hold exactly when "x IS NOT TRUE" holds. */
+	if (negate)
+		is_not = !is_not;
+	struct Expr *left = expr->pLeft;
+	if (is_not) {
+		/* IS NOT TRUE and IS NOT FALSE hold for NULL. */
+		if (expr->pRight->op == TK_TRUE)
+			sqlExprIfFalse(parse, left, dest, SQL_JUMPIFNULL);
+		else
+			sqlExprIfTrue(parse, left, dest, SQL_JUMPIFNULL);
+	} else {
+		if (expr->pRight->op == TK_TRUE)
+			sqlExprIfTrue(parse, left, dest, 0);
+		else
+			sqlExprIfFalse(parse, left, dest, 0);
+	}
+}
+
 /*
  * Generate code into the current Vdbe to evaluate the given
  * expression.  Attempt to store the results in register "target".
@@ -4080,6 +4110,14 @@ sqlExprCodeTarget(Parse * pParse, Expr * pExpr, int target)
 			addr = sqlVdbeAddOp1(v, op, r1);
 			sqlVdbeAddOp2(v, OP_Bool, false, target);
 			sqlVdbeJumpHere(v, addr);
+			break;
+		}
+	case TK_TRUTH:{
+			int end = sqlVdbeMakeLabel(v);
+			sqlVdbeAddOp2(v, OP_Bool, true, target);
+			expr_code_truth_jump(pParse, pExpr, end, false);
+			sqlVdbeAddOp2(v, OP_Bool, false, target);
+			sqlVdbeResolveLabel(v, end);
 			break;
 		}
 	case TK_AGG_FUNCTION:{
@@ -4893,6 +4931,10 @@ sqlExprIfTrue(Parse * pParse, Expr * pExpr, int dest, int jumpIfNull)
 			sqlVdbeAddOp2(v, op, r1, dest);
 			break;
 		}
+	case TK_TRUTH:{
+			expr_code_truth_jump(pParse, pExpr, dest, false);
+			break;
+		}
 	case TK_BETWEEN:{
 			exprCodeBetween(pParse, pExpr, dest, sqlExprIfTrue,
 					jumpIfNull);
@@ -5051,6 +5093,10 @@ sqlExprIfFalse(Parse * pParse, Expr * pExpr, int dest, int jumpIfNull)
 			sqlVdbeAddOp2(v, op, r1, dest);
 			break;
 		}
+	case TK_TRUTH:{
+			expr_code_truth_jump(pParse, pExpr, dest, true);
+			break;
+		}
 	case TK_BETWEEN:{
 			exprCodeBetween(pParse, pExpr, dest, sqlExprIfFalse,
 					jumpIfNull);
@@ -5163,6 +5209,8 @@ sqlExprCompare(Expr * pA, Expr * pB, int iTab)
 		}
 	}
 	if ((pA->flags & EP_Distinct) != (pB->flags & EP_Distinct))
+		return 2;
+	if (pA->op == TK_TRUTH && pA->op2 != pB->op2)
 		return 2;
 	if (ALWAYS((combinedFlags & EP_TokenOnly) == 0)) {
 		if (combinedFlags & EP_xIsSelect)

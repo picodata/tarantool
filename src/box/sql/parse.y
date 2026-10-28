@@ -1255,11 +1255,36 @@ expr(A) ::= expr(A) likeop(OP) expr(Y) ESCAPE expr(E).  [LIKE_KW]  {
   if( A ) A->flags |= EP_InfixFunc;
 }
 
-// Tokens TK_ISNULL and TK_NOTNULL defined in extra tokens and are identifiers
-// for operations IS NULL and IS NOT NULL.
+// Tokens TK_ISNULL, TK_NOTNULL and TK_TRUTH defined in extra tokens and are
+// identifiers for operations IS [NOT] NULL and IS [NOT] TRUE|FALSE.
+// IS [NOT] UNKNOWN is IS [NOT] NULL: the keyword UNKNOWN is TK_NULL.
 
 expr(A) ::= expr(A) IS NULL.   {A = sqlPExpr(pParse,TK_ISNULL,A,0);}
 expr(A) ::= expr(A) IS NOT NULL.   {A = sqlPExpr(pParse,TK_NOTNULL,A,0);}
+
+%include {
+  /*
+  ** Construct a TK_TRUTH node for "x IS [NOT] TRUE|FALSE". The literal
+  ** goes to pRight and op2 is TK_IS or TK_NOT.
+  */
+  static Expr *exprTruth(
+    Parse *pParse,         /* Parsing context to record errors */
+    Expr *pOperand,        /* The operand */
+    int truth,             /* TK_TRUE or TK_FALSE */
+    int op2                /* TK_IS or TK_NOT */
+  ){
+    Expr *pTruth = sql_expr_new_anon(truth);
+    pTruth->type = FIELD_TYPE_BOOLEAN;
+    Expr *p = sqlPExpr(pParse, TK_TRUTH, pOperand, pTruth);
+    p->op2 = op2;
+    return p;
+  }
+}
+
+expr(A) ::= expr(A) IS TRUE.  {A = exprTruth(pParse,A,TK_TRUE,TK_IS);}
+expr(A) ::= expr(A) IS FALSE. {A = exprTruth(pParse,A,TK_FALSE,TK_IS);}
+expr(A) ::= expr(A) IS NOT TRUE.  {A = exprTruth(pParse,A,TK_TRUE,TK_NOT);}
+expr(A) ::= expr(A) IS NOT FALSE. {A = exprTruth(pParse,A,TK_FALSE,TK_NOT);}
 
 expr(A) ::= NOT(B) expr(X).  
               {A = sqlPExpr(pParse, @B, X, 0);/*A-overwrites-B*/}

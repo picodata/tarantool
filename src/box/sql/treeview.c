@@ -562,6 +562,14 @@ sqlTreeViewExpr(TreeView * pView, const Expr * pExpr, u8 moreToFollow)
 	case TK_NOTNULL:
 		zUniOp = "NOT NULL";
 		break;
+	case TK_TRUTH:
+		if (pExpr->op2 == TK_NOT)
+			zUniOp = pExpr->pRight->op == TK_TRUE ?
+				 "IS NOT TRUE" : "IS NOT FALSE";
+		else
+			zUniOp = pExpr->pRight->op == TK_TRUE ?
+				 "IS TRUE" : "IS FALSE";
+		break;
 
 	case TK_SPAN:{
 			sqlTreeViewLine(pView, "SPAN %Q", pExpr->u.zToken);

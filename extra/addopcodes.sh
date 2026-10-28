@@ -51,6 +51,7 @@ extras="            \
     ASTERISK        \
     SPAN            \
     LINEFEED        \
+    TRUTH           \
     SPACE           \
     ILLEGAL         \
     GETITEM         \
