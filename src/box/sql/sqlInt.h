@@ -1410,6 +1410,10 @@ typedef int ynVar;
  */
 struct Expr {
 	u8 op;			/* Operation performed by this node */
+	u8 op2;			/* TK_REGISTER, TK_TRUTH: original Expr.op
+				 * TK_COLUMN_REF: the value of p5 for OP_Column
+				 * TK_AGG_FUNCTION: nesting depth
+				 */
 	union {
 		/** The type of the column. */
 		enum field_type type;
@@ -1454,10 +1458,6 @@ struct Expr {
 				 */
 	i16 iAgg;		/* Which entry in pAggInfo->aCol[] or ->aFunc[] */
 	i16 iRightJoinTable;	/* If EP_FromJoin, the right table of the join */
-	u8 op2;			/* TK_REGISTER: original value of Expr.op
-				 * TK_COLUMN_REF: the value of p5 for OP_Column
-				 * TK_AGG_FUNCTION: nesting depth
-				 */
 	AggInfo *pAggInfo;	/* Used by TK_AGG_COLUMN and TK_AGG_FUNCTION */
 	union {
 		/** TK_COLUMN: Pointer for table relative definition. */
