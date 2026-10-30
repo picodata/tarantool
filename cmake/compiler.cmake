@@ -287,7 +287,12 @@ macro(enable_tnt_compile_flags)
         add_compile_flags("CXX"
             "-Wno-invalid-offsetof"
         )
-        add_compile_flags("C;CXX" "-Wno-gnu-alignof-expression")
+        # The warning is of clang only. GCC reports an unknown -Wno-*
+        # option if a file has another warning, and an old GCC fails
+        # on it with -Werror.
+        if (CMAKE_COMPILER_IS_CLANG)
+            add_compile_flags("C;CXX" "-Wno-gnu-alignof-expression")
+        endif()
     endif()
 
     if (CMAKE_COMPILER_IS_GNUCC)
