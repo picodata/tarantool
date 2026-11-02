@@ -3720,7 +3720,6 @@ sql_name_from_token(struct Token *t)
 
 int sqlExprCompare(Expr *, Expr *, int);
 int sqlExprListCompare(ExprList *, ExprList *, int);
-int sqlExprImpliesExpr(Expr *, Expr *, int);
 void sqlExprAnalyzeAggregates(NameContext *, Expr *);
 void sqlExprAnalyzeAggList(NameContext *, ExprList *);
 /**

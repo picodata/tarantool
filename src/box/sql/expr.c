@@ -5222,46 +5222,6 @@ sqlExprListCompare(ExprList * pA, ExprList * pB, int iTab)
 }
 
 /*
- * Return true if we can prove the pE2 will always be true if pE1 is
- * true.  Return false if we cannot complete the proof or if pE2 might
- * be false.  Examples:
- *
- *     pE1: x==5       pE2: x==5             Result: true
- *     pE1: x>0        pE2: x==5             Result: false
- *     pE1: x=21       pE2: x=21 OR y=43     Result: true
- *     pE1: x!=123     pE2: x IS NOT NULL    Result: true
- *     pE1: x!=?1      pE2: x IS NOT NULL    Result: true
- *     pE1: x IS NULL  pE2: x IS NOT NULL    Result: false
- *     pE1: x IS ?2    pE2: x IS NOT NULL    Reuslt: false
- *
- * When comparing TK_COLUMN_REF nodes between pE1 and pE2, if
- * pE2 has Expr.iTable<0 then assume a table number given by iTab.
- *
- * When in doubt, return false.  Returning true might give a performance
- * improvement.  Returning false might cause a performance reduction, but
- * it will always give the correct answer and is hence always safe.
- */
-int
-sqlExprImpliesExpr(Expr * pE1, Expr * pE2, int iTab)
-{
-	if (sqlExprCompare(pE1, pE2, iTab) == 0) {
-		return 1;
-	}
-	if (pE2->op == TK_OR && (sqlExprImpliesExpr(pE1, pE2->pLeft, iTab)
-				 || sqlExprImpliesExpr(pE1, pE2->pRight,
-							   iTab))
-	    ) {
-		return 1;
-	}
-	if (pE2->op == TK_NOTNULL && pE1->op != TK_ISNULL) {
-		Expr *pX = sqlExprSkipCollate(pE1->pLeft);
-		if (sqlExprCompare(pX, pE2->pLeft, iTab) == 0)
-			return 1;
-	}
-	return 0;
-}
-
-/*
  * Structure used to pass information through the Walker in order to
  * implement sqlReferencesSrcList().
  */
