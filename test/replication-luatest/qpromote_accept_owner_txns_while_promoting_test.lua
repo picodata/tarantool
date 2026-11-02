@@ -181,6 +181,72 @@ g.test_promoter_ack_does_not_let_old_owner_confirm = function(g)
     end
 end
 
+-- Same setup, but n1's quorum is lowered by hand while n3's PROMOTE is
+-- pending, so n1 confirms its tail before anyone can freeze its queue. With
+-- the quorum left alone n1 doesn't get here, see the test above.
+--
+-- n3 ignores the CONFIRM: while a PROMOTE is pending, the CONFIRM may be the
+-- one of a PROMOTE, so txn_limbo_filter_confirm() lets it through, and it
+-- confirms nothing. The PROMOTE then rolls back the tail n1 has confirmed, and
+-- it's n1 which finds out, once it gets the PROMOTE. The test pins this: the
+-- instances disagree on the tail, and n1 stops instead of following.
+g.test_old_owner_confirm_reaches_promoter = function(g)
+    t.tarantool.skip_if_not_debug()
+    local n1 = g.cluster.servers[1]
+    local n2 = g.cluster.servers[2]
+    local n3 = g.cluster.servers[3]
+    local n1_id = n1:get_instance_id()
+
+    common.promote_and_cut_off(n1, n2, n3)
+    local tail_lsn = common.spawn_sync_write(n1, 1)
+    common.write_pending_promote(n2, n3)
+
+    common.server_set_synchro_quorum(n1, 1)
+    n1:exec(function()
+        t.helpers.retrying({}, function()
+            t.assert_equals(box.info.synchro.queue.len, 0)
+        end)
+    end)
+    t.assert_equals(common.sync_write_result(n1, 1), {status = 'ok'})
+
+    -- The CONFIRM follows the tail in n1's WAL. The tail stays in n3's queue.
+    common.server_set_replication(n3, {n1.net_box_uri})
+    common.wait_for_row_in_queue(n3, n1, tail_lsn + 1, 1)
+    n3:exec(function(n1_id)
+        t.assert_equals(box.info.replication[n1_id].upstream.status, 'follow')
+        t.assert_equals(box.info.synchro.queue.owner, n1_id)
+    end, {n1_id})
+    common.wait_for_promote_queue_len(n3, 1)
+
+    -- The PROMOTE doesn't cover the tail and rolls it back.
+    common.server_set_replication(n2, {n3.net_box_uri})
+    common.wait_for_promote_queue_len(n3, 0)
+    n2:wait_for_vclock_of(n3)
+    for _, server in ipairs({n2, n3}) do
+        server:exec(function(n3_id)
+            t.helpers.retrying({}, function()
+                t.assert_equals(box.info.synchro.queue.owner, n3_id)
+                t.assert_equals(box.info.synchro.queue.len, 0)
+            end)
+            t.assert_equals(box.space.test:get({1}), nil)
+        end, {n3:get_instance_id()})
+    end
+
+    -- n1 keeps the tail and refuses the PROMOTE.
+    common.server_set_replication(n1, {n3.net_box_uri})
+    t.helpers.retrying({}, function()
+        local upstream = upstream_of(n1, n3)
+        t.assert_equals(upstream.status, 'stopped')
+        t.assert_str_contains(upstream.message, 'Split-Brain discovered: ' ..
+                              'got a request with lsn from an already ' ..
+                              'processed range')
+    end)
+    n1:exec(function(n1_id)
+        t.assert_equals(box.info.synchro.queue.owner, n1_id)
+        t.assert_equals(box.space.test:get({1}), {1})
+    end, {n1_id})
+end
+
 -- n1 times out and rolls its tail back before n3 subscribes to it. Had n3
 -- subscribed first, its ack would have frozen n1's queue, and n1 could never
 -- time out. n3 gets both the tail and the ROLLBACK while its PROMOTE is
