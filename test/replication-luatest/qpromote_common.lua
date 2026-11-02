@@ -244,6 +244,76 @@ local function wait_for_promote_queue_len(server, len)
     end)
 end
 
+-- Write to the synchronous space in a fiber, so that a transaction waiting
+-- for a quorum doesn't block the test, and wait until it reaches WAL. The
+-- outcome is kept in _G.sync_writes[key]. Returns the LSN of the transaction.
+local function spawn_sync_write(server, key)
+    return server:exec(function(key)
+        local lsn = box.info.lsn
+        rawset(_G, 'sync_writes', rawget(_G, 'sync_writes') or {})
+        _G.sync_writes[key] = {status = 'pending'}
+        require('fiber').new(function()
+            local ok, err = pcall(box.space.test.replace, box.space.test, {key})
+            _G.sync_writes[key] = ok and {status = 'ok'} or
+                                  {status = 'error', code = err.code}
+        end)
+        t.helpers.retrying({}, function()
+            t.assert_equals(box.info.lsn, lsn + 1)
+        end)
+        return box.info.lsn
+    end, {key})
+end
+
+local function sync_write_result(server, key)
+    return server:exec(function(key)
+        return _G.sync_writes[key]
+    end, {key})
+end
+
+-- n1 takes the queue over and gets cut off from n2 and n3, which keep
+-- following each other.
+local function promote_and_cut_off(n1, n2, n3)
+    promote(n1)
+    n2:wait_for_vclock_of(n1)
+    n3:wait_for_vclock_of(n1)
+    server_set_replication(n1, {})
+    make_connected_mesh({n2, n3})
+end
+
+-- n3 wins the elections with n2's vote. n2 stops following n3 before the
+-- PROMOTE is written, so the PROMOTE waits for a quorum with n3's own ack only.
+local function write_pending_promote(n2, n3)
+    spawn_stuck_promote(n3)
+    server_set_replication(n2, {})
+    remove_wal_delay_on_xrow_type(n3)
+    wait_for_promote_queue_len(n3, 1)
+end
+
+-- Wait until server has got the row of source with the given LSN and has
+-- queue_len transactions in the limbo.
+local function wait_for_row_in_queue(server, source, lsn, queue_len)
+    local source_id = source:get_instance_id()
+    t.helpers.retrying({}, function()
+        t.assert_equals(server:exec(function(id)
+            return {box.info.vclock[id], box.info.synchro.queue.len}
+        end, {source_id}), {lsn, queue_len})
+    end)
+end
+
+-- n1's tail gets to n3 through n2, while n3's PROMOTE is pending. n1 learns
+-- the new term first, so that it doesn't confirm the tail once n2 acks it.
+local function deliver_tail_through_replica(n1, n2)
+    server_set_replication(n1, {n2.net_box_uri})
+    t.helpers.retrying({}, function()
+        t.assert_equals(n1:exec(function()
+            return box.info.election.term
+        end), n2:exec(function()
+            return box.info.election.term
+        end))
+    end)
+    server_set_replication(n2, {n1.net_box_uri})
+end
+
 local function make_test_group(opts)
     checks({ skip_start = '?boolean', nodes = "number", quorum = "number"})
 
@@ -369,6 +439,12 @@ local common = {
     ensure_healthy = ensure_healthy,
     promote_index = promote_index,
     wait_for_promote_queue_len = wait_for_promote_queue_len,
+    spawn_sync_write = spawn_sync_write,
+    sync_write_result = sync_write_result,
+    promote_and_cut_off = promote_and_cut_off,
+    write_pending_promote = write_pending_promote,
+    wait_for_row_in_queue = wait_for_row_in_queue,
+    deliver_tail_through_replica = deliver_tail_through_replica,
 }
 
 return common
