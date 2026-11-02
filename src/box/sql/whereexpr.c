@@ -558,8 +558,7 @@ exprAnalyzeOrTerm(SrcList * pSrc,	/* the FROM clause */
 	 * stored in a WhereClause structure containing within the WhereOrInfo
 	 * object that is attached to the original OR clause term.
 	 */
-	assert((pTerm->wtFlags & (TERM_DYNAMIC | TERM_ORINFO | TERM_ANDINFO)) ==
-	       0);
+	assert((pTerm->wtFlags & (TERM_ORINFO | TERM_ANDINFO)) == 0);
 	assert(pExpr->op == TK_OR);
 	pOrInfo = sql_xmalloc0(sizeof(*pOrInfo));
 	pTerm->u.pOrInfo = pOrInfo;
@@ -938,6 +937,47 @@ exprMightBeIndexed(int op,	/* The specific comparison operator */
 	return 0;
 }
 
+/**
+ * As a WHERE term, "x IS TRUE" selects the same rows as "x = TRUE", and
+ * "x IS NOT TRUE" the same rows as "x = FALSE OR x IS NULL". Construct a
+ * virtual term of that form so that an index on x can drive the search.
+ * x can be NULL also on the right side of a LEFT JOIN. Only a BOOLEAN x is
+ * allowed: for other types the index search skips the values that must
+ * raise a type mismatch.
+ */
+static void
+expr_analyze_truth(struct SrcList *src, struct WhereClause *wc, int idx_term)
+{
+	struct Expr *expr = wc->a[idx_term].pExpr;
+	struct Expr *left = expr->pLeft;
+	assert(expr->op == TK_TRUTH);
+	if (left->op != TK_COLUMN_REF || left->iColumn < 0 ||
+	    sql_expr_type(left) != FIELD_TYPE_BOOLEAN ||
+	    ExprHasProperty(expr, EP_FromJoin))
+		return;
+	bool is_not = expr->op2 == TK_NOT;
+	bool is_or = is_not && sqlExprCanBeNull(left);
+	/* exprAnalyzeOrTerm() accepts only a term of an AND clause. */
+	if (is_or && wc->op != TK_AND)
+		return;
+	bool is_true = (expr->pRight->op == TK_TRUE) != is_not;
+	struct Expr *truth = sql_expr_new_anon(is_true ? TK_TRUE : TK_FALSE);
+	truth->type = FIELD_TYPE_BOOLEAN;
+	struct Parse *parse = wc->pWInfo->pParse;
+	struct Expr *new_expr = sqlPExpr(parse, TK_EQ, sqlExprDup(left, 0),
+					 truth);
+	if (is_or) {
+		struct Expr *is_null = sqlPExpr(parse, TK_ISNULL,
+						sqlExprDup(left, 0), NULL);
+		new_expr = sqlPExpr(parse, TK_OR, new_expr, is_null);
+	}
+	int idx_new = whereClauseInsert(wc, new_expr,
+					TERM_VIRTUAL | TERM_DYNAMIC);
+	exprAnalyze(src, wc, idx_new);
+	markTermAsChild(wc, idx_new, idx_term);
+	wc->a[idx_term].wtFlags |= TERM_COPIED;
+}
+
 /*
  * The input to this routine is an WhereTerm structure with only the
  * "pExpr" field filled in.  The job of this routine is to analyze the
@@ -1258,6 +1298,9 @@ exprAnalyze(SrcList * pSrc,	/* the FROM clause */
 			pNewTerm->prereqAll = pTerm->prereqAll;
 		}
 	}
+
+	if (pExpr->op == TK_TRUTH)
+		expr_analyze_truth(pSrc, pWC, idxTerm);
 
 	/* Prevent ON clause terms of a LEFT JOIN from being used to drive
 	 * an index for tables to the left of the join.

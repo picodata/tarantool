@@ -261,6 +261,106 @@ g.test_precedence = function()
     end)
 end
 
+-- An index on the operand drives the search: IS TRUE and IS FALSE select
+-- the same rows as = TRUE and = FALSE. IS NOT TRUE selects the same rows as
+-- = FALSE OR IS NULL, so it searches the index twice. On a NOT NULL column
+-- it selects the same rows as = FALSE.
+g.test_index = function()
+    g.server:exec(function(predicates)
+        box.execute([[CREATE INDEX ib ON t (b);]])
+        local function plan(from)
+            local sql = 'EXPLAIN QUERY PLAN SELECT 1 FROM ' .. from .. ';'
+            local res = {}
+            for _, row in pairs(box.execute(sql).rows) do
+                table.insert(res, row[4])
+            end
+            return res
+        end
+        -- Each step of the plan contains the matching string.
+        local function assert_plan(from, expected)
+            local steps = plan(from)
+            t.assert_equals(#steps, #expected, from)
+            for i, e in ipairs(expected) do
+                t.assert_str_contains(steps[i], e, false, from)
+            end
+        end
+        local search = 'SEARCH TABLE T USING COVERING INDEX IB (B=?)'
+        assert_plan('t WHERE b IS TRUE', {search})
+        assert_plan('t WHERE b IS FALSE', {search})
+        assert_plan('t WHERE b IS NOT TRUE', {search, search})
+        assert_plan('t WHERE b IS NOT FALSE', {search, search})
+
+        for _, p in pairs(predicates) do
+            local sql = ('SELECT id FROM t WHERE b %s ORDER BY id;')
+                        :format(p[1])
+            local expected = {}
+            for id = 1, 3 do
+                if p[2][id] then
+                    table.insert(expected, {id})
+                end
+            end
+            t.assert_equals(box.execute(sql).rows, expected, p[1])
+        end
+        local sql = 'SELECT id FROM t WHERE b IS TRUE AND b IS NOT FALSE;'
+        t.assert_equals(box.execute(sql).rows, {{1}})
+        sql = 'SELECT id FROM t WHERE b IS NOT TRUE AND b IS NOT FALSE;'
+        t.assert_equals(box.execute(sql).rows, {{3}})
+
+        -- A virtual OR term is not added to an OR clause.
+        assert_plan('t WHERE b IS NOT TRUE OR id = 1', {'SCAN TABLE T'})
+        sql = 'SELECT id FROM t WHERE b IS NOT TRUE OR id = 1 ORDER BY id;'
+        t.assert_equals(box.execute(sql).rows, {{1}, {2}, {3}})
+        box.execute([[DROP INDEX ib ON t;]])
+
+        box.execute([[CREATE TABLE n (id INT PRIMARY KEY,
+                                      b BOOLEAN NOT NULL);]])
+        box.execute([[CREATE INDEX ib ON n (b);]])
+        box.execute([[INSERT INTO n VALUES (1, TRUE), (2, FALSE);]])
+        assert_plan('n WHERE b IS NOT TRUE',
+                    {'SEARCH TABLE N USING COVERING INDEX IB (B=?)'})
+        sql = 'SELECT id FROM n WHERE b IS NOT TRUE;'
+        t.assert_equals(box.execute(sql).rows, {{2}})
+        sql = 'SELECT id FROM n WHERE b IS NOT FALSE;'
+        t.assert_equals(box.execute(sql).rows, {{1}})
+
+        -- A NOT NULL column is NULL in a row that LEFT JOIN adds. The
+        -- search for b = FALSE must not skip the row that ON selects.
+        sql = [[SELECT t.id, n.id FROM t LEFT JOIN n ON n.b
+                WHERE n.b IS NOT TRUE;]]
+        t.assert_equals(box.execute(sql).rows, {})
+
+        -- The search on the right side of a LEFT JOIN skips the rows of n
+        -- that ON selects, and LEFT JOIN adds a row with NULL n.b for them.
+        -- The WHERE term must remove that row.
+        local from = 't LEFT JOIN n INDEXED BY ib ON n.id = t.id WHERE n.b '
+        local search_n = 'SEARCH TABLE N USING COVERING INDEX IB (B=?)'
+        for _, c in pairs({{'IS TRUE', {{1, 1}}}, {'IS FALSE', {{2, 2}}}}) do
+            assert_plan(from .. c[1], {'SCAN TABLE T', search_n})
+            sql = 'SELECT t.id, n.id FROM ' .. from .. c[1] .. ' ORDER BY 1;'
+            t.assert_equals(box.execute(sql).rows, c[2], c[1])
+        end
+        box.execute([[DROP TABLE n;]])
+    end, {PREDICATES})
+end
+
+-- An index search on a non-boolean column must not skip the values that
+-- raise a type mismatch.
+g.test_index_non_boolean = function()
+    g.server:exec(function()
+        box.execute([[CREATE TABLE s (id INT PRIMARY KEY, v SCALAR);]])
+        box.execute([[CREATE INDEX iv ON s (v);]])
+        box.execute([[INSERT INTO s VALUES (1, TRUE), (2, 1);]])
+        local expected = "Type mismatch: can not convert scalar(1) to boolean"
+        for _, p in pairs({'IS TRUE', 'IS FALSE',
+                           'IS NOT TRUE', 'IS NOT FALSE'}) do
+            local sql = 'SELECT id FROM s WHERE v ' .. p .. ';'
+            local _, err = box.execute(sql)
+            t.assert_equals(err and err.message, expected, p)
+        end
+        box.execute([[DROP TABLE s;]])
+    end)
+end
+
 -- Trigger bodies are stored as reduced copies of the expression tree.
 g.test_trigger = function()
     g.server:exec(function()
