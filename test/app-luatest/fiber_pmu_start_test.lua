@@ -337,6 +337,7 @@ g.test_dead_fiber_off = function()
         if zeros.cpu_insn ~= nil then
             t.assert_equals(zeros.cpu_insn, 0)
             zeros.cpu_insn = nil
+            zeros.cpu_insn_lj = nil
         end
         t.assert_equals(zeros, {vdbe_opcodes = 0, rows_read = 0,
                                 rows_written = 0, rows_returned = 0})

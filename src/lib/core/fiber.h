@@ -520,14 +520,20 @@ enum fiber_pmu_counter {
 	 * counter. On other systems it is not counted.
 	 */
 	FIBER_PMU_CPU_INSN = 0,
+	/**
+	 * CPU instructions of the own work of LuaJIT, a part of
+	 * FIBER_PMU_CPU_INSN: of the trace compiler and of the garbage
+	 * collector, with the finalizers that it runs.
+	 */
+	FIBER_PMU_CPU_INSN_LJ = 1,
 	/** VDBE opcodes executed by SQL statements. */
-	FIBER_PMU_VDBE_OPCODES = 1,
+	FIBER_PMU_VDBE_OPCODES = 2,
 	/**
 	 * Rows read from spaces: by SQL statements, by select, get, min,
 	 * max and random requests, and by index iterators. Rows of the
 	 * ephemeral spaces of SQL and internal reads are not counted.
 	 */
-	FIBER_PMU_ROWS_READ = 2,
+	FIBER_PMU_ROWS_READ = 3,
 	/**
 	 * Rows inserted, replaced, updated, deleted or upserted by the
 	 * transactions that were committed. A delete or an update that
@@ -539,15 +545,37 @@ enum fiber_pmu_counter {
 	 * submitted, though it can still roll back, for example, by a
 	 * ROLLBACK of synchronous replication.
 	 */
-	FIBER_PMU_ROWS_WRITTEN = 3,
+	FIBER_PMU_ROWS_WRITTEN = 4,
 	/**
 	 * Rows that SQL statements give as their result. The rows of
 	 * EXPLAIN and EXPLAIN ANALYZE are not counted.
 	 */
-	FIBER_PMU_ROWS_RETURNED = 4,
+	FIBER_PMU_ROWS_RETURNED = 5,
 	/** Number of counters in this version. */
 	fiber_pmu_counter_MAX,
 };
+
+/**
+ * Hooks that LuaJIT calls around its own work: it declares them with
+ * weak no-op definitions in src/lj_pmu.h of its repository, and these
+ * strong definitions override them. The instructions of the cord
+ * until the matching end hook go to FIBER_PMU_CPU_INSN_LJ of the
+ * current fiber.
+ */
+void
+lj_pmu_jit_begin(void);
+
+/** End the episode that lj_pmu_jit_begin() started. */
+void
+lj_pmu_jit_end(void);
+
+/** See lj_pmu_jit_begin(). */
+void
+lj_pmu_gc_begin(void);
+
+/** See lj_pmu_jit_end(). */
+void
+lj_pmu_gc_end(void);
 
 /**
  * Start the counters for all the fibers of the current cord, also for the
@@ -873,6 +901,19 @@ struct cord_pmu {
 	 * current fiber.
 	 */
 	uint64_t insn_count_last;
+	/**
+	 * The number of the episodes of the own work of LuaJIT that run:
+	 * the JIT compiler and the garbage collector call the hooks below
+	 * around each of their episodes. While it is non-zero, the
+	 * instructions of the cord go also to cpu_insn_lj of the current
+	 * fiber.
+	 */
+	int insn_lj_depth;
+	/**
+	 * Value of insn_counter at the start of the current episode of the
+	 * own work of LuaJIT. It is valid while insn_lj_depth is non-zero.
+	 */
+	uint64_t insn_lj_base;
 	/** True if the counters are on for the fibers without a setting. */
 	bool enabled : 1;
 	/**

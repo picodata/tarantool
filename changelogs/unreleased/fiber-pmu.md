@@ -7,6 +7,9 @@
   counted in user space, on macOS in user space and in the kernel. On Linux,
   if other pinned perf events take all the hardware counters, the
   instructions are not counted.
+* Added the counter `cpu_insn_lj`: the part of `cpu_insn` that the own
+  work of LuaJIT used, of its trace compiler and of its garbage
+  collector, with the finalizers that they run.
 * `fiber.pmu.start()` and `fiber.pmu.stop()` turn the counters on and off
   for all the fibers, `fiber_object.pmu:start()` and
   `fiber_object.pmu:stop()` for one fiber. `fiber.pmu.is_enabled()` and

@@ -65,8 +65,10 @@ g.test_on = function()
         if after.cpu_insn ~= nil then
             t.assert_ge(pmu.cpu_insn, after.cpu_insn)
             pmu.cpu_insn = nil
+            pmu.cpu_insn_lj = nil
         end
         after.cpu_insn = nil
+        after.cpu_insn_lj = nil
         t.assert_equals(pmu, after)
         before.cpu_insn = nil
         t.assert_equals(after, {
@@ -139,6 +141,7 @@ g.test_read = function()
         if zeros.cpu_insn ~= nil then
             t.assert_equals(zeros.cpu_insn, 0)
             zeros.cpu_insn = nil
+            zeros.cpu_insn_lj = nil
         end
         t.assert_equals(zeros, {vdbe_opcodes = 0, rows_read = 0,
                                 rows_written = 0, rows_returned = 0})
@@ -220,11 +223,11 @@ g.test_total = function()
         box.space.test:get({1})
         t.assert_equals(rows_read() - before, 5)
         -- The FFI function gives the same sums.
-        local names = {'cpu_insn', 'vdbe_opcodes', 'rows_read',
-                       'rows_written', 'rows_returned'}
+        local names = {'cpu_insn', 'cpu_insn_lj', 'vdbe_opcodes',
+                       'rows_read', 'rows_written', 'rows_returned'}
         local values = ffi.new('uint64_t[?]', #names)
         t.assert_equals(ffi.C.cord_pmu_read(values, #names), #names)
-        t.assert_equals(values[2], rows_read())
+        t.assert_equals(values[3], rows_read())
     end)
 end
 

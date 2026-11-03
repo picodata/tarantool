@@ -16,8 +16,8 @@ g.before_all(function()
             struct fiber *fiber_find(uint64_t fid);
         ]])
         -- The values of enum fiber_pmu_counter.
-        local names = {'instructions', 'opcodes', 'read', 'written',
-                       'returned'}
+        local names = {'instructions', 'lj', 'opcodes', 'read',
+                       'written', 'returned'}
         ffi.C.cord_pmu_start()
         -- Returns the counters of a fiber, the current one by default.
         local function pmu(fid)
@@ -32,13 +32,14 @@ g.before_all(function()
         end
         rawset(_G, 'pmu', pmu)
         -- Runs a function and returns the counters that it adds, without
-        -- the instructions.
+        -- the instructions: they depend on the machine and on the work
+        -- of the JIT compiler and the GC.
         rawset(_G, 'delta', function(f)
             local before = pmu()
             f()
             local after = pmu()
             local res = {}
-            for i = 2, #names do
+            for i = 3, #names do
                 res[names[i]] = after[names[i]] - before[names[i]]
             end
             return res

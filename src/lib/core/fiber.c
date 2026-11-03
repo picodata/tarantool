@@ -258,6 +258,7 @@ __thread bool fiber_pmu_enabled = false;
 
 const char *fiber_pmu_counter_strs[fiber_pmu_counter_MAX] = {
 	[FIBER_PMU_CPU_INSN] = "cpu_insn",
+	[FIBER_PMU_CPU_INSN_LJ] = "cpu_insn_lj",
 	[FIBER_PMU_VDBE_OPCODES] = "vdbe_opcodes",
 	[FIBER_PMU_ROWS_READ] = "rows_read",
 	[FIBER_PMU_ROWS_WRITTEN] = "rows_written",
@@ -265,21 +266,102 @@ const char *fiber_pmu_counter_strs[fiber_pmu_counter_MAX] = {
 };
 
 /**
+ * Start one episode of the own work of LuaJIT: while at least one
+ * episode runs, the instructions of the cord go also to cpu_insn_lj
+ * of the current fiber.
+ */
+static void
+cord_pmu_insn_lj_begin(struct cord *cord)
+{
+	if (!fiber_pmu_enabled ||
+	    !insn_counter_is_open(&cord->pmu.insn_counter))
+		return;
+	uint64_t insn = insn_counter_read(&cord->pmu.insn_counter);
+	if (cord->pmu.insn_lj_depth > 0) {
+		/* An episode that an error left running ends here. */
+		fiber_pmu_add(FIBER_PMU_CPU_INSN_LJ,
+			      insn - cord->pmu.insn_lj_base);
+	}
+	cord->pmu.insn_lj_base = insn;
+	cord->pmu.insn_lj_depth++;
+}
+
+/**
+ * End one episode of the own work of LuaJIT. An end without a begin
+ * does nothing.
+ */
+static void
+cord_pmu_insn_lj_end(struct cord *cord)
+{
+	if (cord->pmu.insn_lj_depth <= 0)
+		return;
+	if (--cord->pmu.insn_lj_depth > 0)
+		return;
+	if (!insn_counter_is_open(&cord->pmu.insn_counter))
+		return;
+	uint64_t insn = insn_counter_read(&cord->pmu.insn_counter);
+	fiber_pmu_add(FIBER_PMU_CPU_INSN_LJ,
+		      insn - cord->pmu.insn_lj_base);
+}
+
+void
+lj_pmu_jit_begin(void)
+{
+	struct cord *cord = cord_ptr;
+	if (cord == NULL)
+		return;
+	cord_pmu_insn_lj_begin(cord);
+}
+
+void
+lj_pmu_jit_end(void)
+{
+	struct cord *cord = cord_ptr;
+	if (cord == NULL)
+		return;
+	cord_pmu_insn_lj_end(cord);
+}
+
+void
+lj_pmu_gc_begin(void)
+{
+	struct cord *cord = cord_ptr;
+	if (cord == NULL)
+		return;
+	cord_pmu_insn_lj_begin(cord);
+}
+
+void
+lj_pmu_gc_end(void)
+{
+	struct cord *cord = cord_ptr;
+	if (cord == NULL)
+		return;
+	cord_pmu_insn_lj_end(cord);
+}
+
+/**
  * Add the work that the current fiber did since the last sync to its
  * counters. Call it before the current fiber changes or the counters are
- * turned on or off for it.
+ * turned on or off for it. A running episode of the own work of LuaJIT
+ * ends here up to the current count and continues from it: an episode
+ * never counts an interval twice.
  */
 static inline void
 fiber_pmu_sync(struct cord *cord)
 {
 	fiber_pmu_source_flush(cord);
-	if (fiber_pmu_is_enabled_for_self() &&
-	    insn_counter_is_open(&cord->pmu.insn_counter)) {
-		uint64_t count = insn_counter_read(&cord->pmu.insn_counter);
-		fiber_pmu_add(FIBER_PMU_CPU_INSN,
-			      count - cord->pmu.insn_count_last);
-		cord->pmu.insn_count_last = count;
+	struct cord_pmu *pmu = &cord->pmu;
+	if (!insn_counter_is_open(&pmu->insn_counter))
+		return;
+	uint64_t insn = insn_counter_read(&pmu->insn_counter);
+	if (pmu->insn_lj_depth > 0) {
+		fiber_pmu_add(FIBER_PMU_CPU_INSN_LJ,
+			      insn - pmu->insn_lj_base);
+		pmu->insn_lj_base = insn;
 	}
+	fiber_pmu_add(FIBER_PMU_CPU_INSN, insn - pmu->insn_count_last);
+	pmu->insn_count_last = insn;
 }
 
 /** Return the valid setting of the counters of a fiber of a cord. */
@@ -1395,6 +1477,10 @@ cord_insn_counter_update(struct cord *cord)
 		diag_destroy(&saved);
 	} else if (!is_needed && is_open) {
 		insn_counter_close(&cord->pmu.insn_counter);
+		/* A closed counter starts from zero at the next open:
+		 * the running episodes are not valid anymore.
+		 */
+		cord->pmu.insn_lj_depth = 0;
 	}
 }
 
@@ -1413,6 +1499,10 @@ cord_pmu_atfork_child(void)
 	if (cord == NULL || !insn_counter_is_open(&cord->pmu.insn_counter))
 		return;
 	insn_counter_close(&cord->pmu.insn_counter);
+	/* The episodes of the parent counted with its counter: the fresh
+	 * counter of the child has no running episodes.
+	 */
+	cord->pmu.insn_lj_depth = 0;
 	cord_insn_counter_update(cord);
 }
 
