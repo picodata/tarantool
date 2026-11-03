@@ -945,6 +945,17 @@ replicaset_connect(const struct uri_set *uris,
 		applier_start(applier);
 	}
 
+	/*
+	 * Guards are run in the order reverse to the order of their
+	 * initialization. So triggers_guard will run before appliers_guard.
+	 */
+	auto triggers_guard = make_scoped_guard([&]{
+		for (int i = 0; i < count; i++) {
+			struct applier_on_connect *trigger = &triggers[i];
+			trigger_clear(&trigger->base);
+		}
+	});
+
 	while (state.connected < count) {
 		/*
 		 * After a quorum is reached, it is considered
@@ -994,6 +1005,8 @@ replicaset_connect(const struct uri_set *uris,
 		if (applier->state != APPLIER_CONNECTED)
 			applier_stop(applier);
 	}
+	triggers_guard.is_active = false;
+
 
 	/* Now all the appliers are connected, update the replica set. */
 	replicaset_update(appliers, count, keep_connect);
