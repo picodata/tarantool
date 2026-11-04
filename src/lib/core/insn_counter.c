@@ -277,6 +277,23 @@ insn_counter_event_read_slow(struct insn_counter_event *event,
 #if defined(INSN_COUNTER_HAS_RDPMC)
 
 /**
+ * Order execution around RDPMC. See Intel SDM, rev. 093 (September
+ * 2026), order no. 325462-093US:
+ * - Vol. 2B, Ch. 4, "RDPMC", Description, p. 4-552: exact event counts
+ *   require a serializing instruction before and/or after RDPMC.
+ * - Vol. 2A, Ch. 3, "LFENCE", Description, p. 3-552: all prior
+ *   instructions complete locally before LFENCE, and no later
+ *   instruction begins execution until LFENCE completes.
+ */
+static inline void
+insn_counter_serialize(void)
+{
+	__atomic_signal_fence(__ATOMIC_SEQ_CST);
+	__asm__ volatile("lfence" ::: "memory");
+	__atomic_signal_fence(__ATOMIC_SEQ_CST);
+}
+
+/**
  * Read an event in user space with the rdpmc instruction.
  * See the description of struct perf_event_mmap_page in
  * <linux/perf_event.h>. Fall back to the system call when rdpmc
@@ -312,7 +329,9 @@ insn_counter_event_read_fast(struct insn_counter_event *event)
 		}
 		value = __atomic_load_n(&pc->offset, __ATOMIC_RELAXED);
 		uint32_t lo, hi;
+		insn_counter_serialize();
 		__asm__ volatile("rdpmc" : "=a"(lo), "=d"(hi) : "c"(idx - 1));
+		insn_counter_serialize();
 		/* Sign-extend the pmc_width bits of the hardware counter. */
 		unsigned int shift = 64 - width;
 		int64_t pmc = (int64_t)(((uint64_t)hi << 32 | lo) << shift);

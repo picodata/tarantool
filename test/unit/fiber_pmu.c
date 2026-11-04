@@ -686,7 +686,8 @@ test_insn_no_pmu_dir(void)
 /**
  * The fast read with rdpmc gives the value of the kernel. If the page
  * is mapped after the first read(), the fast read is wrong by 2^48
- * until the thread is rescheduled.
+ * until the thread is rescheduled. Compare the sums of all PMU events
+ * to account for the different core types of a hybrid CPU.
  */
 static void
 test_insn_fast_read(void)
@@ -698,10 +699,15 @@ test_insn_fast_read(void)
 	insn_counter_create(&counter);
 	fail_if(insn_counter_open(&counter) != 0);
 	uint64_t fast = insn_counter_read(&counter);
-	uint64_t kernel;
-	fail_if(read(counter.events[0].fd, &kernel,
-		     sizeof(kernel)) != sizeof(kernel));
-	ok(kernel - fast < WORK_SMALL, "fast read agrees with the kernel");
+	uint64_t kernel = 0;
+	for (int i = 0; i < counter.event_count; i++) {
+		uint64_t value;
+		fail_if(read(counter.events[i].fd, &value,
+			     sizeof(value)) != sizeof(value));
+		kernel += value;
+	}
+	ok(kernel >= fast && kernel - fast < WORK_SMALL,
+	   "fast read agrees with the kernel");
 	insn_counter_close(&counter);
 
 	footer();
