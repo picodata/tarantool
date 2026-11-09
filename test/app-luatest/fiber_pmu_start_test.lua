@@ -303,11 +303,11 @@ g.test_dead_fiber = function()
         -- The counters do not change after the death, also the
         -- instructions, although the hardware counter closed. The
         -- instructions are absent if the hardware counter is unavailable.
-        local has_insn = pmu:read().cpu_instructions ~= nil
+        local has_insn = pmu:read().cpu_insn ~= nil
         fiber.pmu.stop()
         t.assert_equals(pmu:read().rows_read, 3)
         if has_insn then
-            t.assert_not_equals(pmu:read().cpu_instructions, nil)
+            t.assert_not_equals(pmu:read().cpu_insn, nil)
         end
 
         fiber.pmu.start()
@@ -334,9 +334,9 @@ g.test_dead_fiber_off = function()
         f:cancel()
         f:join()
         local zeros = pmu:read()
-        if zeros.cpu_instructions ~= nil then
-            t.assert_equals(zeros.cpu_instructions, 0)
-            zeros.cpu_instructions = nil
+        if zeros.cpu_insn ~= nil then
+            t.assert_equals(zeros.cpu_insn, 0)
+            zeros.cpu_insn = nil
         end
         t.assert_equals(zeros, {vdbe_opcodes = 0, rows_read = 0,
                                 rows_written = 0, rows_returned = 0})

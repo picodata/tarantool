@@ -519,7 +519,7 @@ enum fiber_pmu_counter {
 	 * of a fiber also counts about one system call that reads the
 	 * counter. On other systems it is not counted.
 	 */
-	FIBER_PMU_CPU_INSTRUCTIONS = 0,
+	FIBER_PMU_CPU_INSN = 0,
 	/** VDBE opcodes executed by SQL statements. */
 	FIBER_PMU_VDBE_OPCODES = 1,
 	/**
@@ -896,7 +896,7 @@ struct cord_pmu {
 	 * The number of the fibers whose own setting turns the counters
 	 * on. It is reset when the settings of single fibers are cancelled.
 	 */
-	uint32_t on_count;
+	uint32_t counted_fibers;
 	/**
 	 * Sums of the counters of all the fibers of the cord, also of the
 	 * dead ones. A fiber adds its work to them while the counters are

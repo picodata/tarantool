@@ -238,7 +238,7 @@ lbox_pmu_counter_get(const struct lbox_pmu_counter *c, uint64_t *values,
 static inline bool
 lbox_pmu_counter_is_shown(int i, bool has_insn)
 {
-	return i != FIBER_PMU_CPU_INSTRUCTIONS || has_insn;
+	return i != FIBER_PMU_CPU_INSN || has_insn;
 }
 
 /** Push a table of the values of the counters. */

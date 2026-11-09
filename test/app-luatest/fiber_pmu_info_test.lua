@@ -56,19 +56,19 @@ g.test_on = function()
         box.space.test:select()
         box.space.test:replace({4})
         local after = fiber.self().pmu:read()
-        if after.cpu_instructions ~= nil then
-            t.assert_gt(after.cpu_instructions, before.cpu_instructions)
+        if after.cpu_insn ~= nil then
+            t.assert_gt(after.cpu_insn, before.cpu_insn)
         end
         -- fiber info shows all the counters. Its own work grows the
         -- instructions, so they are checked apart.
         local pmu = fiber.info()[fiber.self():id()].pmu
-        if after.cpu_instructions ~= nil then
-            t.assert_ge(pmu.cpu_instructions, after.cpu_instructions)
-            pmu.cpu_instructions = nil
+        if after.cpu_insn ~= nil then
+            t.assert_ge(pmu.cpu_insn, after.cpu_insn)
+            pmu.cpu_insn = nil
         end
-        after.cpu_instructions = nil
+        after.cpu_insn = nil
         t.assert_equals(pmu, after)
-        before.cpu_instructions = nil
+        before.cpu_insn = nil
         t.assert_equals(after, {
             vdbe_opcodes = before.vdbe_opcodes,
             rows_read = before.rows_read + 3,
@@ -110,13 +110,13 @@ g.test_after_stop = function()
         end)
         fiber.yield()
         -- The instructions are shown only if the hardware counter opened.
-        local has_insn = f.pmu:read().cpu_instructions ~= nil
+        local has_insn = f.pmu:read().cpu_insn ~= nil
         ffi.C.cord_pmu_stop()
         local counters = f.pmu:read()
         t.assert_equals(counters.rows_read, 1)
         if has_insn then
-            t.assert_not_equals(counters.cpu_instructions, nil)
-            t.assert_not_equals(f:info().pmu.cpu_instructions, nil)
+            t.assert_not_equals(counters.cpu_insn, nil)
+            t.assert_not_equals(f:info().pmu.cpu_insn, nil)
         end
         f:cancel()
     end)
@@ -136,9 +136,9 @@ g.test_read = function()
         -- The instructions are 0 or absent: they are shown only after
         -- the hardware counted them at least once.
         local zeros = f.pmu:read()
-        if zeros.cpu_instructions ~= nil then
-            t.assert_equals(zeros.cpu_instructions, 0)
-            zeros.cpu_instructions = nil
+        if zeros.cpu_insn ~= nil then
+            t.assert_equals(zeros.cpu_insn, 0)
+            zeros.cpu_insn = nil
         end
         t.assert_equals(zeros, {vdbe_opcodes = 0, rows_read = 0,
                                 rows_written = 0, rows_returned = 0})
@@ -149,7 +149,7 @@ g.test_read = function()
         t.assert_equals(counters.vdbe_opcodes, 0)
         t.assert_equals(counters.rows_read, 1)
         t.assert_equals(f.pmu.rows_read, nil)
-        t.assert_equals(f.pmu.cpu_instructions, nil)
+        t.assert_equals(f.pmu.cpu_insn, nil)
         -- The values are taken at the call: a new table each time.
         local before = fiber.self().pmu:read()
         box.space.test:get({1})
@@ -207,8 +207,8 @@ g.test_total = function()
         t.assert_equals(rows_read() - before, 4)
         t.assert_equals(fiber.pmu.rows_read, nil)
         local total = fiber.pmu.read()
-        t.assert_equals(total.cpu_instructions ~= nil,
-                        fiber.self().pmu:read().cpu_instructions ~= nil)
+        t.assert_equals(total.cpu_insn ~= nil,
+                        fiber.self().pmu:read().cpu_insn ~= nil)
         -- A fiber that counts alone keeps the sums growing.
         fiber.pmu.stop()
         t.assert_equals(rows_read() - before, 4)
@@ -220,7 +220,7 @@ g.test_total = function()
         box.space.test:get({1})
         t.assert_equals(rows_read() - before, 5)
         -- The FFI function gives the same sums.
-        local names = {'cpu_instructions', 'vdbe_opcodes', 'rows_read',
+        local names = {'cpu_insn', 'vdbe_opcodes', 'rows_read',
                        'rows_written', 'rows_returned'}
         local values = ffi.new('uint64_t[?]', #names)
         t.assert_equals(ffi.C.cord_pmu_read(values, #names), #names)

@@ -23,7 +23,7 @@
   gives the value of that counter, and the object keeps the last values
   after the fiber dies.
 * `fiber.info()` shows the counters of a fiber in the `pmu` field: all of
-  them if at least one is not zero, for example, `pmu.cpu_instructions`.
+  them if at least one is not zero, for example, `pmu.cpu_insn`.
   The field does not disappear after a stop.
 * The C API:
   * `cord_pmu_start`, `cord_pmu_stop`, `cord_pmu_is_enabled`,

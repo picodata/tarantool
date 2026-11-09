@@ -24,7 +24,7 @@ insn_count(const struct fiber *fiber)
 	uint64_t values[fiber_pmu_counter_MAX];
 	fail_if(fiber_pmu_read(fiber, values, lengthof(values)) !=
 		fiber_pmu_counter_MAX);
-	return values[FIBER_PMU_CPU_INSTRUCTIONS];
+	return values[FIBER_PMU_CPU_INSN];
 }
 
 /** Each iteration of the work loop takes at least one instruction. */
@@ -177,13 +177,13 @@ test_insn_total_dead_fiber(void)
 
 	uint64_t values[fiber_pmu_counter_MAX];
 	cord_pmu_read(values, lengthof(values));
-	uint64_t start = values[FIBER_PMU_CPU_INSTRUCTIONS];
+	uint64_t start = values[FIBER_PMU_CPU_INSN];
 	struct fiber *f = fiber_new("big", work_big_f);
 	fail_if(f == NULL);
 	fiber_wakeup(f);
 	fiber_sleep(0);
 	cord_pmu_read(values, lengthof(values));
-	ok(values[FIBER_PMU_CPU_INSTRUCTIONS] - start >= WORK_BIG,
+	ok(values[FIBER_PMU_CPU_INSN] - start >= WORK_BIG,
 	   "sum includes the work of a dead fiber");
 
 	footer();

@@ -257,7 +257,7 @@ static __thread bool fiber_top_enabled = false;
 __thread bool fiber_pmu_enabled = false;
 
 const char *fiber_pmu_counter_strs[fiber_pmu_counter_MAX] = {
-	[FIBER_PMU_CPU_INSTRUCTIONS] = "cpu_instructions",
+	[FIBER_PMU_CPU_INSN] = "cpu_insn",
 	[FIBER_PMU_VDBE_OPCODES] = "vdbe_opcodes",
 	[FIBER_PMU_ROWS_READ] = "rows_read",
 	[FIBER_PMU_ROWS_WRITTEN] = "rows_written",
@@ -276,7 +276,7 @@ fiber_pmu_sync(struct cord *cord)
 	if (fiber_pmu_is_enabled_for_self() &&
 	    insn_counter_is_open(&cord->pmu.insn_counter)) {
 		uint64_t count = insn_counter_read(&cord->pmu.insn_counter);
-		fiber_pmu_add(FIBER_PMU_CPU_INSTRUCTIONS,
+		fiber_pmu_add(FIBER_PMU_CPU_INSN,
 			      count - cord->pmu.insn_count_last);
 		cord->pmu.insn_count_last = count;
 	}
@@ -296,7 +296,7 @@ static inline void
 cord_pmu_active_update(struct cord *cord)
 {
 	cord->pmu.active = cord->pmu.enabled ||
-			       cord->pmu.on_count > 0;
+			       cord->pmu.counted_fibers > 0;
 }
 
 /** Apply a change of the settings of the counters. */
@@ -1118,7 +1118,7 @@ fiber_pmu_forget(struct fiber *fiber)
 	 */
 	fiber_pmu_sync(cord);
 	if (fiber_pmu_mode(cord, fiber) == FIBER_PMU_ON) {
-		cord->pmu.on_count--;
+		cord->pmu.counted_fibers--;
 		cord_pmu_active_update(cord);
 		fiber_pmu_apply_settings(cord);
 	}
@@ -1438,7 +1438,7 @@ cord_pmu_set_enabled(bool enabled)
 	/* Count the work of the current fiber before the change. */
 	fiber_pmu_sync(cord);
 	cord->pmu.enabled = enabled;
-	cord->pmu.on_count = 0;
+	cord->pmu.counted_fibers = 0;
 	cord_pmu_active_update(cord);
 	if (!enabled)
 		cord->pmu.insn_failed = false;
@@ -1459,9 +1459,9 @@ fiber_pmu_set_mode(struct fiber *fiber, enum fiber_pmu_mode mode)
 	/* Count the work of the current fiber before the change. */
 	fiber_pmu_sync(cord);
 	if (old_mode == FIBER_PMU_ON)
-		cord->pmu.on_count--;
+		cord->pmu.counted_fibers--;
 	if (mode == FIBER_PMU_ON)
-		cord->pmu.on_count++;
+		cord->pmu.counted_fibers++;
 	fiber->pmu.mode = mode;
 	fiber->pmu.gen = cord->pmu.gen;
 	cord_pmu_active_update(cord);
