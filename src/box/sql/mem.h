@@ -706,13 +706,54 @@ int
 mem_cmp_msgpack(const struct Mem *a, const char **b, int *result,
 		const struct coll *coll);
 
+/** Compare two MEMs with STRING, using the collation if it is not NULL. */
+int
+mem_cmp_str(const struct Mem *a, const struct Mem *b, const struct coll *coll);
+
+/**
+ * mem_cmp() for the values that its inline part does not compare: NULL,
+ * values of different types, of types other than INT, UINT, DOUBLE, DECIMAL
+ * and STRING, and values with MEM_Any.
+ */
+int
+mem_cmp_slow(const struct Mem *a, const struct Mem *b, int *result,
+	     const struct coll *coll);
+
 /**
  * Compare two MEMs using implicit cast rules and return the result of
  * comparison. MEMs should be scalars. Original MEMs are not changed.
+ *
+ * Values of the same type INT, UINT, DOUBLE, DECIMAL or STRING are compared
+ * before the checks of mem_cmp_slow(). MEM_Any is the only flag that makes
+ * them not comparable. The same type gives the same class, so MEM_Scalar
+ * does not change the result.
  */
-int
+static inline int
 mem_cmp(const struct Mem *a, const struct Mem *b, int *result,
-	const struct coll *coll);
+	const struct coll *coll)
+{
+	if (a->type != b->type || ((a->flags | b->flags) & MEM_Any) != 0)
+		return mem_cmp_slow(a, b, result, coll);
+	switch (a->type) {
+	case MEM_TYPE_INT:
+		*result = (a->u.i > b->u.i) - (a->u.i < b->u.i);
+		return 0;
+	case MEM_TYPE_UINT:
+		*result = (a->u.u > b->u.u) - (a->u.u < b->u.u);
+		return 0;
+	case MEM_TYPE_DOUBLE:
+		*result = (a->u.r > b->u.r) - (a->u.r < b->u.r);
+		return 0;
+	case MEM_TYPE_DEC:
+		*result = decimal_compare(&a->u.d, &b->u.d);
+		return 0;
+	case MEM_TYPE_STR:
+		*result = mem_cmp_str(a, b, coll);
+		return 0;
+	default:
+		return mem_cmp_slow(a, b, result, coll);
+	}
+}
 
 /**
  * Convert the given MEM to INTEGER. This function and the function below define

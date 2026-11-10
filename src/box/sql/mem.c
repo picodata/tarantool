@@ -2711,33 +2711,12 @@ mem_cmp_bin(const struct Mem *a, const struct Mem *b)
 	return -1;
 }
 
+/** Compare two MEMs with numbers of different types. */
 static int
-mem_cmp_num(const struct Mem *a, const struct Mem *b)
+mem_cmp_num_diff(const struct Mem *a, const struct Mem *b)
 {
 	assert(mem_is_num(a) && mem_is_num(b));
-	if ((a->type & b->type & MEM_TYPE_DOUBLE) != 0) {
-		if (a->u.r > b->u.r)
-			return 1;
-		if (a->u.r < b->u.r)
-			return -1;
-		return 0;
-	}
-	if ((a->type & b->type & MEM_TYPE_INT) != 0) {
-		if (a->u.i > b->u.i)
-			return 1;
-		if (a->u.i < b->u.i)
-			return -1;
-		return 0;
-	}
-	if ((a->type & b->type & MEM_TYPE_UINT) != 0) {
-		if (a->u.u > b->u.u)
-			return 1;
-		if (a->u.u < b->u.u)
-			return -1;
-		return 0;
-	}
-	if ((a->type & b->type & MEM_TYPE_DEC) != 0)
-		return decimal_compare(&a->u.d, &b->u.d);
+	assert(a->type != b->type);
 	switch (a->type) {
 	case MEM_TYPE_INT:
 		switch (b->type) {
@@ -2817,7 +2796,29 @@ mem_cmp_num(const struct Mem *a, const struct Mem *b)
 	return 1;
 }
 
+/** Compare two MEMs with numbers of the same or of different types. */
 static int
+mem_cmp_num(const struct Mem *a, const struct Mem *b)
+{
+	assert(mem_is_num(a) && mem_is_num(b));
+	if (a->type != b->type)
+		return mem_cmp_num_diff(a, b);
+	switch (a->type) {
+	case MEM_TYPE_INT:
+		return (a->u.i > b->u.i) - (a->u.i < b->u.i);
+	case MEM_TYPE_UINT:
+		return (a->u.u > b->u.u) - (a->u.u < b->u.u);
+	case MEM_TYPE_DOUBLE:
+		return (a->u.r > b->u.r) - (a->u.r < b->u.r);
+	case MEM_TYPE_DEC:
+		return decimal_compare(&a->u.d, &b->u.d);
+	default:
+		unreachable();
+	}
+	return 0;
+}
+
+int
 mem_cmp_str(const struct Mem *a, const struct Mem *b, const struct coll *coll)
 {
 	assert((a->type & b->type & MEM_TYPE_STR) != 0);
@@ -2986,8 +2987,8 @@ mem_cmp_msgpack(const struct Mem *a, const char **b, int *result,
 }
 
 int
-mem_cmp(const struct Mem *a, const struct Mem *b, int *result,
-	const struct coll *coll)
+mem_cmp_slow(const struct Mem *a, const struct Mem *b, int *result,
+	     const struct coll *coll)
 {
 	enum mem_class class_a = mem_type_class(a->type);
 	enum mem_class class_b = mem_type_class(b->type);
