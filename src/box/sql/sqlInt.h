@@ -2987,8 +2987,6 @@ sql_xfree(void *buf);
 #define sqlStackFree(P)       sql_xfree(P)
 #endif
 
-int sqlIsNaN(double);
-
 /*
  * An instance of the following structure holds information about SQL
  * functions arguments that are the parameters to the printf() function.

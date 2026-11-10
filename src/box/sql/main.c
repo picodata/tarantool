@@ -35,6 +35,8 @@
  * other files are for internal use by sql and should not be
  * accessed by users of the library.
  */
+#include <math.h>
+
 #include "sqlInt.h"
 #include "mem.h"
 #include "vdbeInt.h"
@@ -149,7 +151,7 @@ sql_initialize(void)
 	assert(sizeof(x) == 8);
 	assert(sizeof(x) == sizeof(y));
 	memcpy(&y, &x, 8);
-	assert(sqlIsNaN(y));
+	assert(isnan(y));
 #endif
 	return 0;
 }

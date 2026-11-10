@@ -33,6 +33,8 @@
  * This file contains routines used for analyzing expressions and
  * for generating VDBE code that evaluates expressions in sql.
  */
+#include <math.h>
+
 #include "box/coll_id_cache.h"
 #include "coll/coll.h"
 #include "sqlInt.h"
@@ -3302,7 +3304,7 @@ codeReal(Vdbe * v, const char *z, int negateFlag, int iMem)
 	if (ALWAYS(z != 0)) {
 		double value;
 		sqlAtoF(z, &value, sqlStrlen30(z));
-		assert(!sqlIsNaN(value));	/* The new AtoF never returns NaN */
+		assert(!isnan(value));	/* The new AtoF never returns NaN */
 		if (negateFlag)
 			value = -value;
 		sql_vdbe_add_op4_real(v, 0, iMem, 0, value);

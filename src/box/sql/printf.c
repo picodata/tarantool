@@ -9,6 +9,8 @@
  * library, though the implementation here has enhancements to support
  * sql.
  */
+#include <math.h>
+
 #include "sqlInt.h"
 #include "mem.h"
 
@@ -507,7 +509,7 @@ sqlVXPrintf(StrAccum * pAccum,	/* Accumulate results here */
 				realvalue += rounder;
 			/* Normalize realvalue to within 10.0 > realvalue >= 1.0 */
 			exp = 0;
-			if (sqlIsNaN((double)realvalue)) {
+			if (isnan((double)realvalue)) {
 				bufpt = "NaN";
 				length = 3;
 				break;

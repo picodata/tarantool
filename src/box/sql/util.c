@@ -45,20 +45,6 @@
 #include "errinj.h"
 
 /*
- * Return true if the floating point value is Not a Number (NaN).
- *
- * Use the math library isnan() function if compiled with SQL_HAVE_ISNAN.
- * Otherwise, we have our own implementation that works on most systems.
- */
-int
-sqlIsNaN(double x)
-{
-	int rc;			/* The value return */
-	rc = isnan(x);
-	return rc;
-}
-
-/*
  * Compute a string length that is limited to what can be stored in
  * lower 30 bits of a 32-bit unsigned integer.
  *

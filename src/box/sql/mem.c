@@ -29,6 +29,7 @@
  * SUCH DAMAGE.
  */
 #include <ctype.h>
+#include <math.h>
 
 #include "sqlInt.h"
 #include "mem.h"
@@ -357,7 +358,7 @@ mem_set_double(struct Mem *mem, double value)
 {
 	mem_clear(mem);
 	assert(mem->flags == 0);
-	if (sqlIsNaN(value))
+	if (isnan(value))
 		return;
 	mem->u.r = value;
 	mem->type = MEM_TYPE_DOUBLE;
@@ -3381,7 +3382,7 @@ install_blob:
 	}
 	case MP_FLOAT: {
 		mem->u.r = mp_decode_float(&buf);
-		if (sqlIsNaN(mem->u.r)) {
+		if (isnan(mem->u.r)) {
 			mem->type = MEM_TYPE_NULL;
 			mem->flags = 0;
 		} else {
@@ -3392,7 +3393,7 @@ install_blob:
 	}
 	case MP_DOUBLE: {
 		mem->u.r = mp_decode_double(&buf);
-		if (sqlIsNaN(mem->u.r)) {
+		if (isnan(mem->u.r)) {
 			mem->type = MEM_TYPE_NULL;
 			mem->flags = 0;
 		} else {
@@ -3908,7 +3909,7 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 			break;
 		case MP_FLOAT:
 			assert(val[i].flags == 0);
-			if (sqlIsNaN(field.fval)) {
+			if (isnan(field.fval)) {
 				val[i].type = MEM_TYPE_NULL;
 				break;
 			}
@@ -3917,7 +3918,7 @@ port_lua_get_vdbemem(struct port *base, uint32_t *size)
 			break;
 		case MP_DOUBLE:
 			assert(val[i].flags == 0);
-			if (sqlIsNaN(field.dval)) {
+			if (isnan(field.dval)) {
 				val[i].type = MEM_TYPE_NULL;
 				break;
 			}
@@ -4064,7 +4065,7 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 		case MP_FLOAT:
 			d = mp_decode_float(&data);
 			assert(val[i].flags == 0);
-			if (sqlIsNaN(d)) {
+			if (isnan(d)) {
 				val[i].type = MEM_TYPE_NULL;
 				break;
 			}
@@ -4074,7 +4075,7 @@ port_c_get_vdbemem(struct port *base, uint32_t *size)
 		case MP_DOUBLE:
 			d = mp_decode_double(&data);
 			assert(val[i].flags == 0);
-			if (sqlIsNaN(d)) {
+			if (isnan(d)) {
 				val[i].type = MEM_TYPE_NULL;
 				break;
 			}
