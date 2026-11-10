@@ -860,11 +860,13 @@ int sqlVdbeExec(Vdbe *p)
 		 * The point of preemption: the callback can yield or stop
 		 * the statement, and EXPLAIN ANALYZE checks its timeout.
 		 * step_count is the opcode counter of the fiber, so it grows
-		 * at the end of the loop and never goes back. The +1 keeps
-		 * this check from firing at step_count == 0, before the
-		 * first opcode runs.
+		 * after this check and never goes back.
 		 */
-		if ((p->step_count + 1) % OPCODE_YIELD_COUNT == 0 &&
+		bool is_preemption_point =
+			++p->steps_since_yield >= OPCODE_YIELD_COUNT;
+		if (is_preemption_point)
+			p->steps_since_yield = 0;
+		if (is_preemption_point &&
 		    (vdbe_yield_cb != NULL || deadline > 0)) {
 			int64_t now = clock_monotonic64();
 			if (vdbe_yield_cb) {

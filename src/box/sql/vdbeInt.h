@@ -411,6 +411,12 @@ struct Vdbe {
 	uint64_t vdbe_max_steps;
 	/** The number of opcodes that were executed for current program */
 	uint64_t step_count;
+	/**
+	 * The opcodes that were executed since the last point of preemption.
+	 * Not `step_count % OPCODE_YIELD_COUNT`: OPCODE_YIELD_COUNT is a
+	 * variable, so that is a 64-bit division on each opcode.
+	 */
+	uint64_t steps_since_yield;
 	/* Anonymous savepoint for aborts only */
 	struct txn_savepoint *anonymous_savepoint;
 };
