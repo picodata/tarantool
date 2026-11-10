@@ -799,6 +799,9 @@ int sqlVdbeExec(Vdbe *p)
 	bool is_sampled = (mode & EXPLAIN_ANALYZE_TIMERS) != 0;
 	/* The time when the run of EXPLAIN ANALYZE stops, 0 if never. */
 	int64_t deadline = is_analyzed ? p->explain_data->deadline : 0;
+	/* The last step under the limit, UINT64_MAX if there is no limit. */
+	uint64_t max_steps = p->vdbe_max_steps > 0 ?
+			     p->vdbe_max_steps : UINT64_MAX;
 
 	/*
 	 * The fiber counts the opcodes from step_count. It adds them also
@@ -891,8 +894,7 @@ int sqlVdbeExec(Vdbe *p)
 			}
 		}
 		p->step_count++;
-		if (p->vdbe_max_steps > 0 &&
-		    p->vdbe_max_steps < p->step_count) {
+		if (p->step_count > max_steps) {
 			diag_set(ClientError, ER_EXCEEDED_VDBE_MAX_STEPS,
 				 p->vdbe_max_steps);
 			goto abort_due_to_error;
