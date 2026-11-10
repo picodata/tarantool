@@ -32,6 +32,12 @@
 #ifndef SQL_CURSOR_H
 #define SQL_CURSOR_H
 
+/*
+ * From box/space_cache.h, which would add its includes to each SQL unit
+ * through sqlInt.h.
+ */
+extern uint32_t space_cache_version;
+
 typedef struct BtCursor BtCursor;
 
 /*
@@ -86,11 +92,23 @@ sqlCursorPayload(BtCursor *, u32 offset, u32 amt, void *);
 void
 sql_cursor_cleanup(struct BtCursor *cursor);
 
-/*
- * Check that the cursor refers to a valid space and index.
- */
+/** The part of sql_cursor_validate() for a changed space cache. */
 int
-sql_cursor_validate(BtCursor *pCur);
+sql_cursor_validate_slow(BtCursor *pCur);
+
+/*
+ * Check that the cursor refers to a valid space and index. Inline, as
+ * OP_Column calls it for each column of each row.
+ */
+static inline int
+sql_cursor_validate(BtCursor *pCur)
+{
+	/* An ephemeral space or an uninitialized cursor is considered valid. */
+	if (pCur->space_id == 0 ||
+	    pCur->space_cache_version == space_cache_version)
+		return 0;
+	return sql_cursor_validate_slow(pCur);
+}
 
 #ifndef NDEBUG
 int sqlCursorIsValid(BtCursor *);

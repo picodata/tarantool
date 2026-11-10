@@ -70,13 +70,9 @@ cursor_check_space(BtCursor *pCur)
 }
 
 int
-sql_cursor_validate(BtCursor *pCur)
+sql_cursor_validate_slow(BtCursor *pCur)
 {
-	/* An ephemeral space or an uninitialized cursor is considered valid. */
-	if (pCur->space_id == 0)
-		return 0;
-	if (pCur->space_cache_version != space_cache_version &&
-	    cursor_check_space(pCur) != 0) {
+	if (cursor_check_space(pCur) != 0) {
 		diag_set(ClientError, ER_SQL_EXECUTE,
 			 "space cursor is no longer valid");
 		return -1;
