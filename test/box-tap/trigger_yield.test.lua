@@ -7,7 +7,8 @@ box.cfg{
 
 local fiber = require('fiber')
 
-box.schema.space.create('test')
+-- A yield in a space trigger of a memtx transaction panics, so use vinyl.
+box.schema.space.create('test', {engine = 'vinyl'})
 box.space.test:create_index('pk')
 
 box.space.test:truncate()

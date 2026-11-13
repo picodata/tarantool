@@ -560,9 +560,9 @@ struct txn {
 	 */
 	struct txn_limbo_entry *limbo_entry;
 	/**
-	 * Nesting level of space on_replace triggers for current txn.
+	 * Nesting level of space before_replace and on_replace triggers.
 	 */
-	int space_on_replace_triggers_depth;
+	int32_t space_triggers_depth;
 };
 
 static inline bool

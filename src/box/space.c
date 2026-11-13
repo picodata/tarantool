@@ -765,7 +765,9 @@ after_old_tuple_lookup:;
 	stmt->old_tuple = old_tuple;
 	stmt->new_tuple = new_tuple;
 
+	txn->space_triggers_depth++;
 	int rc = trigger_run(&space->before_replace, txn);
+	txn->space_triggers_depth--;
 
 	/*
 	 * BEFORE triggers cannot change the old tuple,

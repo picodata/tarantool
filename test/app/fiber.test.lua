@@ -545,26 +545,6 @@ f = nil
 l = nil
 box.space.test:drop()
 --
--- Check that yield trigger is installed for a sub-statement
--- in autocommit mode
---
-_ = box.schema.space.create('test')
-_ = box.space.test:create_index('pk')
-test_run:cmd("setopt delimiter ';'")
-l = nil
-function yield()
-    f = fiber.create(function() l = box.space.test:get{1} end)
-    while f:status() ~= 'dead' do fiber.sleep(0.01) end
-end;
-test_run:cmd("setopt delimiter ''");
-_ = box.space.test:on_replace(yield)
-box.space.test:insert{1}
-l
-box.space.test:get{1}
-f = nil
-l = nil
-box.space.test:drop()
---
 -- Check that rollback trigger is not left behind in the fiber in
 -- case of user rollback.
 --

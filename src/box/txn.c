@@ -446,7 +446,6 @@ txn_new(void)
 	rlist_create(&txn->gap_list);
 	rlist_create(&txn->in_read_view_txs);
 	rlist_create(&txn->in_all_txs);
-	txn->space_on_replace_triggers_depth = 0;
 	txn->acquired_region_used = 0;
 	txn->limbo_entry = NULL;
 	return txn;
@@ -510,6 +509,7 @@ txn_begin(void)
 	txn->n_applier_rows = 0;
 	txn->flags = 0;
 	txn->in_sub_stmt = 0;
+	txn->space_triggers_depth = 0;
 	txn->id = ++tsn;
 	txn->psn = 0;
 	txn->rv_psn = 0;
@@ -665,9 +665,9 @@ txn_commit_stmt(struct txn *txn, struct request *request)
 	if (stmt->space != NULL && stmt->space->run_triggers &&
 	    (stmt->old_tuple || stmt->new_tuple)) {
 		if (!rlist_empty(&stmt->space->on_replace)) {
-			txn->space_on_replace_triggers_depth++;
+			txn->space_triggers_depth++;
 			int rc = trigger_run(&stmt->space->on_replace, txn);
-			txn->space_on_replace_triggers_depth--;
+			txn->space_triggers_depth--;
 			if (rc != 0)
 				goto fail;
 			assert(txn->in_sub_stmt > 0);
@@ -1644,6 +1644,14 @@ txn_on_yield(struct trigger *trigger, void *event)
 	struct txn *txn = in_txn();
 	assert(txn != NULL);
 	if (txn->status != TXN_ABORTED && !txn_has_flag(txn, TXN_CAN_YIELD)) {
+		/*
+		 * The abort would undo and free the statements while
+		 * the trigger and the statement that runs it still use
+		 * them.
+		 */
+		if (txn->space_triggers_depth > 0)
+			panic("yield in a before_replace or on_replace "
+			      "trigger of a transaction that cannot yield");
 		txn_rollback_to_svp(txn, NULL, true);
 		txn->status = TXN_ABORTED;
 		txn_set_flags(txn, TXN_IS_ABORTED_BY_YIELD);

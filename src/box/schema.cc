@@ -173,9 +173,9 @@ on_replace_dd_system_space(struct trigger *trigger, void *event)
 {
 	(void) trigger;
 	struct txn *txn = (struct txn *) event;
-	if (txn->space_on_replace_triggers_depth > 1) {
+	if (txn->space_triggers_depth > 1) {
 		diag_set(ClientError, ER_UNSUPPORTED,
-			 "Space on_replace trigger", "DDL operations");
+			 "Space trigger", "DDL operations");
 		return -1;
 	}
 	memtx_tx_acquire_ddl(txn);

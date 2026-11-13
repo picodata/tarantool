@@ -203,6 +203,16 @@ s:replace({9, 10})
 s:select()
 s:drop() -- test_on_repl_ddl
 
+-- DDL from a before_replace trigger is refused too.
+s = box.schema.space.create('test_before_repl_ddl')
+_ = s:create_index('pk')
+t = s:before_replace(function (_, new) box.schema.space.create('some_space') return new end)
+s:replace({1, 2})
+t = s:before_replace(function (_, new) s:rename('newname') return new end, t)
+s:replace({2, 3})
+s:select()
+s:drop() -- test_before_repl_ddl
+
 --
 -- gh-3020: sub-statement rollback
 --

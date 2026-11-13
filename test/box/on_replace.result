@@ -474,21 +474,21 @@ t = s:on_replace(function () box.schema.space.create('some_space') end)
 ...
 s:replace({1, 2})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () s:format({{'a', 'unsigned'}, {'b', 'unsigned'}}) end, t)
 ---
 ...
 s:replace({2, 3})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () box.schema.user.create('newu') box.schema.role.create('newr') end, t)
 ---
 ...
 s:replace({3, 4})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () box.schema.user.drop('newu') box.schema.role.drop('newr') end, t)
 ---
@@ -502,41 +502,69 @@ t = s:on_replace(function () s.index.sk:drop() end, t)
 ...
 s:replace({5, 6})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () box.schema.func.create('newf') end, t)
 ---
 ...
 s:replace({6, 7})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () box.schema.user.grant('guest', 'read,write', 'space', 'test_on_repl_ddl') end, t)
 ---
 ...
 s:replace({7, 8})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () s:rename('newname') end, t)
 ---
 ...
 s:replace({8, 9})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 t = s:on_replace(function () s.index.pk:rename('newname') end, t)
 ---
 ...
 s:replace({9, 10})
 ---
-- error: Space on_replace trigger does not support DDL operations
+- error: Space trigger does not support DDL operations
 ...
 s:select()
 ---
 - []
 ...
 s:drop() -- test_on_repl_ddl
+---
+...
+-- DDL from a before_replace trigger is refused too.
+s = box.schema.space.create('test_before_repl_ddl')
+---
+...
+_ = s:create_index('pk')
+---
+...
+t = s:before_replace(function (_, new) box.schema.space.create('some_space') return new end)
+---
+...
+s:replace({1, 2})
+---
+- error: Space trigger does not support DDL operations
+...
+t = s:before_replace(function (_, new) s:rename('newname') return new end, t)
+---
+...
+s:replace({2, 3})
+---
+- error: Space trigger does not support DDL operations
+...
+s:select()
+---
+- []
+...
+s:drop() -- test_before_repl_ddl
 ---
 ...
 --

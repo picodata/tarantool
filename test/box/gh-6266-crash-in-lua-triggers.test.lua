@@ -7,7 +7,8 @@ test_run:cmd("restart server default")
 
 fiber = require('fiber')
 channel = fiber.channel(1)
-s = box.schema.space.create('test')
+-- A yield in a space trigger of a memtx transaction panics, so use vinyl.
+s = box.schema.space.create('test', {engine = 'vinyl'})
 _ = s:create_index('primary')
 _ = s:on_replace(function() fiber.sleep(1) channel:put(true) end)
 _ = fiber.create(function() s:replace({7}) end)

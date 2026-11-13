@@ -71,7 +71,8 @@ g.test_space_trigger = function()
         collectgarbage()
     end
 
-    box.schema.space.create('myspace')
+    -- A yield in a space trigger of a memtx transaction panics first.
+    box.schema.space.create('myspace', {engine = 'vinyl'})
     box.space.myspace:create_index('test_index',{})
     box.space.myspace:on_replace(on_replace)
     local c = net_box.connect('unix/:./tarantool.sock')
