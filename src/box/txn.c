@@ -730,8 +730,15 @@ txn_complete_fail(struct txn *txn)
 	txn->status = TXN_ABORTED;
 	struct txn_stmt *stmt;
 	stailq_reverse(&txn->stmts);
-	stailq_foreach_entry(stmt, &txn->stmts, next)
+	stailq_foreach_entry(stmt, &txn->stmts, next) {
 		txn_rollback_one_stmt(txn, stmt);
+		/*
+		 * The undo of a DDL statement can free the space object
+		 * of the statements after it. Do not keep the pointer:
+		 * the rollback triggers use stmt->space_id.
+		 */
+		stmt->space = NULL;
+	}
 	if (txn->engine != NULL)
 		engine_rollback(txn->engine, txn);
 	if (txn_has_flag(txn, TXN_HAS_TRIGGERS)) {

@@ -353,7 +353,8 @@ struct txn_stmt {
 	uint16_t type;
 	/**
 	 * The id of the space, or BOX_ID_NIL. Unlike the space pointer,
-	 * it stays valid after a rollback of DDL frees the space object.
+	 * which is NULL after the statement is rolled back, it stays
+	 * valid in the rollback triggers.
 	 */
 	uint32_t space_id;
 	/** Commit/rollback triggers associated with this statement. */

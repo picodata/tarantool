@@ -476,7 +476,7 @@ lbox_txn_iterator_next(struct lua_State *L)
 		luaT_pushtuple(L, stmt->new_tuple);
 	else
 		lua_pushnil(L);
-	lua_pushinteger(L, space_id(stmt->space));
+	lua_pushinteger(L, stmt->space_id);
 	/* Prepare a statement to the next call. */
 	stmt = stailq_next_entry(stmt, next);
 	lua_pushlightuserdata(L, stmt);

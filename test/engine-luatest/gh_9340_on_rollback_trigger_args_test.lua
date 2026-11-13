@@ -171,3 +171,41 @@ g_mvcc_off.test_trigger_args = function(cg)
         })
     end)
 end
+
+-- The rollback undoes the statements before the `on_rollback' triggers run.
+-- The undo of a DDL statement frees the space object of the statements
+-- executed after it, but the triggers still get the correct space ids.
+g_mvcc_off.test_space_id_after_ddl = function(cg)
+    cg.server:exec(function()
+        local s1 = box.schema.space.create('test1')
+        box.schema.space.create('test2'):create_index('pk')
+        s1:create_index('pk')
+        local function space_ids()
+            local ids = {}
+            for _, stmt in ipairs(_G.result) do
+                table.insert(ids, stmt.space_id)
+            end
+            return ids
+        end
+
+        -- A space renamed in the transaction.
+        box.begin()
+        box.on_rollback(_G.on_rollback_trigger)
+        s1:rename('test1_renamed')
+        box.space.test1_renamed:insert{1}
+        box.rollback()
+        t.assert_equals(space_ids(), {s1.id, box.schema.SPACE_ID})
+
+        -- A space created in the transaction.
+        box.begin()
+        box.on_rollback(_G.on_rollback_trigger)
+        local s3 = box.schema.space.create('test3')
+        s3:create_index('pk')
+        s3:insert{1}
+        local id = s3.id
+        box.rollback()
+        t.assert_equals(box.space.test3, nil)
+        t.assert_equals(space_ids(),
+                        {id, box.schema.INDEX_ID, box.schema.SPACE_ID})
+    end)
+end
