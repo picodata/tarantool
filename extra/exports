@@ -182,7 +182,9 @@ box_txn_set_flags
 box_txn_set_isolation
 box_txn_set_timeout
 box_txn_stmt_new_tuple
+box_txn_stmt_next
 box_txn_stmt_old_tuple
+box_txn_stmt_space_id
 box_txn_stmt_type
 box_update
 box_upsert

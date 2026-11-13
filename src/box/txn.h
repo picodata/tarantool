@@ -331,14 +331,14 @@ struct txn_stmt {
 	/** Redo info: the binary log row */
 	struct xrow_header *row;
 	/** on_commit and/or on_rollback list is not empty. */
-	bool has_triggers;
+	bool has_triggers : 1;
 	/**
 	 * True if the engine wrote the statement blindly, without looking
 	 * for an existing row. Vinyl does this for a delete and an upsert,
 	 * so it sets no old or new tuple. A blind write is still a written
 	 * row even though both tuples are NULL.
 	 */
-	bool is_blind_write;
+	bool is_blind_write : 1;
 	/*
 	 * Flag that shows whether this statement overwrites own transaction
 	 * statement. For example if a transaction makes two replaces of the
@@ -346,11 +346,16 @@ struct txn_stmt {
 	 * Or if a transaction deletes some key and then inserts that key,
 	 * the insertion statement will be with is_own_change = true.
 	 */
-	bool is_own_change;
+	bool is_own_change : 1;
 	/**
 	* Request type - IPROTO type code
 	*/
 	uint16_t type;
+	/**
+	 * The id of the space, or BOX_ID_NIL. Unlike the space pointer,
+	 * it stays valid after a rollback of DDL frees the space object.
+	 */
+	uint32_t space_id;
 	/** Commit/rollback triggers associated with this statement. */
 	struct rlist on_commit;
 	struct rlist on_rollback;

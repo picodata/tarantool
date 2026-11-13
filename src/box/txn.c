@@ -299,6 +299,7 @@ txn_stmt_new(struct txn *txn)
 	/* Initialize members explicitly to save time on memset() */
 	stmt->txn = in_txn();
 	stmt->space = NULL;
+	stmt->space_id = BOX_ID_NIL;
 	stmt->old_tuple = NULL;
 	stmt->new_tuple = NULL;
 	stmt->rollback_info.old_tuple = NULL;
@@ -604,6 +605,7 @@ txn_begin_stmt(struct txn *txn, struct space *space, uint16_t type)
 		goto fail;
 
 	stmt->space = space;
+	stmt->space_id = space_id(space);
 	stmt->type = type;
 	if (engine_begin_statement(engine, txn) != 0)
 		goto fail;

@@ -125,3 +125,21 @@ box_txn_stmt_type(struct txn_stmt *stmt)
 }
 
 /* }}} Replace event accessors */
+
+/* {{{ Statement iteration */
+
+struct txn_stmt *
+box_txn_stmt_next(struct txn_stmt *stmt)
+{
+	struct stailq_entry *next = stailq_next(&stmt->next);
+	return next == NULL ? NULL :
+	       stailq_entry(next, struct txn_stmt, next);
+}
+
+uint32_t
+box_txn_stmt_space_id(struct txn_stmt *stmt)
+{
+	return stmt->space_id;
+}
+
+/* }}} Statement iteration */

@@ -146,6 +146,34 @@ box_txn_stmt_type(struct txn_stmt *stmt);
 
 /* }}} Replace event accessors */
 
+/* {{{ Statement iteration */
+
+/*
+ * A commit trigger receives the transaction's first statement as
+ * its event and walks the statements in the order they were
+ * executed with box_txn_stmt_next(). A rollback trigger receives
+ * the last statement and walks them newest first. The list holds
+ * only the statements that stay in the transaction: a statement
+ * rolled back to a savepoint, including one whose on_replace
+ * trigger failed, is no longer in it, and such a partial rollback
+ * runs no rollback trigger. Statements and their tuples stay valid
+ * until the transaction is freed, so for the length of the trigger.
+ */
+
+/** The statement after \a stmt, or NULL if it is the last one. */
+API_EXPORT struct txn_stmt *
+box_txn_stmt_next(struct txn_stmt *stmt);
+
+/**
+ * The id of the space the statement changed, or BOX_ID_NIL for a
+ * statement that changed none. Valid in commit and rollback
+ * triggers, also after a rollback of DDL frees the space object.
+ */
+API_EXPORT uint32_t
+box_txn_stmt_space_id(struct txn_stmt *stmt);
+
+/* }}} Statement iteration */
+
 #if defined(__cplusplus)
 } /* extern "C" */
 #endif /* defined(__cplusplus) */
