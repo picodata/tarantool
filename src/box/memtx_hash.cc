@@ -139,7 +139,6 @@ name(struct iterator *iterator, struct tuple **ret)				\
 {										\
 	struct hash_iterator *it = (struct hash_iterator *)iterator;		\
 	struct txn *txn = in_txn();						\
-	struct space *space = space_by_id(iterator->space_id);			\
 	struct index *idx = iterator->index;					\
 	do {									\
 		int rc;								\
@@ -151,7 +150,8 @@ name(struct iterator *iterator, struct tuple **ret)				\
 		}								\
 		if (rc != 0 || *ret == NULL)					\
 			return rc;						\
-		*ret = memtx_tx_tuple_clarify(txn, space, *ret, idx, 0);	\
+		*ret = memtx_tx_tuple_clarify_by_id(txn, iterator->space_id,	\
+						    *ret, idx, 0);		\
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/\
 		memtx_tx_story_gc();						\
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/\
@@ -179,8 +179,8 @@ hash_iterator_eq(struct iterator *it, struct tuple **ret)
 	if (*ret == NULL)
 		return 0;
 	struct txn *txn = in_txn();
-	struct space *sp = space_by_id(it->space_id);
-	*ret = memtx_tx_tuple_clarify(txn, sp, *ret, it->index, 0);
+	*ret = memtx_tx_tuple_clarify_by_id(txn, it->space_id, *ret, it->index,
+					    0);
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	memtx_tx_story_gc();
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/

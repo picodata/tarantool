@@ -413,7 +413,6 @@ tree_iterator_next_base(struct iterator *iterator, struct tuple **ret)
 		memtx_tree_iterator_get_elem(&index->tree, &it->tree_iterator);
 	*ret = res != NULL ? res->tuple : NULL;
 	struct index *idx = iterator->index;
-	struct space *space = space_by_id(iterator->space_id);
 	if (*ret == NULL) {
 		it->is_eof = true;
 	} else {
@@ -421,8 +420,8 @@ tree_iterator_next_base(struct iterator *iterator, struct tuple **ret)
 		struct txn *txn = in_txn();
 		bool is_multikey = iterator->index->def->key_def->is_multikey;
 		uint32_t mk_index = is_multikey ? (uint32_t)res->hint : 0;
-		*ret = memtx_tx_tuple_clarify(txn, space, res->tuple, idx,
-					      mk_index);
+		*ret = memtx_tx_tuple_clarify_by_id(txn, iterator->space_id,
+						    res->tuple, idx, mk_index);
 	}
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	/*
@@ -430,7 +429,8 @@ tree_iterator_next_base(struct iterator *iterator, struct tuple **ret)
 	 * two tuples must lead to conflict.
 	 */
 	struct tuple *successor = res != NULL ? res->tuple : NULL;
-	memtx_tx_track_gap(in_txn(), space, idx, successor, ITER_GE, NULL, 0);
+	memtx_tx_track_gap_by_id(in_txn(), iterator->space_id, idx, successor,
+				 ITER_GE, NULL, 0);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 
 	return 0;
@@ -455,7 +455,6 @@ tree_iterator_prev_base(struct iterator *iterator, struct tuple **ret)
 		memtx_tree_iterator_get_elem(&index->tree, &it->tree_iterator);
 	*ret = res != NULL ? res->tuple : NULL;
 	struct index *idx = iterator->index;
-	struct space *space = space_by_id(iterator->space_id);
 	if (*ret == NULL) {
 		it->is_eof = true;
 	} else {
@@ -467,15 +466,16 @@ tree_iterator_prev_base(struct iterator *iterator, struct tuple **ret)
 		 * We need to clarify the result tuple before story garbage
 		 * collection, otherwise it could get cleaned there.
 		 */
-		*ret = memtx_tx_tuple_clarify(txn, space, res->tuple, idx,
-					      mk_index);
+		*ret = memtx_tx_tuple_clarify_by_id(txn, iterator->space_id,
+						    res->tuple, idx, mk_index);
 	}
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 	/*
 	 * Pass no key because any write to the gap between that
 	 * two tuples must lead to conflict.
 	 */
-	memtx_tx_track_gap(in_txn(), space, idx, successor, ITER_LE, NULL, 0);
+	memtx_tx_track_gap_by_id(in_txn(), iterator->space_id, idx, successor,
+				 ITER_LE, NULL, 0);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 
 	tuple_unref(successor);
@@ -501,7 +501,6 @@ tree_iterator_next_equal_base(struct iterator *iterator, struct tuple **ret)
 	struct memtx_tree_data<USE_HINT> *res =
 		memtx_tree_iterator_get_elem(&index->tree, &it->tree_iterator);
 	struct index *idx = iterator->index;
-	struct space *space = space_by_id(iterator->space_id);
 	/* Use user key def to save a few loops. */
 	if (res == NULL ||
 	    tuple_compare_with_key(res->tuple, res->hint,
@@ -518,23 +517,25 @@ tree_iterator_next_equal_base(struct iterator *iterator, struct tuple **ret)
 		struct tuple *nearby_tuple = res == NULL ? NULL : res->tuple;
 
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
-		memtx_tx_track_gap(in_txn(), space, idx, nearby_tuple, ITER_EQ,
-				   it->key_data.key, it->key_data.part_count);
+		memtx_tx_track_gap_by_id(in_txn(), iterator->space_id, idx,
+					 nearby_tuple, ITER_EQ,
+					 it->key_data.key,
+					 it->key_data.part_count);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	} else {
 		tree_iterator_set_last<USE_HINT>(it, res);
 		struct txn *txn = in_txn();
 		bool is_multikey = iterator->index->def->key_def->is_multikey;
 		uint32_t mk_index = is_multikey ? (uint32_t)res->hint : 0;
-		*ret = memtx_tx_tuple_clarify(txn, space, res->tuple, idx,
-					      mk_index);
+		*ret = memtx_tx_tuple_clarify_by_id(txn, iterator->space_id,
+						    res->tuple, idx, mk_index);
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		/*
 		 * Pass no key because any write to the gap between that
 		 * two tuples must lead to conflict.
 		 */
-		memtx_tx_track_gap(in_txn(), space, idx, res->tuple, ITER_GE,
-				   NULL, 0);
+		memtx_tx_track_gap_by_id(in_txn(), iterator->space_id, idx,
+					 res->tuple, ITER_GE, NULL, 0);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	}
 
@@ -559,7 +560,6 @@ tree_iterator_prev_equal_base(struct iterator *iterator, struct tuple **ret)
 	struct memtx_tree_data<USE_HINT> *res =
 		memtx_tree_iterator_get_elem(&index->tree, &it->tree_iterator);
 	struct index *idx = iterator->index;
-	struct space *space = space_by_id(iterator->space_id);
 	/* Use user key def to save a few loops. */
 	if (res == NULL ||
 	    tuple_compare_with_key(res->tuple, res->hint,
@@ -575,8 +575,9 @@ tree_iterator_prev_equal_base(struct iterator *iterator, struct tuple **ret)
 		 * Got end of key. Store gap from the key boundary to the
 		 * previous tuple in nearby tuple.
 		 */
-		memtx_tx_track_gap(in_txn(), space, idx, successor, ITER_REQ,
-				   it->key_data.key, it->key_data.part_count);
+		memtx_tx_track_gap_by_id(in_txn(), iterator->space_id, idx,
+					 successor, ITER_REQ, it->key_data.key,
+					 it->key_data.part_count);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	} else {
 		tree_iterator_set_last<USE_HINT>(it, res);
@@ -587,15 +588,15 @@ tree_iterator_prev_equal_base(struct iterator *iterator, struct tuple **ret)
 		 * We need to clarify the result tuple before story garbage
 		 * collection, otherwise it could get cleaned there.
 		 */
-		*ret = memtx_tx_tuple_clarify(txn, space, res->tuple, idx,
-					      mk_index);
+		*ret = memtx_tx_tuple_clarify_by_id(txn, iterator->space_id,
+						    res->tuple, idx, mk_index);
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		/*
 		 * Pass no key because any write to the gap between that
 		 * two tuples must lead to conflict.
 		 */
-		memtx_tx_track_gap(in_txn(), space, idx, successor, ITER_LE,
-				   NULL, 0);
+		memtx_tx_track_gap_by_id(in_txn(), iterator->space_id, idx,
+					 successor, ITER_LE, NULL, 0);
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
 	}
 	tuple_unref(successor);

@@ -157,8 +157,8 @@ index_rtree_iterator_next(struct iterator *i, struct tuple **ret)
 			break;
 		struct index *idx = i->index;
 		struct txn *txn = in_txn();
-		struct space *space = space_by_id(i->space_id);
-		*ret = memtx_tx_tuple_clarify(txn, space, *ret, idx, 0);
+		*ret = memtx_tx_tuple_clarify_by_id(txn, i->space_id, *ret, idx,
+						    0);
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		memtx_tx_story_gc();
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/

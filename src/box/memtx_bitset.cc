@@ -208,8 +208,8 @@ bitset_index_iterator_next(struct iterator *iterator, struct tuple **ret)
 #endif /* #ifndef OLD_GOOD_BITSET */
 		struct index *idx = iterator->index;
 		struct txn *txn = in_txn();
-		struct space *space = space_by_id(iterator->space_id);
-		*ret = memtx_tx_tuple_clarify(txn, space, tuple, idx, 0);
+		*ret = memtx_tx_tuple_clarify_by_id(txn, iterator->space_id,
+						    tuple, idx, 0);
 /********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND START*********/
 		memtx_tx_story_gc();
 /*********MVCC TRANSACTION MANAGER STORY GARBAGE COLLECTION BOUND END**********/
